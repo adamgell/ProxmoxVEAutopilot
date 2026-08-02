@@ -1836,6 +1836,46 @@ def test_setup_cm_queue_accepts_only_typed_sanitized_work(agent_client, pg_conn)
     assert unknown_agent.status_code == 404
 
 
+def test_setup_cm_client_install_queue_is_strictly_typed(agent_client, pg_conn):
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-client01",
+        token="agent-client01-token",
+        vmid=103,
+        computer_name="RING0IVY24-01",
+    )
+    body = {
+        "site_code": "LAB",
+        "management_point_fqdn": "LABZ1-CM01.test.gell.one",
+        "evidence_root": r"C:\ProgramData\SetupCm\artifacts",
+        "module_archive_path": r"\\LABZ1-DC02\SetupCm\Modules\setup-cm.zip",
+        "module_archive_sha256": "a" * 64,
+    }
+
+    accepted = agent_client.post(
+        "/api/setup-cm/v1/agents/agent-client01/client-install",
+        json=body,
+    )
+
+    assert accepted.status_code == 202, accepted.text
+    queued = accepted.json()
+    assert queued["kind"] == "setup_cm_client_install"
+    assert queued["request"] == body
+
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/agent-client01/client-install",
+        json={**body, "site_code": "LABZ"},
+    ).status_code == 422
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/agent-client01/client-install",
+        json={**body, "management_point_fqdn": "server.example.com"},
+    ).status_code == 422
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/agent-client01/client-install",
+        json={**body, "product_key": "must-not-be-accepted"},
+    ).status_code == 422
+
+
 def test_vms_snapshot_prefers_agent_ip_and_guest_state(monkeypatch):
     from web import app as app_module
 
