@@ -13,6 +13,7 @@ VerifyBuildHostVirtioRootsMatchOsDeployScript();
 VerifyOsDeployOutputSelectionRejectsStaleManifests();
 VerifyOsDeployResolvesStagedSourceMedia();
 VerifySetupCmWorkContracts();
+VerifySetupCmDiagnosticsContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -513,6 +514,50 @@ static void VerifySetupCmWorkContracts()
     {
         Directory.Delete(moduleRoot, recursive: true);
     }
+}
+
+static void VerifySetupCmDiagnosticsContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains("setup_cm_diagnostics"),
+        "Setup-CM source diagnostic kind is not registered");
+    Assert(
+        SetupCmDiagnosticsWorkService.DiagnosticScriptResourceName
+            == "AutopilotAgent.SetupCmSourceDiagnostics.ps1",
+        "diagnostic work does not use the fixed packaged script");
+
+    var valid = new Dictionary<string, JsonElement>
+    {
+        ["site_code"] = JsonSerializer.SerializeToElement("LAB"),
+        ["target_computer_name"] = JsonSerializer.SerializeToElement("RING0IVY24-01"),
+    };
+    var request = SetupCmDiagnosticsWorkService.ValidateRequest(valid);
+    Assert(request.SiteCode == "LAB", "diagnostic site code must round-trip");
+    Assert(
+        request.TargetComputerName == "RING0IVY24-01",
+        "diagnostic target computer name must round-trip");
+
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["site_code"] = JsonSerializer.SerializeToElement("lab"),
+            }),
+        "diagnostic work accepted a lower-case site code");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["target_computer_name"] = JsonSerializer.SerializeToElement(@"..\bad"),
+            }),
+        "diagnostic work accepted a path-like target computer name");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["script"] = JsonSerializer.SerializeToElement("must-not-be-accepted"),
+            }),
+        "diagnostic work accepted an arbitrary script field");
 }
 
 static void VerifyOsDeployOutputSelectionRejectsStaleManifests()

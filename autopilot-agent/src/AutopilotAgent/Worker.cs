@@ -8,6 +8,7 @@ public sealed class Worker(
     HashCaptureService hashCaptureService,
     LogCollectionService logCollectionService,
     SetupCmWorkService setupCmWorkService,
+    SetupCmDiagnosticsWorkService setupCmDiagnosticsWorkService,
     OsdV2WorkService osdV2WorkService,
     BuildHostWorkService buildHostWorkService,
     AgentUpdateService agentUpdateService,
@@ -120,6 +121,7 @@ public sealed class Worker(
             "configure_build_host_role",
         };
         supportedKinds.AddRange(SetupCmWorkService.SupportedKinds);
+        supportedKinds.AddRange(SetupCmDiagnosticsWorkService.SupportedKinds);
         if (string.Equals(config.Phase, "build-host", StringComparison.OrdinalIgnoreCase)
             || string.Equals(config.Role, "build-host", StringComparison.OrdinalIgnoreCase))
         {
@@ -153,6 +155,12 @@ public sealed class Worker(
                     StringComparer.Ordinal):
                     await setupCmWorkService.ProcessAsync(config, work, cancellationToken);
                     log.Info($"Completed Setup-CM work item {work.Id}.");
+                    break;
+                case var kind when SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+                    kind,
+                    StringComparer.Ordinal):
+                    await setupCmDiagnosticsWorkService.ProcessAsync(config, work, cancellationToken);
+                    log.Info($"Completed Setup-CM diagnostic work item {work.Id}.");
                     break;
                 case var kind when BuildHostWorkService.SupportedKinds.Contains(
                     kind,
