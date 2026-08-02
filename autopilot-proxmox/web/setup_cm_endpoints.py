@@ -102,6 +102,15 @@ class SetupCmContentLocationDiagnosticsBody(BaseModel):
         return str(parsed)
 
 
+class SetupCmContentLocationRemediationBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    site_code: Literal["LAB"]
+    client_subnet: Literal["192.168.16.0/24"]
+    boundary_group_name: Literal["LABZ1 Client Network"]
+    distribution_point_fqdn: Literal["LABZ1-CM01.test.gell.one"]
+
+
 @router.post("/agents/{agent_id}/work", status_code=202)
 def queue_setup_cm_work(agent_id: str, body: SetupCmWorkBody):
     with _conn() as conn:
@@ -186,6 +195,25 @@ def queue_setup_cm_content_location_diagnostics(
             conn,
             agent_id=agent_id,
             kind="setup_cm_content_location_diagnostics",
+            request=body.model_dump(),
+            vmid=device.get("vmid"),
+        )
+    return _public_work_item(work)
+
+
+@router.post("/agents/{agent_id}/content-location-remediation", status_code=202)
+def queue_setup_cm_content_location_remediation(
+    agent_id: str,
+    body: SetupCmContentLocationRemediationBody,
+):
+    with _conn() as conn:
+        device = agent_telemetry_pg.get_device(conn, agent_id)
+        if not device:
+            raise HTTPException(status_code=404, detail=f"agent is not registered: {agent_id}")
+        work = agent_telemetry_pg.create_work_item(
+            conn,
+            agent_id=agent_id,
+            kind="setup_cm_content_location_remediation",
             request=body.model_dump(),
             vmid=device.get("vmid"),
         )

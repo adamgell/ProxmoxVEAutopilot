@@ -1982,6 +1982,46 @@ def test_setup_cm_content_location_diagnostics_queue_is_strictly_typed(agent_cli
     ).status_code == 404
 
 
+def test_setup_cm_content_location_remediation_queue_is_fixed_and_typed(agent_client, pg_conn):
+    _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-cm01-content-remediation",
+        token="agent-cm01-content-remediation-token",
+        vmid=107,
+        computer_name="LABZ1-CM01",
+    )
+    body = {
+        "site_code": "LAB",
+        "client_subnet": "192.168.16.0/24",
+        "boundary_group_name": "LABZ1 Client Network",
+        "distribution_point_fqdn": "LABZ1-CM01.test.gell.one",
+    }
+
+    accepted = agent_client.post(
+        "/api/setup-cm/v1/agents/agent-cm01-content-remediation/content-location-remediation",
+        json=body,
+    )
+
+    assert accepted.status_code == 202, accepted.text
+    queued = accepted.json()
+    assert queued["kind"] == "setup_cm_content_location_remediation"
+    assert queued["request"] == body
+
+    for invalid in (
+        {**body, "client_subnet": "10.0.0.0/24"},
+        {**body, "distribution_point_fqdn": "other.test.gell.one"},
+        {**body, "script": "Get-ChildItem"},
+    ):
+        assert agent_client.post(
+            "/api/setup-cm/v1/agents/agent-cm01-content-remediation/content-location-remediation",
+            json=invalid,
+        ).status_code == 422
+    assert agent_client.post(
+        "/api/setup-cm/v1/agents/no-such-agent/content-location-remediation",
+        json=body,
+    ).status_code == 404
+
+
 def test_vms_snapshot_prefers_agent_ip_and_guest_state(monkeypatch):
     from web import app as app_module
 
