@@ -11,6 +11,7 @@ namespace AutopilotAgent;
 public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, AgentFileLog log)
 {
     private const int OutputLimitBytes = 256 * 1024;
+    private const int FailureOutputLimitChars = 4096;
     private static readonly Regex SiteCodePattern = new("^[A-Z0-9]{3}$", RegexOptions.CultureInvariant);
     private static readonly Regex ComputerNamePattern = new("^[A-Za-z0-9-]{1,63}$", RegexOptions.CultureInvariant);
 
@@ -101,7 +102,10 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         if (output.ExitCode != 0)
         {
             throw new InvalidOperationException(
-                $"Setup-CM content location remediation failed with exit code {output.ExitCode}.");
+                FormatContentLocationRemediationFailure(
+                    output.ExitCode,
+                    output.Stdout,
+                    output.Stderr));
         }
 
         var result = ParseContentLocationRemediationResult(output.Stdout, request);
@@ -486,6 +490,24 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             throw new InvalidOperationException("ServerNALPath does not contain a Display host.");
         }
         return match.Groups["host"].Value.TrimEnd('.').ToLowerInvariant();
+    }
+
+    public static string FormatContentLocationRemediationFailure(
+        int exitCode,
+        string stdout,
+        string stderr) =>
+        $"Setup-CM content location remediation failed with exit code {exitCode}. "
+        + $"stderr={TruncateFailureOutput(stderr)} stdout={TruncateFailureOutput(stdout)}";
+
+    private static string TruncateFailureOutput(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "(empty)";
+        }
+        return value.Length <= FailureOutputLimitChars
+            ? value
+            : value[..FailureOutputLimitChars] + "...[truncated]";
     }
 
     private static void RequireExactString(

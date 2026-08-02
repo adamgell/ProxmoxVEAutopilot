@@ -647,6 +647,15 @@ static void VerifySetupCmContentLocationRemediationContracts()
             "[\"Display=\\\\LABZ1-CM01.test.gell.one.evil.test\"]MSWNET")
             != "labz1-cm01.test.gell.one",
         "content remediation accepted a suffixed DP host");
+    var failure = SetupCmDiagnosticsWorkService.FormatContentLocationRemediationFailure(
+        exitCode: 1,
+        stdout: "partial script output",
+        stderr: "module load failed");
+    Assert(
+        failure.Contains("exit code 1", StringComparison.Ordinal)
+        && failure.Contains("module load failed", StringComparison.Ordinal)
+        && failure.Contains("partial script output", StringComparison.Ordinal),
+        "content remediation failure omitted bounded PowerShell evidence");
 
     AssertThrows<InvalidOperationException>(
         () => SetupCmDiagnosticsWorkService.ValidateContentLocationRemediationRequest(
