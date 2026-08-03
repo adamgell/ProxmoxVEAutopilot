@@ -1191,6 +1191,12 @@ static void VerifySetupCmMarkerDeploymentContracts()
                 source.Contains(value, StringComparison.Ordinal),
                 $"{scriptName} is missing fixed marker deployment value: {value}");
         }
+        if (scriptName == "SetupCmMarkerApplicationDeployment.ps1")
+        {
+            Assert(
+                !source.Contains("-UserNotification HideAll", StringComparison.Ordinal),
+                "marker application deployment must use the minimal documented required-deployment syntax");
+        }
     }
 }
 
