@@ -19,6 +19,7 @@ VerifySetupCmModulePublicationContracts();
 VerifySetupCmDiagnosticsContracts();
 VerifySetupCmContentLocationDiagnosticsContracts();
 VerifySetupCmContentLocationRemediationContracts();
+VerifySetupCmClientNetworkRepairContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -965,6 +966,38 @@ static void VerifyOsDeployResolvesStagedSourceMedia()
     finally
     {
         Directory.Delete(root, recursive: true);
+    }
+}
+
+static void VerifySetupCmClientNetworkRepairContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+            "setup_cm_client_network_repair"),
+        "Setup-CM client network repair kind is not registered");
+    Assert(
+        SetupCmDiagnosticsWorkService.ClientNetworkRepairScriptResourceName
+            == "AutopilotAgent.SetupCmClientNetworkRepair.ps1",
+        "client network repair does not use the fixed packaged script");
+
+    var repairScript = File.ReadAllText(
+        Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "SetupCmClientNetworkRepair.ps1"));
+    foreach (var value in new[]
+    {
+        "BC-24-11-9C-43-E6",
+        "192.168.16.103",
+        "192.168.16.1",
+        "192.168.16.12",
+        "LABZ1-DC02.test.gell.one",
+    })
+    {
+        Assert(
+            repairScript.Contains(value, StringComparison.Ordinal),
+            $"client network repair is missing fixed value: {value}");
     }
 }
 

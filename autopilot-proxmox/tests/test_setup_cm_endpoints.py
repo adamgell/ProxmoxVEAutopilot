@@ -104,3 +104,41 @@ def test_setup_cm_module_publication_derives_request_from_registered_artifact(
         "archive_sha256": artifact["sha256"],
         "source_commit": "b" * 40,
     }
+
+
+def test_client_network_repair_queues_only_for_the_fixed_labz1_client(
+    pg_conn,
+    monkeypatch,
+    tmp_path,
+):
+    from web import agent_telemetry_pg
+
+    client = _client_with_artifact_root(monkeypatch, tmp_path)
+    agent_telemetry_pg.reset_for_tests(pg_conn)
+    agent_telemetry_pg.init(pg_conn)
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="agent-ring0ivy24-01",
+        token="ring0ivy24-test-token",
+        vmid=135,
+    )
+
+    response = client.post(
+        "/api/setup-cm/v1/agents/agent-ring0ivy24-01/client-network-repair",
+        json={},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["kind"] == "setup_cm_client_network_repair"
+    assert response.json()["request"] == {}
+
+
+def test_client_network_repair_rejects_any_other_agent(monkeypatch, tmp_path):
+    client = _client_with_artifact_root(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/setup-cm/v1/agents/agent-other/client-network-repair",
+        json={},
+    )
+
+    assert response.status_code == 422

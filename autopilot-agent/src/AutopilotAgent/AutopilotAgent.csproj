@@ -21,5 +21,6 @@
     <EmbeddedResource Include="SetupCmSourceDiagnostics.ps1" />
     <EmbeddedResource Include="SetupCmContentLocationDiagnostics.ps1" />
     <EmbeddedResource Include="SetupCmContentLocationRemediation.ps1" />
+    <EmbeddedResource Include="SetupCmClientNetworkRepair.ps1" />
   </ItemGroup>
 </Project>

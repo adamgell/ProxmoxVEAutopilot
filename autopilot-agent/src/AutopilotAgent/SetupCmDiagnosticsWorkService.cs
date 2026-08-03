@@ -20,12 +20,15 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "AutopilotAgent.SetupCmContentLocationDiagnostics.ps1";
     public const string ContentLocationRemediationScriptResourceName =
         "AutopilotAgent.SetupCmContentLocationRemediation.ps1";
+    public const string ClientNetworkRepairScriptResourceName =
+        "AutopilotAgent.SetupCmClientNetworkRepair.ps1";
     public static readonly string[] SupportedKinds =
     [
         "setup_cm_diagnostics",
         "setup_cm_source_access",
         "setup_cm_content_location_diagnostics",
         "setup_cm_content_location_remediation",
+        "setup_cm_client_network_repair",
     ];
 
     public async Task ProcessAsync(
@@ -47,6 +50,14 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 StringComparison.Ordinal))
         {
             await ProcessContentLocationRemediationAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_client_network_repair",
+                StringComparison.Ordinal))
+        {
+            await ProcessClientNetworkRepairAsync(config, work, cancellationToken);
             return;
         }
 
@@ -111,6 +122,27 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         var result = ParseContentLocationRemediationResult(output.Stdout, request);
         await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
         log.Info($"Setup-CM content location remediation completed ({work.Id}).");
+    }
+
+    private async Task ProcessClientNetworkRepairAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, ClientNetworkRepairScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM client network repair failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        var result = ParseClientNetworkRepairResult(output.Stdout);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM client network repair completed ({work.Id}).");
     }
 
     public static SetupCmDiagnosticsRequest ValidateRequest(
@@ -268,6 +300,46 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             ?? throw new InvalidOperationException("Failed to start pwsh.exe for Setup-CM diagnostics.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(5));
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+            throw;
+        }
+        return new ProcessOutput(await stdoutTask, await stderrTask, process.ExitCode);
+    }
+
+    private static async Task<ProcessOutput> RunPowerShellAsync(
+        string scriptPath,
+        CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "pwsh.exe",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-ExecutionPolicy");
+        startInfo.ArgumentList.Add("Bypass");
+        startInfo.ArgumentList.Add("-File");
+        startInfo.ArgumentList.Add(scriptPath);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start pwsh.exe for Setup-CM client network repair.");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromMinutes(2));
         var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
         var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
         try
@@ -475,6 +547,61 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("Setup-CM remediation distribution point readback is invalid.");
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseClientNetworkRepairResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException("Setup-CM client network repair output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Setup-CM client network repair output must be a JSON object.");
+        }
+        var required = new[]
+        {
+            "adapter_mac", "ipv4_address", "prefix_length", "default_gateway",
+            "dns_servers", "dc_lookup", "tcp_53", "tcp_445", "errors",
+        };
+        foreach (var name in required)
+        {
+            if (!document.RootElement.TryGetProperty(name, out _))
+            {
+                throw new InvalidOperationException($"Setup-CM client network repair result is missing {name}.");
+            }
+        }
+        RequireExactString(document.RootElement, "adapter_mac", "BC-24-11-9C-43-E6");
+        RequireExactString(document.RootElement, "ipv4_address", "192.168.16.103");
+        RequireExactString(document.RootElement, "default_gateway", "192.168.16.1");
+        if (document.RootElement.GetProperty("prefix_length").GetInt32() != 24)
+        {
+            throw new InvalidOperationException("Setup-CM client network repair prefix length is invalid.");
+        }
+        var dnsServers = document.RootElement.GetProperty("dns_servers");
+        if (dnsServers.ValueKind != JsonValueKind.Array || dnsServers.GetArrayLength() != 1
+            || dnsServers[0].ValueKind != JsonValueKind.String
+            || !string.Equals(dnsServers[0].GetString(), "192.168.16.12", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Setup-CM client network repair DNS readback is invalid.");
+        }
+        foreach (var name in new[] { "dc_lookup", "tcp_53", "tcp_445" })
+        {
+            if (document.RootElement.GetProperty(name).ValueKind != JsonValueKind.True)
+            {
+                throw new InvalidOperationException($"Setup-CM client network repair did not prove {name}.");
+            }
+        }
+        var errors = document.RootElement.GetProperty("errors");
+        if (errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() != 0)
+        {
+            throw new InvalidOperationException("Setup-CM client network repair returned errors.");
         }
         return document.RootElement.EnumerateObject().ToDictionary(
             property => property.Name,
