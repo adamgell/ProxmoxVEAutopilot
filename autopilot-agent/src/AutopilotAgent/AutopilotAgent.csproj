@@ -25,6 +25,8 @@
     <EmbeddedResource Include="SetupCmHealthClientTargetReconciliation.ps1" />
     <EmbeddedResource Include="SetupCmConsoleDomainAdmins.ps1" />
     <EmbeddedResource Include="SetupCmConsolePrincipal.ps1" />
+    <EmbeddedResource Include="SetupCmMarkerDeployment.ps1" />
+    <EmbeddedResource Include="SetupCmMarkerDeploymentVerification.ps1" />
     <EmbeddedResource Include="SetupCmConsoleConnectivityDiagnostics.ps1" />
   </ItemGroup>
 </Project>

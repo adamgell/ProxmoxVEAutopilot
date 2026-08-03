@@ -31,6 +31,10 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "AutopilotAgent.SetupCmConsoleDomainAdmins.ps1";
     public const string ConsolePrincipalScriptResourceName =
         "AutopilotAgent.SetupCmConsolePrincipal.ps1";
+    public const string MarkerDeploymentScriptResourceName =
+        "AutopilotAgent.SetupCmMarkerDeployment.ps1";
+    public const string MarkerDeploymentVerificationScriptResourceName =
+        "AutopilotAgent.SetupCmMarkerDeploymentVerification.ps1";
     public const string ConsoleConnectivityDiagnosticScriptResourceName =
         "AutopilotAgent.SetupCmConsoleConnectivityDiagnostics.ps1";
     public static readonly string[] SupportedKinds =
@@ -43,6 +47,8 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "setup_cm_health_client_target_reconciliation",
         "setup_cm_console_domain_admins",
         "setup_cm_console_principal",
+        "setup_cm_marker_deployment",
+        "setup_cm_marker_deployment_verification",
         "setup_cm_console_connectivity_diagnostics",
     ];
 
@@ -97,6 +103,19 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 StringComparison.Ordinal))
         {
             await ProcessConsolePrincipalAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(work.Kind, "setup_cm_marker_deployment", StringComparison.Ordinal))
+        {
+            await ProcessMarkerDeploymentAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_marker_deployment_verification",
+                StringComparison.Ordinal))
+        {
+            await ProcessMarkerDeploymentVerificationAsync(config, work, cancellationToken);
             return;
         }
         if (string.Equals(
@@ -253,6 +272,52 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         var result = ParseConsolePrincipalResult(output.Stdout, request);
         await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
         log.Info($"Setup-CM direct console principal assignment completed ({work.Id}).");
+    }
+
+    private async Task ProcessMarkerDeploymentAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, MarkerDeploymentScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM marker deployment failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+        await apiClient.CompleteWorkAsync(
+            config,
+            work.Id,
+            ParseMarkerDeploymentResult(output.Stdout),
+            cancellationToken);
+        log.Info($"Setup-CM marker deployment completed ({work.Id}).");
+    }
+
+    private async Task ProcessMarkerDeploymentVerificationAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, MarkerDeploymentVerificationScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM marker deployment verification failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+        await apiClient.CompleteWorkAsync(
+            config,
+            work.Id,
+            ParseMarkerDeploymentVerificationResult(output.Stdout),
+            cancellationToken);
+        log.Info($"Setup-CM marker deployment verification completed ({work.Id}).");
     }
 
     private async Task ProcessConsoleConnectivityDiagnosticsAsync(
@@ -890,6 +955,81 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         {
             throw new InvalidOperationException(
                 "Setup-CM direct console principal assignment did not produce the required readback.");
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseMarkerDeploymentResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException("Setup-CM marker deployment output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Setup-CM marker deployment output must be a JSON object.");
+        }
+        foreach (var name in new[]
+        {
+            "site_code", "device_name", "collection_id", "package_id", "program_name",
+            "deployment_created", "content_distribution_requested", "machine_policy_requested", "changed",
+        })
+        {
+            if (!document.RootElement.TryGetProperty(name, out _))
+            {
+                throw new InvalidOperationException($"Setup-CM marker deployment result is missing {name}.");
+            }
+        }
+        RequireExactString(document.RootElement, "site_code", "LAB");
+        RequireExactString(document.RootElement, "device_name", "RING0IVY24-01", StringComparison.OrdinalIgnoreCase);
+        foreach (var name in new[] { "collection_id", "package_id", "program_name" })
+        {
+            if (document.RootElement.GetProperty(name).ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(document.RootElement.GetProperty(name).GetString()))
+            {
+                throw new InvalidOperationException($"Setup-CM marker deployment {name} is invalid.");
+            }
+        }
+        foreach (var name in new[] { "deployment_created", "content_distribution_requested", "machine_policy_requested", "changed" })
+        {
+            if (document.RootElement.GetProperty(name).ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+            {
+                throw new InvalidOperationException($"Setup-CM marker deployment {name} must be boolean.");
+            }
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseMarkerDeploymentVerificationResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM marker deployment verification output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM marker deployment verification output must be a JSON object.");
+        }
+        RequireExactString(document.RootElement, "site_code", "LAB");
+        RequireExactString(document.RootElement, "device_name", "RING0IVY24-01", StringComparison.OrdinalIgnoreCase);
+        foreach (var name in new[] { "marker_present", "marker_content_matches", "appenforce_mentions_marker" })
+        {
+            if (!document.RootElement.TryGetProperty(name, out var value)
+                || value.ValueKind != JsonValueKind.True)
+            {
+                throw new InvalidOperationException(
+                    $"Setup-CM marker deployment verification did not prove {name}.");
+            }
         }
         return document.RootElement.EnumerateObject().ToDictionary(
             property => property.Name,

@@ -23,6 +23,7 @@ VerifySetupCmClientNetworkRepairContracts();
 VerifySetupCmHealthClientTargetReconciliationContracts();
 VerifySetupCmConsoleDomainAdminsContracts();
 VerifySetupCmConsolePrincipalContracts();
+VerifySetupCmMarkerDeploymentContracts();
 VerifySetupCmConsoleConnectivityDiagnosticsContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
@@ -1132,6 +1133,38 @@ static void VerifySetupCmConsolePrincipalContracts()
         Assert(
             principalScript.Contains(value, StringComparison.Ordinal),
             $"direct console principal repair is missing fixed value: {value}");
+    }
+}
+
+static void VerifySetupCmMarkerDeploymentContracts()
+{
+    foreach (var kind in new[]
+    {
+        "setup_cm_marker_deployment",
+        "setup_cm_marker_deployment_verification",
+    })
+    {
+        Assert(
+            SetupCmDiagnosticsWorkService.SupportedKinds.Contains(kind),
+            $"Setup-CM marker deployment kind is not registered: {kind}");
+    }
+    foreach (var scriptName in new[]
+    {
+        "SetupCmMarkerDeployment.ps1",
+        "SetupCmMarkerDeploymentVerification.ps1",
+    })
+    {
+        var source = File.ReadAllText(Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            scriptName));
+        foreach (var value in new[] { "RING0IVY24-01", "LAB", "MECM Marker" })
+        {
+            Assert(
+                source.Contains(value, StringComparison.Ordinal),
+                $"{scriptName} is missing fixed marker deployment value: {value}");
+        }
     }
 }
 
