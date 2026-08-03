@@ -35,6 +35,7 @@ if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
     throw "Configuration Manager module was not found at $modulePath."
 }
 Import-Module -Name $modulePath -Force -ErrorAction Stop
+$CMPSSuppressFastNotUsedCheck = $true
 $siteDrive = Get-PSDrive -PSProvider CMSite -ErrorAction Stop |
     Where-Object { $_.Name -eq $siteCode } |
     Select-Object -First 1
