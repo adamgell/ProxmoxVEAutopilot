@@ -22,6 +22,7 @@ VerifySetupCmContentLocationRemediationContracts();
 VerifySetupCmClientNetworkRepairContracts();
 VerifySetupCmHealthClientTargetReconciliationContracts();
 VerifySetupCmConsoleDomainAdminsContracts();
+VerifySetupCmConsoleConnectivityDiagnosticsContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -1073,6 +1074,34 @@ static void VerifySetupCmConsoleDomainAdminsContracts()
             source.Contains(value, StringComparison.Ordinal),
             $"console Domain Admins script is missing fixed value: {value}");
     }
+}
+
+static void VerifySetupCmConsoleConnectivityDiagnosticsContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+            "setup_cm_console_connectivity_diagnostics"),
+        "Setup-CM console connectivity diagnostic kind is not registered");
+    Assert(
+        SetupCmDiagnosticsWorkService.ConsoleConnectivityDiagnosticScriptResourceName
+            == "AutopilotAgent.SetupCmConsoleConnectivityDiagnostics.ps1",
+        "console connectivity diagnostics do not use the fixed packaged script");
+
+    var diagnosticScript = File.ReadAllText(
+        Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "SetupCmConsoleConnectivityDiagnostics.ps1"));
+    Assert(
+        diagnosticScript.Contains("MachineLaunchRestriction", StringComparison.Ordinal),
+        "console connectivity diagnostics do not inspect the DCOM machine launch restriction");
+    Assert(
+        diagnosticScript.Contains("Get-CMAdministrativeUser", StringComparison.Ordinal),
+        "console connectivity diagnostics do not read Configuration Manager RBAC");
+    Assert(
+        diagnosticScript.Contains("DistributedCOM", StringComparison.Ordinal),
+        "console connectivity diagnostics do not collect recent DCOM denial evidence");
 }
 
 static void Assert(bool condition, string message)

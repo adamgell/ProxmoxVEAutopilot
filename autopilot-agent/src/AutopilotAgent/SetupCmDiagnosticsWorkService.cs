@@ -26,6 +26,8 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "AutopilotAgent.SetupCmHealthClientTargetReconciliation.ps1";
     public const string ConsoleDomainAdminsScriptResourceName =
         "AutopilotAgent.SetupCmConsoleDomainAdmins.ps1";
+    public const string ConsoleConnectivityDiagnosticScriptResourceName =
+        "AutopilotAgent.SetupCmConsoleConnectivityDiagnostics.ps1";
     public static readonly string[] SupportedKinds =
     [
         "setup_cm_diagnostics",
@@ -35,6 +37,7 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "setup_cm_client_network_repair",
         "setup_cm_health_client_target_reconciliation",
         "setup_cm_console_domain_admins",
+        "setup_cm_console_connectivity_diagnostics",
     ];
 
     public async Task ProcessAsync(
@@ -80,6 +83,14 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 StringComparison.Ordinal))
         {
             await ProcessConsoleDomainAdminsAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_console_connectivity_diagnostics",
+                StringComparison.Ordinal))
+        {
+            await ProcessConsoleConnectivityDiagnosticsAsync(config, work, cancellationToken);
             return;
         }
 
@@ -207,6 +218,27 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         var result = ParseConsoleDomainAdminsResult(output.Stdout);
         await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
         log.Info($"Setup-CM console Domain Admins assignment completed ({work.Id}).");
+    }
+
+    private async Task ProcessConsoleConnectivityDiagnosticsAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, ConsoleConnectivityDiagnosticScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM console connectivity diagnostics failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        var result = ParseConsoleConnectivityDiagnosticResult(output.Stdout);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM console connectivity diagnostics completed ({work.Id}).");
     }
 
     public static SetupCmDiagnosticsRequest ValidateRequest(
@@ -725,6 +757,37 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         {
             throw new InvalidOperationException(
                 "Setup-CM console Domain Admins assignment did not produce the required readback.");
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseConsoleConnectivityDiagnosticResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM console connectivity diagnostic output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM console connectivity diagnostic output must be a JSON object.");
+        }
+        foreach (var name in new[]
+        {
+            "domain_admins_principal", "rbac", "interactive_principals",
+            "dcom", "recent_distributed_com_events", "errors",
+        })
+        {
+            if (!document.RootElement.TryGetProperty(name, out _))
+            {
+                throw new InvalidOperationException(
+                    $"Setup-CM console connectivity diagnostic result is missing {name}.");
+            }
         }
         return document.RootElement.EnumerateObject().ToDictionary(
             property => property.Name,
