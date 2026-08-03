@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from web import agent_telemetry_pg, setup_artifacts, ts_engine_pg, winpe_token
@@ -620,6 +621,34 @@ def next_work(body: WorkNextBody, device: dict = Depends(_require_agent)):
             supported_kinds=kinds,
         )
     return {"work_item": _public_work_item(row) if row else None}
+
+
+@router.get("/setup-cm-module-artifacts/{artifact_id}")
+def download_setup_cm_module_artifact(
+    artifact_id: str,
+    device: dict = Depends(_require_agent),
+):
+    with _conn() as conn:
+        allowed = agent_telemetry_pg.has_active_work_request(
+            conn,
+            agent_id=device["agent_id"],
+            kind="publish_setup_cm_module",
+            request_key="artifact_id",
+            request_value=artifact_id,
+        )
+    if not allowed:
+        raise HTTPException(status_code=403, detail="artifact is not authorized for this agent")
+    artifact = setup_artifacts.get_artifact(artifact_id, kind="setup-cm-module")
+    if not artifact:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    path = Path(str(artifact.get("path") or ""))
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact file not found")
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=str(artifact.get("filename") or "setup-cm.zip"),
+    )
 
 
 @router.post("/work/{work_item_id}/complete")

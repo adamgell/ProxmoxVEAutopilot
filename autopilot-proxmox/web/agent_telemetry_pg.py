@@ -862,6 +862,29 @@ def get_work_item(conn: Connection, work_item_id: str) -> dict | None:
     return _row_dict(row) if row else None
 
 
+def has_active_work_request(
+    conn: Connection,
+    *,
+    agent_id: str,
+    kind: str,
+    request_key: str,
+    request_value: str,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM agent_work_items
+        WHERE agent_id = %s
+          AND kind = %s
+          AND status IN ('pending', 'claimed')
+          AND request_json ->> %s = %s
+        LIMIT 1
+        """,
+        (agent_id, kind, request_key, request_value),
+    ).fetchone()
+    return row is not None
+
+
 def claim_next_work_item(
     conn: Connection,
     *,

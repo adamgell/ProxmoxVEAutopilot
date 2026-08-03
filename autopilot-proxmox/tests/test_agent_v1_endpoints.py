@@ -207,6 +207,99 @@ def test_agent_update_check_reports_current_when_versions_match(
     assert response.json()["download_url"] is None
 
 
+def test_setup_cm_module_download_requires_matching_active_work(
+    agent_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import setup_artifacts
+
+    artifact_root = tmp_path / "setup-artifacts"
+    monkeypatch.setattr(setup_artifacts, "ARTIFACT_ROOT", artifact_root)
+    monkeypatch.setattr(
+        setup_artifacts,
+        "REGISTRY_PATH",
+        artifact_root / "artifact_registry.json",
+    )
+    archive = artifact_root / "setup-cm-module" / "setup-cm.zip"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"private-module")
+    artifact = setup_artifacts.register_existing_artifact(
+        kind="setup-cm-module",
+        path=archive,
+        metadata={
+            "sha256": sha256(archive.read_bytes()).hexdigest(),
+            "source_commit": "b" * 40,
+        },
+    )
+    token = _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-labz1-dc02",
+        token="dc02-agent-token",
+        vmid=115,
+        computer_name="LABZ1-DC02",
+    )
+
+    denied = agent_client.get(
+        f"/api/agent/v1/setup-cm-module-artifacts/{artifact['artifact_id']}",
+        headers=_bearer(token),
+    )
+
+    assert denied.status_code == 403
+
+
+def test_setup_cm_module_download_streams_only_matching_active_work(
+    agent_client,
+    pg_conn,
+    tmp_path,
+    monkeypatch,
+):
+    from web import agent_telemetry_pg, setup_artifacts
+
+    artifact_root = tmp_path / "setup-artifacts"
+    monkeypatch.setattr(setup_artifacts, "ARTIFACT_ROOT", artifact_root)
+    monkeypatch.setattr(
+        setup_artifacts,
+        "REGISTRY_PATH",
+        artifact_root / "artifact_registry.json",
+    )
+    archive = artifact_root / "setup-cm-module" / "setup-cm.zip"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"private-module")
+    artifact = setup_artifacts.register_existing_artifact(
+        kind="setup-cm-module",
+        path=archive,
+        metadata={
+            "sha256": sha256(archive.read_bytes()).hexdigest(),
+            "source_commit": "b" * 40,
+        },
+    )
+    token = _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-labz1-dc02",
+        token="dc02-agent-token",
+        vmid=115,
+        computer_name="LABZ1-DC02",
+    )
+    agent_telemetry_pg.create_work_item(
+        pg_conn,
+        agent_id="agent-labz1-dc02",
+        kind="publish_setup_cm_module",
+        request={"artifact_id": artifact["artifact_id"]},
+        vmid=115,
+    )
+
+    response = agent_client.get(
+        f"/api/agent/v1/setup-cm-module-artifacts/{artifact['artifact_id']}",
+        headers=_bearer(token),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/zip")
+    assert response.content == b"private-module"
+
+
 @pytest.fixture
 def agent_client(pg_conn, monkeypatch):
     from web import agent_telemetry_pg, lab_bubbles_pg, ts_engine_pg
