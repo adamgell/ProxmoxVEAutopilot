@@ -1182,6 +1182,7 @@ static void VerifySetupCmMarkerDeploymentContracts()
             requiredValues.Add("Add-CMScriptDeploymentType");
             requiredValues.Add("New-CMApplicationDeployment");
             requiredValues.Add("Start-CMContentDistribution");
+            requiredValues.Add("already been distributed");
             requiredValues.Add("\\\\LABZ1-CM01.test.gell.one\\C$");
         }
         foreach (var value in requiredValues)
