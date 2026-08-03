@@ -117,6 +117,12 @@ class SetupCmClientInstallBody(BaseModel):
         return self
 
 
+class SetupCmModulePublicationBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str = Field(pattern=r"^[0-9a-f-]{36}$")
+
+
 class SetupCmSourceDiagnosticsBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -178,6 +184,39 @@ def queue_setup_cm_client_install(agent_id: str, body: SetupCmClientInstallBody)
             agent_id=agent_id,
             kind="setup_cm_client_install",
             request=body.model_dump(),
+            vmid=device.get("vmid"),
+        )
+    return _public_work_item(work)
+
+
+@router.post("/agents/{agent_id}/module-publications", status_code=202)
+def queue_setup_cm_module_publication(
+    agent_id: str,
+    body: SetupCmModulePublicationBody,
+):
+    if agent_id != "agent-labz1-dc02":
+        raise HTTPException(
+            status_code=422,
+            detail="module publication target must be agent-labz1-dc02",
+        )
+    artifact = setup_artifacts.get_artifact(body.artifact_id, kind="setup-cm-module")
+    if not artifact:
+        raise HTTPException(status_code=404, detail="setup-cm-module artifact not found")
+    metadata = artifact.get("metadata") or {}
+    request = {
+        "artifact_id": artifact["artifact_id"],
+        "archive_sha256": artifact["sha256"],
+        "source_commit": metadata["source_commit"],
+    }
+    with _conn() as conn:
+        device = agent_telemetry_pg.get_device(conn, agent_id)
+        if not device:
+            raise HTTPException(status_code=404, detail=f"agent is not registered: {agent_id}")
+        work = agent_telemetry_pg.create_work_item(
+            conn,
+            agent_id=agent_id,
+            kind="publish_setup_cm_module",
+            request=request,
             vmid=device.get("vmid"),
         )
     return _public_work_item(work)
