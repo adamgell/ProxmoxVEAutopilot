@@ -1027,7 +1027,8 @@ static void VerifySetupCmHealthClientTargetReconciliationContracts()
         "RING0IVY24-01",
         "previous_client_name",
         "client_name",
-        "(?:[ \\t]*\\r?\\n)*",
+        "TrimStart([char]0xFEFF)",
+        "testClient block lines",
     })
     {
         Assert(
