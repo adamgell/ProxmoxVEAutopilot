@@ -1069,6 +1069,7 @@ static void VerifySetupCmConsoleDomainAdminsContracts()
         "SMS Admins",
         "MachineLaunchRestriction",
         "DefaultLaunchPermission",
+        "[System.Security.AccessControl.AceFlags]::None",
         "sms_admins_membership",
         "machine_launch_remote_activation",
         "default_launch_remote_activation",

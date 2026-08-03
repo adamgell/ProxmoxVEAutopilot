@@ -48,7 +48,7 @@ function Grant-DcomRemoteActivation {
     }
     if (-not (Test-DcomRemoteActivation -SecurityDescriptor $current -SidValue $PrincipalSid.Value)) {
         $newAce = [System.Security.AccessControl.CommonAce]::new(
-            $false,
+            [System.Security.AccessControl.AceFlags]::None,
             [System.Security.AccessControl.AceQualifier]::AccessAllowed,
             $dcomRemoteActivationRights,
             $PrincipalSid,
