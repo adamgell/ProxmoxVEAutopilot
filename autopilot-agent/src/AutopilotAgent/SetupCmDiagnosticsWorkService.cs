@@ -24,6 +24,8 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "AutopilotAgent.SetupCmClientNetworkRepair.ps1";
     public const string HealthClientTargetReconciliationScriptResourceName =
         "AutopilotAgent.SetupCmHealthClientTargetReconciliation.ps1";
+    public const string ConsoleDomainAdminsScriptResourceName =
+        "AutopilotAgent.SetupCmConsoleDomainAdmins.ps1";
     public static readonly string[] SupportedKinds =
     [
         "setup_cm_diagnostics",
@@ -32,6 +34,7 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "setup_cm_content_location_remediation",
         "setup_cm_client_network_repair",
         "setup_cm_health_client_target_reconciliation",
+        "setup_cm_console_domain_admins",
     ];
 
     public async Task ProcessAsync(
@@ -69,6 +72,14 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 StringComparison.Ordinal))
         {
             await ProcessHealthClientTargetReconciliationAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_console_domain_admins",
+                StringComparison.Ordinal))
+        {
+            await ProcessConsoleDomainAdminsAsync(config, work, cancellationToken);
             return;
         }
 
@@ -175,6 +186,27 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         var result = ParseHealthClientTargetReconciliationResult(output.Stdout);
         await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
         log.Info($"Setup-CM health client target reconciliation completed ({work.Id}).");
+    }
+
+    private async Task ProcessConsoleDomainAdminsAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, ConsoleDomainAdminsScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM console Domain Admins assignment failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        var result = ParseConsoleDomainAdminsResult(output.Stdout);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM console Domain Admins assignment completed ({work.Id}).");
     }
 
     public static SetupCmDiagnosticsRequest ValidateRequest(
@@ -660,6 +692,39 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         {
             throw new InvalidOperationException(
                 "Setup-CM health client target reconciliation returned unexpected fields.");
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseConsoleDomainAdminsResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM console Domain Admins output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM console Domain Admins output must be a JSON object.");
+        }
+        if (!document.RootElement.TryGetProperty("principal", out var principal)
+            || principal.ValueKind != JsonValueKind.String
+            || !principal.GetString()!.EndsWith("\\Domain Admins", StringComparison.OrdinalIgnoreCase)
+            || !document.RootElement.TryGetProperty("full_administrator", out var fullAdministrator)
+            || fullAdministrator.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("default_scope", out var defaultScope)
+            || defaultScope.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("changed", out var changed)
+            || (changed.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+            || document.RootElement.EnumerateObject().Count() != 4)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM console Domain Admins assignment did not produce the required readback.");
         }
         return document.RootElement.EnumerateObject().ToDictionary(
             property => property.Name,

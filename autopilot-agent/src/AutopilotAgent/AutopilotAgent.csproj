@@ -23,5 +23,6 @@
     <EmbeddedResource Include="SetupCmContentLocationRemediation.ps1" />
     <EmbeddedResource Include="SetupCmClientNetworkRepair.ps1" />
     <EmbeddedResource Include="SetupCmHealthClientTargetReconciliation.ps1" />
+    <EmbeddedResource Include="SetupCmConsoleDomainAdmins.ps1" />
   </ItemGroup>
 </Project>

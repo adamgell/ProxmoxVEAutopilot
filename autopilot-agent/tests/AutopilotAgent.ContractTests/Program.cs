@@ -21,6 +21,7 @@ VerifySetupCmContentLocationDiagnosticsContracts();
 VerifySetupCmContentLocationRemediationContracts();
 VerifySetupCmClientNetworkRepairContracts();
 VerifySetupCmHealthClientTargetReconciliationContracts();
+VerifySetupCmConsoleDomainAdminsContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -1034,6 +1035,43 @@ static void VerifySetupCmHealthClientTargetReconciliationContracts()
         Assert(
             source.Contains(value, StringComparison.Ordinal),
             $"health client target reconciliation is missing fixed value: {value}");
+    }
+}
+
+static void VerifySetupCmConsoleDomainAdminsContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+            "setup_cm_console_domain_admins"),
+        "Setup-CM console Domain Admins kind is not registered");
+
+    Assert(
+        SetupCmDiagnosticsWorkService.ConsoleDomainAdminsScriptResourceName
+            == "AutopilotAgent.SetupCmConsoleDomainAdmins.ps1",
+        "Setup-CM console Domain Admins does not use the fixed packaged script");
+
+    var script = Path.Combine(
+        "autopilot-agent",
+        "src",
+        "AutopilotAgent",
+        "SetupCmConsoleDomainAdmins.ps1");
+    Assert(File.Exists(script), "Setup-CM console Domain Admins script is missing");
+
+    var source = File.ReadAllText(script);
+    foreach (var value in new[]
+    {
+        "Domain Admins",
+        "Full Administrator",
+        "Default",
+        "Add-CMSecurityRoleToAdministrativeUser",
+        "Add-CMSecurityScopeToAdministrativeUser",
+        "full_administrator",
+        "default_scope",
+    })
+    {
+        Assert(
+            source.Contains(value, StringComparison.Ordinal),
+            $"console Domain Admins script is missing fixed value: {value}");
     }
 }
 

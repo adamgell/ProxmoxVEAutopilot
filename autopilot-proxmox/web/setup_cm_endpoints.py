@@ -19,6 +19,7 @@ _SETUP_CM_MODULE_MAX_BYTES = 64 * 1024 * 1024
 _SETUP_CM_MODULE_UPLOAD_CHUNK_BYTES = 1024 * 1024
 _LABZ1_CLIENT_NETWORK_REPAIR_AGENT_ID = "agent-ring0ivy24-01"
 _LABZ1_HEALTH_CLIENT_TARGET_RECONCILIATION_AGENT_ID = "agent-labz1-cm01"
+_LABZ1_CONSOLE_DOMAIN_ADMINS_AGENT_ID = "agent-labz1-cm01"
 _WORK_KIND_BY_STAGE = {
     "acquire": "setup_cm_acquire",
     "sql": "setup_cm_sql",
@@ -230,6 +231,27 @@ def queue_setup_cm_health_client_target_reconciliation(agent_id: str):
             conn,
             agent_id=agent_id,
             kind="setup_cm_health_client_target_reconciliation",
+            request={},
+            vmid=device.get("vmid"),
+        )
+    return _public_work_item(work)
+
+
+@router.post("/agents/{agent_id}/console-domain-admins", status_code=202)
+def queue_setup_cm_console_domain_admins(agent_id: str):
+    if agent_id != _LABZ1_CONSOLE_DOMAIN_ADMINS_AGENT_ID:
+        raise HTTPException(
+            status_code=422,
+            detail="console Domain Admins target must be agent-labz1-cm01",
+        )
+    with _conn() as conn:
+        device = agent_telemetry_pg.get_device(conn, agent_id)
+        if not device:
+            raise HTTPException(status_code=404, detail=f"agent is not registered: {agent_id}")
+        work = agent_telemetry_pg.create_work_item(
+            conn,
+            agent_id=agent_id,
+            kind="setup_cm_console_domain_admins",
             request={},
             vmid=device.get("vmid"),
         )
