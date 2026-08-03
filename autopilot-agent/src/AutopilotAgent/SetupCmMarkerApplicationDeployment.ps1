@@ -10,6 +10,7 @@ $applicationName = 'LABZ1 MECM Marker Application'
 $deploymentTypeName = 'Write MECM Application Marker'
 $markerContent = 'LABZ1 MECM Marker Application deployment succeeded'
 $sourcePath = 'C:\ProgramData\SetupCm\MecmMarkerApplication'
+$sourceContentLocation = '\\LABZ1-CM01.test.gell.one\C$\ProgramData\SetupCm\MecmMarkerApplication'
 $sourceScriptPath = Join-Path $sourcePath 'Install-MecmMarkerApplication.ps1'
 $changed = $false
 
@@ -90,7 +91,7 @@ try {
     }
     if ($deploymentTypes.Count -eq 0) {
         $detectionClause = New-CMDetectionClauseFile -Path 'C:\ProgramData\SetupCm\MecmMarkerApplication' -FileName 'installed-by-mecm-application.txt' -Existence -ErrorAction Stop
-        Add-CMScriptDeploymentType -ApplicationName $applicationName -DeploymentTypeName $deploymentTypeName -InstallCommand 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File Install-MecmMarkerApplication.ps1' -ContentLocation $sourcePath -InstallationBehaviorType InstallForSystem -LogonRequirementType WhetherOrNotUserLoggedOn -UserInteractionMode Hidden -AddDetectionClause $detectionClause -ErrorAction Stop | Out-Null
+        Add-CMScriptDeploymentType -ApplicationName $applicationName -DeploymentTypeName $deploymentTypeName -InstallCommand 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File Install-MecmMarkerApplication.ps1' -ContentLocation $sourceContentLocation -InstallationBehaviorType InstallForSystem -LogonRequirementType WhetherOrNotUserLoggedOn -UserInteractionMode Hidden -AddDetectionClause $detectionClause -ErrorAction Stop | Out-Null
         $changed = $true
     }
 
