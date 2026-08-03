@@ -103,7 +103,8 @@ try {
     }
     $deploymentCreated = $false
     if ($deployments.Count -eq 0) {
-        New-CMPackageDeployment -StandardProgram -PackageId $package[0].PackageID -ProgramName $programName -CollectionId $collection[0].CollectionID -DeployPurpose Required -FastNetworkOption DownloadContentFromDistributionPointAndRunLocally -SlowNetworkOption DownloadContentFromDistributionPointAndLocally -RerunBehavior RerunIfFailedPreviousAttempt -RunFromSoftwareCenter $false -SystemRestart $false -SoftwareInstallation $true -Comment 'LABZ1 single-device MECM marker proof.' -ErrorAction Stop | Out-Null
+        $schedule = New-CMSchedule -Start (Get-Date).AddMinutes(1) -Nonrecurring -ErrorAction Stop
+        New-CMPackageDeployment -StandardProgram -PackageId $package[0].PackageID -ProgramName $programName -CollectionId $collection[0].CollectionID -DeployPurpose Required -FastNetworkOption DownloadContentFromDistributionPointAndRunLocally -SlowNetworkOption DownloadContentFromDistributionPointAndLocally -RerunBehavior RerunIfFailedPreviousAttempt -RunFromSoftwareCenter $false -SystemRestart $false -SoftwareInstallation $true -Schedule $schedule -Comment 'LABZ1 single-device MECM marker proof.' -ErrorAction Stop | Out-Null
         $deploymentCreated = $true
         $changed = $true
     }

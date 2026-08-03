@@ -1159,7 +1159,12 @@ static void VerifySetupCmMarkerDeploymentContracts()
             "src",
             "AutopilotAgent",
             scriptName));
-        foreach (var value in new[] { "RING0IVY24-01", "LAB", "MECM Marker" })
+        var requiredValues = new List<string> { "RING0IVY24-01", "LAB", "MECM Marker" };
+        if (scriptName == "SetupCmMarkerDeployment.ps1")
+        {
+            requiredValues.Add("New-CMSchedule");
+        }
+        foreach (var value in requiredValues)
         {
             Assert(
                 source.Contains(value, StringComparison.Ordinal),
