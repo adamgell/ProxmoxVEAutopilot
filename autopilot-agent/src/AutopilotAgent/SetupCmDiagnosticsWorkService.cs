@@ -14,6 +14,9 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
     private const int FailureOutputLimitChars = 4096;
     private static readonly Regex SiteCodePattern = new("^[A-Z0-9]{3}$", RegexOptions.CultureInvariant);
     private static readonly Regex ComputerNamePattern = new("^[A-Za-z0-9-]{1,63}$", RegexOptions.CultureInvariant);
+    private static readonly Regex ConsolePrincipalPattern = new(
+        @"^[^\\/:*?""<>|]+\\[^\\/:*?""<>|]+$",
+        RegexOptions.CultureInvariant);
 
     public const string DiagnosticScriptResourceName = "AutopilotAgent.SetupCmSourceDiagnostics.ps1";
     public const string ContentLocationDiagnosticScriptResourceName =
@@ -26,6 +29,8 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "AutopilotAgent.SetupCmHealthClientTargetReconciliation.ps1";
     public const string ConsoleDomainAdminsScriptResourceName =
         "AutopilotAgent.SetupCmConsoleDomainAdmins.ps1";
+    public const string ConsolePrincipalScriptResourceName =
+        "AutopilotAgent.SetupCmConsolePrincipal.ps1";
     public const string ConsoleConnectivityDiagnosticScriptResourceName =
         "AutopilotAgent.SetupCmConsoleConnectivityDiagnostics.ps1";
     public static readonly string[] SupportedKinds =
@@ -37,6 +42,7 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "setup_cm_client_network_repair",
         "setup_cm_health_client_target_reconciliation",
         "setup_cm_console_domain_admins",
+        "setup_cm_console_principal",
         "setup_cm_console_connectivity_diagnostics",
     ];
 
@@ -83,6 +89,14 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 StringComparison.Ordinal))
         {
             await ProcessConsoleDomainAdminsAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_console_principal",
+                StringComparison.Ordinal))
+        {
+            await ProcessConsolePrincipalAsync(config, work, cancellationToken);
             return;
         }
         if (string.Equals(
@@ -220,6 +234,27 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         log.Info($"Setup-CM console Domain Admins assignment completed ({work.Id}).");
     }
 
+    private async Task ProcessConsolePrincipalAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        var request = ValidateConsolePrincipalRequest(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, ConsolePrincipalScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, request, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM direct console principal assignment failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        var result = ParseConsolePrincipalResult(output.Stdout, request);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM direct console principal assignment completed ({work.Id}).");
+    }
+
     private async Task ProcessConsoleConnectivityDiagnosticsAsync(
         AgentConfig config,
         AgentWorkItem work,
@@ -256,6 +291,18 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             throw new InvalidOperationException("target_computer_name must be a NetBIOS computer name.");
         }
         return new SetupCmDiagnosticsRequest(siteCode, targetComputerName);
+    }
+
+    public static SetupCmConsolePrincipalRequest ValidateConsolePrincipalRequest(
+        IReadOnlyDictionary<string, JsonElement> values)
+    {
+        RequireOnlyFields(values, "principal");
+        var principal = RequiredString(values, "principal");
+        if (principal.Length > 256 || !ConsolePrincipalPattern.IsMatch(principal))
+        {
+            throw new InvalidOperationException("principal must be a DOMAIN\\account value.");
+        }
+        return new SetupCmConsolePrincipalRequest(principal);
     }
 
     public static SetupCmContentLocationDiagnosticsRequest ValidateContentLocationRequest(
@@ -396,6 +443,49 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             ?? throw new InvalidOperationException("Failed to start pwsh.exe for Setup-CM diagnostics.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(5));
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+            throw;
+        }
+        return new ProcessOutput(await stdoutTask, await stderrTask, process.ExitCode);
+    }
+
+    private static async Task<ProcessOutput> RunPowerShellAsync(
+        string scriptPath,
+        SetupCmConsolePrincipalRequest request,
+        CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "pwsh.exe",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-ExecutionPolicy");
+        startInfo.ArgumentList.Add("Bypass");
+        startInfo.ArgumentList.Add("-File");
+        startInfo.ArgumentList.Add(scriptPath);
+        startInfo.ArgumentList.Add("-Principal");
+        startInfo.ArgumentList.Add(request.Principal);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start pwsh.exe for direct console principal assignment.");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromMinutes(2));
         var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
         var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
         try
@@ -770,6 +860,43 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             StringComparer.Ordinal);
     }
 
+    private static Dictionary<string, object?> ParseConsolePrincipalResult(
+        string stdout,
+        SetupCmConsolePrincipalRequest request)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM direct console principal output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM direct console principal output must be a JSON object.");
+        }
+        RequireExactString(
+            document.RootElement,
+            "principal",
+            request.Principal,
+            StringComparison.OrdinalIgnoreCase);
+        if (!document.RootElement.TryGetProperty("full_administrator", out var fullAdministrator)
+            || fullAdministrator.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("default_scope", out var defaultScope)
+            || defaultScope.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("changed", out var changed)
+            || (changed.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+            || document.RootElement.EnumerateObject().Count() != 4)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM direct console principal assignment did not produce the required readback.");
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
     private static Dictionary<string, object?> ParseConsoleConnectivityDiagnosticResult(string stdout)
     {
         if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
@@ -876,6 +1003,8 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
 }
 
 public sealed record SetupCmDiagnosticsRequest(string SiteCode, string TargetComputerName);
+
+public sealed record SetupCmConsolePrincipalRequest(string Principal);
 
 public sealed record SetupCmContentLocationDiagnosticsRequest(
     string SiteCode,

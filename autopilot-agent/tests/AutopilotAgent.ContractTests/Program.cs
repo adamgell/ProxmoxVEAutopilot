@@ -22,6 +22,7 @@ VerifySetupCmContentLocationRemediationContracts();
 VerifySetupCmClientNetworkRepairContracts();
 VerifySetupCmHealthClientTargetReconciliationContracts();
 VerifySetupCmConsoleDomainAdminsContracts();
+VerifySetupCmConsolePrincipalContracts();
 VerifySetupCmConsoleConnectivityDiagnosticsContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
@@ -1080,6 +1081,57 @@ static void VerifySetupCmConsoleDomainAdminsContracts()
         Assert(
             source.Contains(value, StringComparison.Ordinal),
             $"console Domain Admins script is missing fixed value: {value}");
+    }
+}
+
+static void VerifySetupCmConsolePrincipalContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains("setup_cm_console_principal"),
+        "Setup-CM direct console principal repair kind is not registered");
+    Assert(
+        SetupCmDiagnosticsWorkService.ConsolePrincipalScriptResourceName
+            == "AutopilotAgent.SetupCmConsolePrincipal.ps1",
+        "Setup-CM direct console principal repair does not use the fixed packaged script");
+    var request = SetupCmDiagnosticsWorkService.ValidateConsolePrincipalRequest(
+        new Dictionary<string, JsonElement>
+        {
+            ["principal"] = JsonSerializer.SerializeToElement(@"TEST\adam"),
+        });
+    Assert(request.Principal == @"TEST\adam", "direct console principal must round-trip");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateConsolePrincipalRequest(
+            new Dictionary<string, JsonElement>
+            {
+                ["principal"] = JsonSerializer.SerializeToElement("adam"),
+            }),
+        "direct console principal accepted an unqualified account");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateConsolePrincipalRequest(
+            new Dictionary<string, JsonElement>
+            {
+                ["principal"] = JsonSerializer.SerializeToElement(@"TEST\adam"),
+                ["extra"] = JsonSerializer.SerializeToElement("must-not-be-accepted"),
+            }),
+        "direct console principal accepted an arbitrary request field");
+    var principalScript = File.ReadAllText(
+        Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "SetupCmConsolePrincipal.ps1"));
+    foreach (var value in new[]
+    {
+        "Get-CMAdministrativeUser",
+        "New-CMAdministrativeUser",
+        "Full Administrator",
+        "Default",
+        "principal",
+    })
+    {
+        Assert(
+            principalScript.Contains(value, StringComparison.Ordinal),
+            $"direct console principal repair is missing fixed value: {value}");
     }
 }
 
