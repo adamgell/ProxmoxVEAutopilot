@@ -751,9 +751,15 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             || fullAdministrator.ValueKind != JsonValueKind.True
             || !document.RootElement.TryGetProperty("default_scope", out var defaultScope)
             || defaultScope.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("sms_admins_membership", out var smsAdminsMembership)
+            || smsAdminsMembership.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("machine_launch_remote_activation", out var machineLaunchRemoteActivation)
+            || machineLaunchRemoteActivation.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("default_launch_remote_activation", out var defaultLaunchRemoteActivation)
+            || defaultLaunchRemoteActivation.ValueKind != JsonValueKind.True
             || !document.RootElement.TryGetProperty("changed", out var changed)
             || (changed.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
-            || document.RootElement.EnumerateObject().Count() != 4)
+            || document.RootElement.EnumerateObject().Count() != 7)
         {
             throw new InvalidOperationException(
                 "Setup-CM console Domain Admins assignment did not produce the required readback.");

@@ -7,6 +7,64 @@ $siteServer = 'LABZ1-CM01.test.gell.one'
 $roleName = 'Full Administrator'
 $scopeName = 'Default'
 $changed = $false
+$olePath = 'HKLM:\SOFTWARE\Microsoft\Ole'
+$dcomRemoteActivationRights = 0x15 # Execute + Remote Execute + Remote Activate
+
+function Test-DcomRemoteActivation {
+    param(
+        [byte[]]$SecurityDescriptor,
+        [string]$SidValue
+    )
+
+    $descriptor = [System.Security.AccessControl.RawSecurityDescriptor]::new($SecurityDescriptor, 0)
+    foreach ($ace in @($descriptor.DiscretionaryAcl)) {
+        if ($ace -is [System.Security.AccessControl.KnownAce] -and
+            $ace.AceType -eq [System.Security.AccessControl.AceType]::AccessAllowed -and
+            $ace.SecurityIdentifier.Value -eq $SidValue -and
+            (($ace.AccessMask -band $dcomRemoteActivationRights) -eq $dcomRemoteActivationRights)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Grant-DcomRemoteActivation {
+    param(
+        [string]$ValueName,
+        [System.Security.Principal.SecurityIdentifier]$PrincipalSid
+    )
+
+    $current = [byte[]](Get-ItemPropertyValue -LiteralPath $olePath -Name $ValueName -ErrorAction Stop)
+    $descriptor = [System.Security.AccessControl.RawSecurityDescriptor]::new($current, 0)
+    if (-not $descriptor.DiscretionaryAcl) {
+        throw "$ValueName has no discretionary ACL."
+    }
+    foreach ($ace in @($descriptor.DiscretionaryAcl)) {
+        if ($ace -is [System.Security.AccessControl.KnownAce] -and
+            $ace.AceType -eq [System.Security.AccessControl.AceType]::AccessDenied -and
+            $ace.SecurityIdentifier.Value -eq $PrincipalSid.Value) {
+            throw "$ValueName explicitly denies the SMS Admins group; refusing to override that deny ACE."
+        }
+    }
+    if (-not (Test-DcomRemoteActivation -SecurityDescriptor $current -SidValue $PrincipalSid.Value)) {
+        $newAce = [System.Security.AccessControl.CommonAce]::new(
+            $false,
+            [System.Security.AccessControl.AceQualifier]::AccessAllowed,
+            $dcomRemoteActivationRights,
+            $PrincipalSid,
+            $false,
+            $null)
+        $descriptor.DiscretionaryAcl.InsertAce($descriptor.DiscretionaryAcl.Count, $newAce)
+        $updated = [byte[]]::new($descriptor.BinaryLength)
+        $descriptor.GetBinaryForm($updated, 0)
+        Set-ItemProperty -LiteralPath $olePath -Name $ValueName -Value $updated -Type Binary -ErrorAction Stop
+        $script:changed = $true
+    }
+    $readBack = [byte[]](Get-ItemPropertyValue -LiteralPath $olePath -Name $ValueName -ErrorAction Stop)
+    if (-not (Test-DcomRemoteActivation -SecurityDescriptor $readBack -SidValue $PrincipalSid.Value)) {
+        throw "$ValueName did not read back Remote Activation for SMS Admins."
+    }
+}
 
 $computerSystem = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
 if (-not $computerSystem.PartOfDomain -or [string]::IsNullOrWhiteSpace($computerSystem.Domain)) {
@@ -21,6 +79,24 @@ if (-not $domainAdminsSid.Value.EndsWith('-512', [System.StringComparison]::Ordi
     throw 'The resolved Domain Admins principal does not have the built-in RID 512.'
 }
 $principal = $domainAdminsSid.Translate([System.Security.Principal.NTAccount]).Value
+$smsAdminsSid = ([System.Security.Principal.NTAccount]::new(
+    $env:COMPUTERNAME,
+    'SMS Admins'
+)).Translate([System.Security.Principal.SecurityIdentifier])
+$smsAdminsPrincipal = $smsAdminsSid.Translate([System.Security.Principal.NTAccount]).Value
+
+$smsAdminsMembers = @(Get-LocalGroupMember -Group 'SMS Admins' -ErrorAction Stop)
+if (-not ($smsAdminsMembers | Where-Object { $_.SID -eq $domainAdminsSid.Value })) {
+    Add-LocalGroupMember -Group 'SMS Admins' -Member $principal -ErrorAction Stop
+    $changed = $true
+}
+$smsAdminsReadBack = @(Get-LocalGroupMember -Group 'SMS Admins' -ErrorAction Stop)
+if (-not ($smsAdminsReadBack | Where-Object { $_.SID -eq $domainAdminsSid.Value })) {
+    throw 'Domain Admins did not read back as a member of local SMS Admins.'
+}
+
+Grant-DcomRemoteActivation -ValueName 'MachineLaunchRestriction' -PrincipalSid $smsAdminsSid
+Grant-DcomRemoteActivation -ValueName 'DefaultLaunchPermission' -PrincipalSid $smsAdminsSid
 
 $adminUiPath = [string]$env:SMS_ADMIN_UI_PATH
 if ([string]::IsNullOrWhiteSpace($adminUiPath)) {
@@ -74,6 +150,9 @@ try {
         principal = $principal
         full_administrator = [bool]$fullAdministrator
         default_scope = [bool]$defaultScope
+        sms_admins_membership = $true
+        machine_launch_remote_activation = $true
+        default_launch_remote_activation = $true
         changed = [bool]$changed
     } | ConvertTo-Json -Compress
 }

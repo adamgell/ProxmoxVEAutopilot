@@ -1066,6 +1066,12 @@ static void VerifySetupCmConsoleDomainAdminsContracts()
         "Default",
         "Add-CMSecurityRoleToAdministrativeUser",
         "Add-CMSecurityScopeToAdministrativeUser",
+        "SMS Admins",
+        "MachineLaunchRestriction",
+        "DefaultLaunchPermission",
+        "sms_admins_membership",
+        "machine_launch_remote_activation",
+        "default_launch_remote_activation",
         "full_administrator",
         "default_scope",
     })
