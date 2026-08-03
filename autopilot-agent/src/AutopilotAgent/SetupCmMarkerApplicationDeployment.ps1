@@ -102,7 +102,8 @@ try {
     $deploymentCreated = $false
     if ($deployments.Count -eq 0) {
         $deploymentTime = (Get-Date).AddMinutes(-1)
-        New-CMApplicationDeployment -Name $applicationName -CollectionId $collection[0].CollectionID -DeployAction Install -DeployPurpose Required -AvailableDateTime $deploymentTime -DeadlineDateTime $deploymentTime -TimeBaseOn LocalTime -UserNotification HideAll -DistributeContent -DistributionPointName $siteServer -Comment 'LABZ1 single-device MECM Application marker proof.' -ErrorAction Stop | Out-Null
+        Start-CMContentDistribution -ApplicationName $applicationName -DistributionPointName $siteServer -ErrorAction Stop | Out-Null
+        New-CMApplicationDeployment -Name $applicationName -CollectionId $collection[0].CollectionID -DeployAction Install -DeployPurpose Required -AvailableDateTime $deploymentTime -DeadlineDateTime $deploymentTime -TimeBaseOn LocalTime -UserNotification HideAll -Comment 'LABZ1 single-device MECM Application marker proof.' -ErrorAction Stop | Out-Null
         $deploymentCreated = $true
         $changed = $true
     }
