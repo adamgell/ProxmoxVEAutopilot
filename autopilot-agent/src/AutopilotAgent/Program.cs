@@ -16,6 +16,7 @@ var builder = Host.CreateDefaultBuilder(args)
         services.AddSingleton<SetupCmWorkService>();
         services.AddSingleton<SetupCmModulePublishWorkService>();
         services.AddSingleton<SetupCmDiagnosticsWorkService>();
+        services.AddSingleton<RemotePowerShellWorkService>();
         services.AddSingleton<OsDeployRoleWorkService>();
         services.AddSingleton<OsdV2WorkService>();
         services.AddSingleton<BuildHostWorkService>();

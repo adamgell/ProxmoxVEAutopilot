@@ -559,6 +559,7 @@ from web.osd_v2_endpoints import (
     content_api_router as _content_api_router,
 )
 from web.agent_v1_endpoints import router as _agent_v1_router
+from web.remote_powershell_endpoints import router as _remote_powershell_router
 from web.setup_cm_endpoints import router as _setup_cm_router
 from web.cloudosd_endpoints import router as _cloudosd_router
 from web.sdn_endpoints import router as _sdn_router
@@ -576,6 +577,7 @@ app.include_router(_osd_v2_api_router)
 app.include_router(_content_api_router)
 app.include_router(_winpe_api_router)
 app.include_router(_agent_v1_router)
+app.include_router(_remote_powershell_router)
 app.include_router(_setup_cm_router)
 app.include_router(_cloudosd_router)
 app.include_router(_sdn_router)

@@ -25,6 +25,7 @@ VerifySetupCmConsoleDomainAdminsContracts();
 VerifySetupCmConsolePrincipalContracts();
 VerifySetupCmMarkerDeploymentContracts();
 VerifySetupCmConsoleConnectivityDiagnosticsContracts();
+VerifyRemotePowerShellContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -1198,6 +1199,38 @@ static void VerifySetupCmMarkerDeploymentContracts()
                 "marker application deployment must use the minimal documented required-deployment syntax");
         }
     }
+}
+
+static void VerifyRemotePowerShellContracts()
+{
+    Assert(
+        RemotePowerShellWorkService.SupportedKind == "remote_powershell",
+        "remote PowerShell work kind is not registered");
+
+    var request = RemotePowerShellWorkService.ValidateRequest(
+        new Dictionary<string, JsonElement>
+        {
+            ["command_id"] = JsonSerializer.SerializeToElement("endpoint_facts"),
+        });
+    Assert(
+        request.CommandId == "endpoint_facts",
+        "endpoint facts command did not round-trip through the Agent contract");
+
+    AssertThrows<InvalidOperationException>(
+        () => RemotePowerShellWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>
+            {
+                ["command_id"] = JsonSerializer.SerializeToElement("endpoint_facts"),
+                ["script"] = JsonSerializer.SerializeToElement("Get-ChildItem"),
+            }),
+        "remote PowerShell accepted arbitrary script input");
+    AssertThrows<InvalidOperationException>(
+        () => RemotePowerShellWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>
+            {
+                ["command_id"] = JsonSerializer.SerializeToElement("restart_endpoint"),
+            }),
+        "remote PowerShell accepted an unsupported runbook");
 }
 
 static void VerifySetupCmConsoleConnectivityDiagnosticsContracts()

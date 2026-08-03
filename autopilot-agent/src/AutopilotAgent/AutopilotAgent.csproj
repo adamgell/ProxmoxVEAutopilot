@@ -30,5 +30,6 @@
     <EmbeddedResource Include="SetupCmMarkerApplicationDeployment.ps1" />
     <EmbeddedResource Include="SetupCmMarkerApplicationVerification.ps1" />
     <EmbeddedResource Include="SetupCmConsoleConnectivityDiagnostics.ps1" />
+    <EmbeddedResource Include="RemotePowerShellEndpointFacts.ps1" />
   </ItemGroup>
 </Project>

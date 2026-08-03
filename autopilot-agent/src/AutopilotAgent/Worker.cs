@@ -10,6 +10,7 @@ public sealed class Worker(
     SetupCmWorkService setupCmWorkService,
     SetupCmModulePublishWorkService setupCmModulePublishWorkService,
     SetupCmDiagnosticsWorkService setupCmDiagnosticsWorkService,
+    RemotePowerShellWorkService remotePowerShellWorkService,
     OsdV2WorkService osdV2WorkService,
     BuildHostWorkService buildHostWorkService,
     AgentUpdateService agentUpdateService,
@@ -124,6 +125,7 @@ public sealed class Worker(
         supportedKinds.AddRange(SetupCmWorkService.SupportedKinds);
         supportedKinds.Add(SetupCmModulePublishWorkService.SupportedKind);
         supportedKinds.AddRange(SetupCmDiagnosticsWorkService.SupportedKinds);
+        supportedKinds.Add(RemotePowerShellWorkService.SupportedKind);
         if (string.Equals(config.Phase, "build-host", StringComparison.OrdinalIgnoreCase)
             || string.Equals(config.Role, "build-host", StringComparison.OrdinalIgnoreCase))
         {
@@ -167,6 +169,10 @@ public sealed class Worker(
                     StringComparer.Ordinal):
                     await setupCmDiagnosticsWorkService.ProcessAsync(config, work, cancellationToken);
                     log.Info($"Completed Setup-CM diagnostic work item {work.Id}.");
+                    break;
+                case RemotePowerShellWorkService.SupportedKind:
+                    await remotePowerShellWorkService.ProcessAsync(config, work, cancellationToken);
+                    log.Info($"Completed remote PowerShell work item {work.Id}.");
                     break;
                 case var kind when BuildHostWorkService.SupportedKinds.Contains(
                     kind,
