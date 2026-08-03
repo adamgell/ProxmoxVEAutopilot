@@ -20,6 +20,7 @@ VerifySetupCmDiagnosticsContracts();
 VerifySetupCmContentLocationDiagnosticsContracts();
 VerifySetupCmContentLocationRemediationContracts();
 VerifySetupCmClientNetworkRepairContracts();
+VerifySetupCmHealthClientTargetReconciliationContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -998,6 +999,39 @@ static void VerifySetupCmClientNetworkRepairContracts()
         Assert(
             repairScript.Contains(value, StringComparison.Ordinal),
             $"client network repair is missing fixed value: {value}");
+    }
+}
+
+static void VerifySetupCmHealthClientTargetReconciliationContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+            "setup_cm_health_client_target_reconciliation"),
+        "Setup-CM health client target reconciliation kind is not registered");
+
+    var reconciliationScript = Path.Combine(
+        "autopilot-agent",
+        "src",
+        "AutopilotAgent",
+        "SetupCmHealthClientTargetReconciliation.ps1");
+    Assert(
+        File.Exists(reconciliationScript),
+        "Setup-CM health client target reconciliation script is missing");
+
+    var source = File.ReadAllText(reconciliationScript);
+    foreach (var value in new[]
+    {
+        @"C:\ProgramData\SetupCm\labz1.local.yaml",
+        "testClient:",
+        "LABZ1-CMCLIENT01",
+        "RING0IVY24-01",
+        "previous_client_name",
+        "client_name",
+    })
+    {
+        Assert(
+            source.Contains(value, StringComparison.Ordinal),
+            $"health client target reconciliation is missing fixed value: {value}");
     }
 }
 

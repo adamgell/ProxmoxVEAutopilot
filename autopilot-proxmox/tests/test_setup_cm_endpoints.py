@@ -142,3 +142,41 @@ def test_client_network_repair_rejects_any_other_agent(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 422
+
+
+def test_health_client_target_reconciliation_queues_only_for_cm01(
+    pg_conn,
+    monkeypatch,
+    tmp_path,
+):
+    from web import agent_telemetry_pg
+
+    client = _client_with_artifact_root(monkeypatch, tmp_path)
+    agent_telemetry_pg.reset_for_tests(pg_conn)
+    agent_telemetry_pg.init(pg_conn)
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="agent-labz1-cm01",
+        token="cm01-test-token",
+        vmid=107,
+    )
+
+    response = client.post(
+        "/api/setup-cm/v1/agents/agent-labz1-cm01/health-client-target-reconciliation",
+        json={},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["kind"] == "setup_cm_health_client_target_reconciliation"
+    assert response.json()["request"] == {}
+
+
+def test_health_client_target_reconciliation_rejects_any_other_agent(monkeypatch, tmp_path):
+    client = _client_with_artifact_root(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/setup-cm/v1/agents/agent-other/health-client-target-reconciliation",
+        json={},
+    )
+
+    assert response.status_code == 422

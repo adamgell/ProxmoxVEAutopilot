@@ -22,6 +22,8 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "AutopilotAgent.SetupCmContentLocationRemediation.ps1";
     public const string ClientNetworkRepairScriptResourceName =
         "AutopilotAgent.SetupCmClientNetworkRepair.ps1";
+    public const string HealthClientTargetReconciliationScriptResourceName =
+        "AutopilotAgent.SetupCmHealthClientTargetReconciliation.ps1";
     public static readonly string[] SupportedKinds =
     [
         "setup_cm_diagnostics",
@@ -29,6 +31,7 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "setup_cm_content_location_diagnostics",
         "setup_cm_content_location_remediation",
         "setup_cm_client_network_repair",
+        "setup_cm_health_client_target_reconciliation",
     ];
 
     public async Task ProcessAsync(
@@ -58,6 +61,14 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 StringComparison.Ordinal))
         {
             await ProcessClientNetworkRepairAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_health_client_target_reconciliation",
+                StringComparison.Ordinal))
+        {
+            await ProcessHealthClientTargetReconciliationAsync(config, work, cancellationToken);
             return;
         }
 
@@ -143,6 +154,27 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         var result = ParseClientNetworkRepairResult(output.Stdout);
         await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
         log.Info($"Setup-CM client network repair completed ({work.Id}).");
+    }
+
+    private async Task ProcessHealthClientTargetReconciliationAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, HealthClientTargetReconciliationScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM health client target reconciliation failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        var result = ParseHealthClientTargetReconciliationResult(output.Stdout);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM health client target reconciliation completed ({work.Id}).");
     }
 
     public static SetupCmDiagnosticsRequest ValidateRequest(
@@ -602,6 +634,32 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         if (errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() != 0)
         {
             throw new InvalidOperationException("Setup-CM client network repair returned errors.");
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseHealthClientTargetReconciliationResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM health client target reconciliation output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM health client target reconciliation output must be a JSON object.");
+        }
+        RequireExactString(document.RootElement, "previous_client_name", "LABZ1-CMCLIENT01");
+        RequireExactString(document.RootElement, "client_name", "RING0IVY24-01");
+        if (document.RootElement.EnumerateObject().Count() != 2)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM health client target reconciliation returned unexpected fields.");
         }
         return document.RootElement.EnumerateObject().ToDictionary(
             property => property.Name,
