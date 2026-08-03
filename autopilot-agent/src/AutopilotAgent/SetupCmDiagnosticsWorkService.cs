@@ -35,6 +35,10 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "AutopilotAgent.SetupCmMarkerDeployment.ps1";
     public const string MarkerDeploymentVerificationScriptResourceName =
         "AutopilotAgent.SetupCmMarkerDeploymentVerification.ps1";
+    public const string MarkerApplicationDeploymentScriptResourceName =
+        "AutopilotAgent.SetupCmMarkerApplicationDeployment.ps1";
+    public const string MarkerApplicationVerificationScriptResourceName =
+        "AutopilotAgent.SetupCmMarkerApplicationVerification.ps1";
     public const string ConsoleConnectivityDiagnosticScriptResourceName =
         "AutopilotAgent.SetupCmConsoleConnectivityDiagnostics.ps1";
     public static readonly string[] SupportedKinds =
@@ -49,6 +53,8 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         "setup_cm_console_principal",
         "setup_cm_marker_deployment",
         "setup_cm_marker_deployment_verification",
+        "setup_cm_marker_application_deployment",
+        "setup_cm_marker_application_verification",
         "setup_cm_console_connectivity_diagnostics",
     ];
 
@@ -116,6 +122,22 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 StringComparison.Ordinal))
         {
             await ProcessMarkerDeploymentVerificationAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_marker_application_deployment",
+                StringComparison.Ordinal))
+        {
+            await ProcessMarkerApplicationDeploymentAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_marker_application_verification",
+                StringComparison.Ordinal))
+        {
+            await ProcessMarkerApplicationVerificationAsync(config, work, cancellationToken);
             return;
         }
         if (string.Equals(
@@ -318,6 +340,52 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             ParseMarkerDeploymentVerificationResult(output.Stdout),
             cancellationToken);
         log.Info($"Setup-CM marker deployment verification completed ({work.Id}).");
+    }
+
+    private async Task ProcessMarkerApplicationDeploymentAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, MarkerApplicationDeploymentScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM marker application deployment failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        await apiClient.CompleteWorkAsync(
+            config,
+            work.Id,
+            ParseMarkerDeploymentResult(output.Stdout),
+            cancellationToken);
+        log.Info($"Setup-CM marker application deployment completed ({work.Id}).");
+    }
+
+    private async Task ProcessMarkerApplicationVerificationAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, MarkerApplicationVerificationScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM marker application verification failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        await apiClient.CompleteWorkAsync(
+            config,
+            work.Id,
+            ParseMarkerDeploymentVerificationResult(output.Stdout),
+            cancellationToken);
+        log.Info($"Setup-CM marker application verification completed ({work.Id}).");
     }
 
     private async Task ProcessConsoleConnectivityDiagnosticsAsync(

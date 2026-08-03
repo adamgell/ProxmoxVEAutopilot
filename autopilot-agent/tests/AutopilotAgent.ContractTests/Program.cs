@@ -1149,6 +1149,8 @@ static void VerifySetupCmMarkerDeploymentContracts()
     {
         "setup_cm_marker_deployment",
         "setup_cm_marker_deployment_verification",
+        "setup_cm_marker_application_deployment",
+        "setup_cm_marker_application_verification",
     })
     {
         Assert(
@@ -1159,6 +1161,8 @@ static void VerifySetupCmMarkerDeploymentContracts()
     {
         "SetupCmMarkerDeployment.ps1",
         "SetupCmMarkerDeploymentVerification.ps1",
+        "SetupCmMarkerApplicationDeployment.ps1",
+        "SetupCmMarkerApplicationVerification.ps1",
     })
     {
         var source = File.ReadAllText(Path.Combine(
@@ -1171,6 +1175,12 @@ static void VerifySetupCmMarkerDeploymentContracts()
         {
             requiredValues.Add("New-CMSchedule");
             requiredValues.Add("Global:CMPSSuppressFastNotUsedCheck");
+        }
+        if (scriptName == "SetupCmMarkerApplicationDeployment.ps1")
+        {
+            requiredValues.Add("New-CMApplication");
+            requiredValues.Add("Add-CMScriptDeploymentType");
+            requiredValues.Add("New-CMApplicationDeployment");
         }
         foreach (var value in requiredValues)
         {
