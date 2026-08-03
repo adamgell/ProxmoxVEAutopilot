@@ -968,7 +968,7 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         {
             throw new InvalidOperationException("Setup-CM marker deployment output exceeded the 256 KiB limit.");
         }
-        using var document = JsonDocument.Parse(stdout);
+        using var document = JsonDocument.Parse(ExtractJsonObject(stdout));
         if (document.RootElement.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException("Setup-CM marker deployment output must be a JSON object.");
@@ -1014,7 +1014,7 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             throw new InvalidOperationException(
                 "Setup-CM marker deployment verification output exceeded the 256 KiB limit.");
         }
-        using var document = JsonDocument.Parse(stdout);
+        using var document = JsonDocument.Parse(ExtractJsonObject(stdout));
         if (document.RootElement.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException(
@@ -1072,6 +1072,17 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
     public static string NormalizeContentLocationBoundaryValue(string clientSubnet)
     {
         return clientSubnet.Split('/', 2)[0];
+    }
+
+    public static string ExtractJsonObject(string stdout)
+    {
+        var start = stdout.IndexOf('{');
+        var end = stdout.LastIndexOf('}');
+        if (start < 0 || end < start)
+        {
+            throw new InvalidOperationException("Setup-CM marker deployment output did not contain a JSON object.");
+        }
+        return stdout[start..(end + 1)];
     }
 
     public static string ExtractContentLocationDistributionPointHost(string serverNalPath)

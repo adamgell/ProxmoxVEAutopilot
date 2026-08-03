@@ -1138,6 +1138,13 @@ static void VerifySetupCmConsolePrincipalContracts()
 
 static void VerifySetupCmMarkerDeploymentContracts()
 {
+    Assert(
+        SetupCmDiagnosticsWorkService.ExtractJsonObject("\u001b[33mwarning\u001b[0m\n{\"ok\":true}\n")
+            == "{\"ok\":true}",
+        "marker deployment result parser must isolate JSON after ConfigMgr console output");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ExtractJsonObject("warning without a result"),
+        "marker deployment result parser accepted output without a JSON object");
     foreach (var kind in new[]
     {
         "setup_cm_marker_deployment",
