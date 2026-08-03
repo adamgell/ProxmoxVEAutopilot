@@ -786,7 +786,7 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         foreach (var name in new[]
         {
             "domain_admins_principal", "rbac", "interactive_principals",
-            "dcom", "recent_distributed_com_events", "errors",
+            "dcom", "console_log", "recent_distributed_com_events", "errors",
         })
         {
             if (!document.RootElement.TryGetProperty(name, out _))

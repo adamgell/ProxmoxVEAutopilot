@@ -9,13 +9,15 @@ $errors = [System.Collections.Generic.List[string]]::new()
 function Get-DcomAceSummary {
     param(
         [byte[]]$SecurityDescriptor,
-        [string]$DomainAdminsSid
+        [string]$DomainAdminsSid,
+        [string]$SmsAdminsSid
     )
 
     if (-not $SecurityDescriptor -or $SecurityDescriptor.Length -eq 0) {
         return [ordered]@{
             present = $false
             domain_admins_remote_activation = $false
+            sms_admins_remote_activation = $false
             builtin_administrators_remote_activation = $false
         }
     }
@@ -24,6 +26,7 @@ function Get-DcomAceSummary {
     $allow = [System.Security.AccessControl.AceType]::AccessAllowed
     $remoteActivation = 0x10
     $domainAdminsRemoteActivation = $false
+    $smsAdminsRemoteActivation = $false
     $builtinAdministratorsRemoteActivation = $false
     foreach ($ace in @($descriptor.DiscretionaryAcl)) {
         if ($ace.AceType -ne $allow -or -not ($ace -is [System.Security.AccessControl.KnownAce])) {
@@ -33,6 +36,9 @@ function Get-DcomAceSummary {
         if ($hasRemoteActivation -and $ace.SecurityIdentifier.Value -eq $DomainAdminsSid) {
             $domainAdminsRemoteActivation = $true
         }
+        if ($hasRemoteActivation -and $ace.SecurityIdentifier.Value -eq $SmsAdminsSid) {
+            $smsAdminsRemoteActivation = $true
+        }
         if ($hasRemoteActivation -and $ace.SecurityIdentifier.Value -eq 'S-1-5-32-544') {
             $builtinAdministratorsRemoteActivation = $true
         }
@@ -40,6 +46,7 @@ function Get-DcomAceSummary {
     return [ordered]@{
         present = $true
         domain_admins_remote_activation = [bool]$domainAdminsRemoteActivation
+        sms_admins_remote_activation = [bool]$smsAdminsRemoteActivation
         builtin_administrators_remote_activation = [bool]$builtinAdministratorsRemoteActivation
     }
 }
@@ -57,6 +64,10 @@ if (-not $domainAdminsSid.Value.EndsWith('-512', [System.StringComparison]::Ordi
     throw 'The resolved Domain Admins principal does not have the built-in RID 512.'
 }
 $domainAdminsPrincipal = $domainAdminsSid.Translate([System.Security.Principal.NTAccount]).Value
+$smsAdminsSid = ([System.Security.Principal.NTAccount]::new(
+    $env:COMPUTERNAME,
+    'SMS Admins'
+)).Translate([System.Security.Principal.SecurityIdentifier])
 
 $interactivePrincipals = @(
     Get-CimInstance -ClassName Win32_LogonSession -Filter 'LogonType = 2 OR LogonType = 10' |
@@ -110,8 +121,24 @@ finally {
 
 $ole = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Ole' -ErrorAction Stop
 $dcom = [ordered]@{
-    machine_launch_restriction = Get-DcomAceSummary -SecurityDescriptor $ole.MachineLaunchRestriction -DomainAdminsSid $domainAdminsSid.Value
-    default_launch_permission = Get-DcomAceSummary -SecurityDescriptor $ole.DefaultLaunchPermission -DomainAdminsSid $domainAdminsSid.Value
+    machine_launch_restriction = Get-DcomAceSummary -SecurityDescriptor $ole.MachineLaunchRestriction -DomainAdminsSid $domainAdminsSid.Value -SmsAdminsSid $smsAdminsSid.Value
+    default_launch_permission = Get-DcomAceSummary -SecurityDescriptor $ole.DefaultLaunchPermission -DomainAdminsSid $domainAdminsSid.Value -SmsAdminsSid $smsAdminsSid.Value
+}
+
+$consoleLogCandidates = @(
+    (Join-Path -Path ${env:ProgramFiles(x86)} -ChildPath 'Microsoft Configuration Manager\AdminConsole\AdminUILog\SMSAdminUI.log'),
+    (Join-Path -Path $env:ProgramFiles -ChildPath 'Microsoft Configuration Manager\AdminConsole\AdminUILog\SMSAdminUI.log')
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+$consoleLogPath = @($consoleLogCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1)[0]
+$consoleLog = [ordered]@{
+    found = -not [string]::IsNullOrWhiteSpace($consoleLogPath)
+    path = $consoleLogPath
+    tail = if ($consoleLogPath) {
+        (Get-Content -LiteralPath $consoleLogPath -Tail 180 -ErrorAction Stop | Out-String).Trim()
+    }
+    else {
+        ''
+    }
 }
 
 $recentDcomEvents = @(
@@ -136,6 +163,7 @@ $recentDcomEvents = @(
     rbac = $rbac
     interactive_principals = $interactivePrincipals
     dcom = $dcom
+    console_log = $consoleLog
     recent_distributed_com_events = $recentDcomEvents
     errors = @($errors)
 } | ConvertTo-Json -Depth 8 -Compress

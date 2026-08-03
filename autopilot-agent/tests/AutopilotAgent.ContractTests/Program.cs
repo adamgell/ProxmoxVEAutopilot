@@ -1109,6 +1109,12 @@ static void VerifySetupCmConsoleConnectivityDiagnosticsContracts()
     Assert(
         diagnosticScript.Contains("DistributedCOM", StringComparison.Ordinal),
         "console connectivity diagnostics do not collect recent DCOM denial evidence");
+    Assert(
+        diagnosticScript.Contains("sms_admins_remote_activation", StringComparison.Ordinal),
+        "console connectivity diagnostics do not verify the effective SMS Admins DCOM path");
+    Assert(
+        diagnosticScript.Contains("SMSAdminUI.log", StringComparison.Ordinal),
+        "console connectivity diagnostics do not collect the Configuration Manager console log");
 }
 
 static void Assert(bool condition, string message)
