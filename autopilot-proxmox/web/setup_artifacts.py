@@ -39,6 +39,19 @@ def _safe_name(value: str) -> str:
     return out.strip("._") or "artifact"
 
 
+def validate_setup_cm_module_metadata(
+    metadata: dict[str, Any],
+    actual_sha256: str,
+) -> dict[str, str]:
+    source_commit = str(metadata.get("source_commit") or "").strip().lower()
+    expected_sha256 = str(metadata.get("sha256") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+        raise ValueError("setup-cm-module source_commit must be a 40-character Git SHA")
+    if expected_sha256 != actual_sha256.lower():
+        raise ValueError("setup-cm-module metadata sha256 does not match the uploaded file")
+    return {"sha256": actual_sha256.lower(), "source_commit": source_commit}
+
+
 def safe_artifact_path(kind: str, filename: str) -> Path:
     target_dir = ARTIFACT_ROOT / _safe_name(kind)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -107,14 +120,21 @@ def register_existing_artifact(
 ) -> dict:
     safe_kind = _safe_name(kind)
     target = Path(path)
+    computed_sha256 = _sha256(target)
+    normalized_metadata = metadata or {}
+    if safe_kind == "setup-cm-module":
+        normalized_metadata = validate_setup_cm_module_metadata(
+            normalized_metadata,
+            computed_sha256,
+        )
     row = {
         "artifact_id": str(uuid4()),
         "kind": safe_kind,
         "filename": target.name,
         "path": str(target),
         "size_bytes": target.stat().st_size,
-        "sha256": _sha256(target),
-        "metadata": metadata or {},
+        "sha256": computed_sha256,
+        "metadata": normalized_metadata,
         "producer_agent_id": producer_agent_id,
         "work_item_id": work_item_id,
         "created_at": _now(),
@@ -126,6 +146,13 @@ def register_existing_artifact(
         data["artifacts"].append(row)
         _write_registry(data)
     return row
+
+
+def get_artifact(artifact_id: str, *, kind: str | None = None) -> dict | None:
+    return next(
+        (row for row in list_artifacts(kind=kind) if row.get("artifact_id") == artifact_id),
+        None,
+    )
 
 
 def list_artifacts(*, kind: str | None = None) -> list[dict]:
