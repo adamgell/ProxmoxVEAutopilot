@@ -1,4 +1,6 @@
 using System.Net;
+using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 using AutopilotAgent;
 
@@ -13,6 +15,7 @@ VerifyBuildHostVirtioRootsMatchOsDeployScript();
 VerifyOsDeployOutputSelectionRejectsStaleManifests();
 VerifyOsDeployResolvesStagedSourceMedia();
 VerifySetupCmWorkContracts();
+VerifySetupCmModulePublicationContracts();
 VerifySetupCmDiagnosticsContracts();
 VerifySetupCmContentLocationDiagnosticsContracts();
 VerifySetupCmContentLocationRemediationContracts();
@@ -515,6 +518,96 @@ static void VerifySetupCmWorkContracts()
     finally
     {
         Directory.Delete(moduleRoot, recursive: true);
+    }
+}
+
+static void VerifySetupCmModulePublicationContracts()
+{
+    Assert(
+        SetupCmModulePublishWorkService.SupportedKind == "publish_setup_cm_module",
+        "Setup-CM module publication kind is not registered");
+
+    var valid = new Dictionary<string, JsonElement>
+    {
+        ["artifact_id"] = JsonSerializer.SerializeToElement("00000000-0000-0000-0000-000000000001"),
+        ["archive_sha256"] = JsonSerializer.SerializeToElement(new string('a', 64)),
+        ["source_commit"] = JsonSerializer.SerializeToElement(new string('b', 40)),
+    };
+    var request = SetupCmModulePublishWorkService.ValidateRequest(valid);
+    Assert(request.ArtifactId == "00000000-0000-0000-0000-000000000001", "publication artifact id did not round-trip");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmModulePublishWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["destination_path"] = JsonSerializer.SerializeToElement(@"C:\\Windows\\Temp\\setup-cm.zip"),
+            }),
+        "module publication accepted an arbitrary destination");
+
+    var worker = File.ReadAllText(
+        Path.Combine(
+            Directory.GetCurrentDirectory(),
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "Worker.cs"));
+    Assert(
+        worker.Contains("SetupCmModulePublishWorkService.SupportedKind", StringComparison.Ordinal),
+        "Agent worker does not route Setup-CM module publication work");
+
+    var program = File.ReadAllText(
+        Path.Combine(
+            Directory.GetCurrentDirectory(),
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "Program.cs"));
+    Assert(
+        program.Contains("AddSingleton<SetupCmModulePublishWorkService>", StringComparison.Ordinal),
+        "Agent host does not register Setup-CM module publication work");
+
+    var archivePath = Path.Combine(Path.GetTempPath(), $"setup-cm-publication-{Guid.NewGuid():N}.zip");
+    try
+    {
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+        {
+            foreach (var entryName in new[]
+            {
+                "scripts/Invoke-SetupCm.ps1",
+                "scripts/Invoke-SetupCmClient.ps1",
+                "src/SetupCm/SetupCm.psd1",
+                "src/SetupCm/SetupCm.psm1",
+            })
+            {
+                using var writer = new StreamWriter(archive.CreateEntry(entryName).Open());
+                writer.Write("# runtime");
+            }
+        }
+        var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archivePath))).ToLowerInvariant();
+        var validated = SetupCmModulePublishWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["archive_sha256"] = JsonSerializer.SerializeToElement(hash),
+            });
+        SetupCmModulePublishWorkService.ValidateArchive(archivePath, validated);
+
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Update))
+        {
+            using var writer = new StreamWriter(archive.CreateEntry("../outside.txt").Open());
+            writer.Write("blocked");
+        }
+        var unsafeHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archivePath))).ToLowerInvariant();
+        var unsafeRequest = SetupCmModulePublishWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["archive_sha256"] = JsonSerializer.SerializeToElement(unsafeHash),
+            });
+        AssertThrows<InvalidOperationException>(
+            () => SetupCmModulePublishWorkService.ValidateArchive(archivePath, unsafeRequest),
+            "module publication accepted a traversal ZIP entry");
+    }
+    finally
+    {
+        File.Delete(archivePath);
     }
 }
 

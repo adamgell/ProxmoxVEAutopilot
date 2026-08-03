@@ -545,6 +545,48 @@ public sealed class AgentApiClient(HttpClient httpClient)
             ?? throw new InvalidOperationException("Artifact upload response was empty.");
     }
 
+    public async Task DownloadSetupCmModuleArtifactAsync(
+        AgentConfig config,
+        string artifactId,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(config.ServerUrl))
+        {
+            throw new InvalidOperationException("ServerUrl is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(config.AgentToken))
+        {
+            throw new InvalidOperationException("AgentToken is not configured.");
+        }
+        if (!Guid.TryParse(artifactId, out _))
+        {
+            throw new InvalidOperationException("artifactId must be a UUID.");
+        }
+
+        var destination = Path.GetFullPath(destinationPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)
+            ?? throw new InvalidOperationException("destinationPath must have a parent directory."));
+        var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"{config.ServerUrl.TrimEnd('/')}/api/agent/v1/setup-cm-module-artifacts/{artifactId}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.AgentToken);
+        using var response = await httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var output = new FileStream(
+            destination,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 1024 * 1024,
+            useAsync: true);
+        await input.CopyToAsync(output, cancellationToken);
+    }
+
     public async Task<JsonElement> PromoteSetupArtifactsAsync(
         AgentConfig config,
         CancellationToken cancellationToken)

@@ -16,6 +16,7 @@
     <Compile Include="../../src/AutopilotAgent/OsDeployRoleWorkService.cs" Link="OsDeployRoleWorkService.cs" />
     <Compile Include="../../src/AutopilotAgent/OsdV2WorkService.cs" Link="OsdV2WorkService.cs" />
     <Compile Include="../../src/AutopilotAgent/SetupCmWorkService.cs" Link="SetupCmWorkService.cs" />
+    <Compile Include="../../src/AutopilotAgent/SetupCmModulePublishWorkService.cs" Link="SetupCmModulePublishWorkService.cs" />
     <Compile Include="../../src/AutopilotAgent/SetupCmDiagnosticsWorkService.cs" Link="SetupCmDiagnosticsWorkService.cs" />
     <Compile Include="../../src/AutopilotAgent/TelemetryCollector.cs" Link="TelemetryCollector.cs" />
   </ItemGroup>

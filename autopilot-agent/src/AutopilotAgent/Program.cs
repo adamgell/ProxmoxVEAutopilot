@@ -14,6 +14,7 @@ var builder = Host.CreateDefaultBuilder(args)
         services.AddSingleton<HashCaptureService>();
         services.AddSingleton<LogCollectionService>();
         services.AddSingleton<SetupCmWorkService>();
+        services.AddSingleton<SetupCmModulePublishWorkService>();
         services.AddSingleton<SetupCmDiagnosticsWorkService>();
         services.AddSingleton<OsDeployRoleWorkService>();
         services.AddSingleton<OsdV2WorkService>();
