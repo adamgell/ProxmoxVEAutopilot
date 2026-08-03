@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import ipaddress
+from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from web import agent_telemetry_pg
+from web import agent_telemetry_pg, setup_artifacts
 from web.agent_v1_endpoints import _conn, _public_work_item
 
 
@@ -14,6 +15,8 @@ router = APIRouter(prefix="/api/setup-cm/v1", tags=["setup-cm"])
 
 _SETUP_CM_ROOT = "C:\\ProgramData\\SetupCm\\"
 _SETUP_CM_VAULT_ROOT = "\\\\LABZ1-DC02\\SetupCm\\"
+_SETUP_CM_MODULE_MAX_BYTES = 64 * 1024 * 1024
+_SETUP_CM_MODULE_UPLOAD_CHUNK_BYTES = 1024 * 1024
 _WORK_KIND_BY_STAGE = {
     "acquire": "setup_cm_acquire",
     "sql": "setup_cm_sql",
@@ -51,6 +54,42 @@ class SetupCmWorkBody(BaseModel):
         ) or not self.module_archive_path.lower().endswith(".zip"):
             raise ValueError("module_archive_path must be a ZIP below an approved Setup-CM root")
         return self
+
+
+@router.post("/module-artifacts", status_code=201)
+async def upload_setup_cm_module_artifact(
+    file: UploadFile = File(...),
+    sha256: str = Form(...),
+    source_commit: str = Form(...),
+):
+    if Path(file.filename or "").suffix.casefold() != ".zip":
+        raise HTTPException(status_code=422, detail="file must be a ZIP")
+
+    target = setup_artifacts.safe_artifact_path("setup-cm-module", "setup-cm.zip")
+    total_bytes = 0
+    try:
+        with target.open("xb") as handle:
+            while chunk := await file.read(_SETUP_CM_MODULE_UPLOAD_CHUNK_BYTES):
+                total_bytes += len(chunk)
+                if total_bytes > _SETUP_CM_MODULE_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="setup-cm-module exceeds 64 MiB",
+                    )
+                handle.write(chunk)
+        return setup_artifacts.register_existing_artifact(
+            kind="setup-cm-module",
+            path=target,
+            metadata={"sha256": sha256, "source_commit": source_commit},
+        )
+    except ValueError as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
 
 
 class SetupCmClientInstallBody(BaseModel):
