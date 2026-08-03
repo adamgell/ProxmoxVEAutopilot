@@ -1163,7 +1163,7 @@ static void VerifySetupCmMarkerDeploymentContracts()
         if (scriptName == "SetupCmMarkerDeployment.ps1")
         {
             requiredValues.Add("New-CMSchedule");
-            requiredValues.Add("CMPSSuppressFastNotUsedCheck");
+            requiredValues.Add("Global:CMPSSuppressFastNotUsedCheck");
         }
         foreach (var value in requiredValues)
         {
