@@ -1115,6 +1115,9 @@ static void VerifySetupCmConsoleConnectivityDiagnosticsContracts()
     Assert(
         diagnosticScript.Contains("SMSAdminUI.log", StringComparison.Ordinal),
         "console connectivity diagnostics do not collect the Configuration Manager console log");
+    Assert(
+        diagnosticScript.Contains("SMSProv.log", StringComparison.Ordinal),
+        "console connectivity diagnostics do not collect the SMS Provider log");
 }
 
 static void Assert(bool condition, string message)

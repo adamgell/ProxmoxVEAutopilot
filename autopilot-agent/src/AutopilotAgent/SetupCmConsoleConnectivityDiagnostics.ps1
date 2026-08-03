@@ -140,6 +140,17 @@ $consoleLog = [ordered]@{
         ''
     }
 }
+$smsProviderLogPath = Join-Path -Path $env:ProgramFiles -ChildPath 'Microsoft Configuration Manager\Logs\SMSProv.log'
+$smsProviderLog = [ordered]@{
+    found = Test-Path -LiteralPath $smsProviderLogPath -PathType Leaf
+    path = $smsProviderLogPath
+    tail = if (Test-Path -LiteralPath $smsProviderLogPath -PathType Leaf) {
+        (Get-Content -LiteralPath $smsProviderLogPath -Tail 240 -ErrorAction Stop | Out-String).Trim()
+    }
+    else {
+        ''
+    }
+}
 
 $recentDcomEvents = @(
     Get-WinEvent -FilterHashtable @{
@@ -164,6 +175,7 @@ $recentDcomEvents = @(
     interactive_principals = $interactivePrincipals
     dcom = $dcom
     console_log = $consoleLog
+    sms_provider_log = $smsProviderLog
     recent_distributed_com_events = $recentDcomEvents
     errors = @($errors)
 } | ConvertTo-Json -Depth 8 -Compress
