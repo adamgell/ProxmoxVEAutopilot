@@ -1118,6 +1118,12 @@ static void VerifySetupCmConsoleConnectivityDiagnosticsContracts()
     Assert(
         diagnosticScript.Contains("SMSProv.log", StringComparison.Ordinal),
         "console connectivity diagnostics do not collect the SMS Provider log");
+    Assert(
+        diagnosticScript.Contains("WindowsIdentity", StringComparison.Ordinal),
+        "console connectivity diagnostics do not inspect the running console process token");
+    Assert(
+        diagnosticScript.Contains("Microsoft.ConfigurationManagement", StringComparison.Ordinal),
+        "console connectivity diagnostics do not target the Configuration Manager console process");
 }
 
 static void Assert(bool condition, string message)

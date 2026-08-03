@@ -69,6 +69,25 @@ $smsAdminsSid = ([System.Security.Principal.NTAccount]::new(
     'SMS Admins'
 )).Translate([System.Security.Principal.SecurityIdentifier])
 
+if (-not ('AutopilotAgentTokenNative' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class AutopilotAgentTokenNative
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr handle);
+}
+'@
+}
+
 $interactivePrincipals = @(
     Get-CimInstance -ClassName Win32_LogonSession -Filter 'LogonType = 2 OR LogonType = 10' |
         ForEach-Object {
@@ -84,6 +103,57 @@ $interactivePrincipals = @(
                 }
         } |
         Sort-Object principal -Unique
+)
+$consoleProcessTokens = @(
+    Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
+        Where-Object { $_.Name -in @('Microsoft.ConfigurationManagement.exe', 'AdminConsole.exe') } |
+        ForEach-Object {
+            $process = $_
+            $processHandle = [AutopilotAgentTokenNative]::OpenProcess(0x1000, $false, [int]$process.ProcessId)
+            if ($processHandle -eq [IntPtr]::Zero) {
+                $processHandle = [AutopilotAgentTokenNative]::OpenProcess(0x0400, $false, [int]$process.ProcessId)
+            }
+            if ($processHandle -eq [IntPtr]::Zero) {
+                return [ordered]@{
+                    process_id = [int]$process.ProcessId
+                    process_name = [string]$process.Name
+                    error = 'Unable to open the Configuration Manager console process token.'
+                }
+            }
+            $tokenHandle = [IntPtr]::Zero
+            try {
+                if (-not [AutopilotAgentTokenNative]::OpenProcessToken($processHandle, 0x0008, [ref]$tokenHandle)) {
+                    throw 'Unable to query the Configuration Manager console process token.'
+                }
+                $identity = [System.Security.Principal.WindowsIdentity]::new($tokenHandle)
+                try {
+                    $tokenGroupSids = @($identity.Groups | ForEach-Object { $_.Value })
+                    [ordered]@{
+                        process_id = [int]$process.ProcessId
+                        process_name = [string]$process.Name
+                        user_sid = $identity.User.Value
+                        domain_admins_member = [bool]($tokenGroupSids -contains $domainAdminsSid.Value)
+                        sms_admins_member = [bool]($tokenGroupSids -contains $smsAdminsSid.Value)
+                    }
+                }
+                finally {
+                    $identity.Dispose()
+                }
+            }
+            catch {
+                [ordered]@{
+                    process_id = [int]$process.ProcessId
+                    process_name = [string]$process.Name
+                    error = $_.Exception.Message
+                }
+            }
+            finally {
+                if ($tokenHandle -ne [IntPtr]::Zero) {
+                    [void][AutopilotAgentTokenNative]::CloseHandle($tokenHandle)
+                }
+                [void][AutopilotAgentTokenNative]::CloseHandle($processHandle)
+            }
+        }
 )
 
 $adminUiPath = [string]$env:SMS_ADMIN_UI_PATH
@@ -150,6 +220,21 @@ $smsProviderLog = [ordered]@{
     else {
         ''
     }
+    relevant_lines = if (Test-Path -LiteralPath $smsProviderLogPath -PathType Leaf) {
+        $interactivePrincipalNames = @($interactivePrincipals | ForEach-Object { $_.principal })
+        @(
+            Get-Content -LiteralPath $smsProviderLogPath -Tail 12000 -ErrorAction Stop |
+                Where-Object {
+                    $line = [string]$_
+                    ($line -match '(?i)access denied|not authorized|unauthorized|authentication|rbac|user context') -or
+                    @($interactivePrincipalNames | Where-Object { $line -like "*$_*" }).Count -gt 0
+                } |
+                Select-Object -Last 180
+        ) -join [Environment]::NewLine
+    }
+    else {
+        ''
+    }
 }
 
 $recentDcomEvents = @(
@@ -173,6 +258,7 @@ $recentDcomEvents = @(
     domain_admins_principal = $domainAdminsPrincipal
     rbac = $rbac
     interactive_principals = $interactivePrincipals
+    console_process_tokens = $consoleProcessTokens
     dcom = $dcom
     console_log = $consoleLog
     sms_provider_log = $smsProviderLog
