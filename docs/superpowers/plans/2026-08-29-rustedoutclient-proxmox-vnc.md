@@ -1155,7 +1155,7 @@ Serialize or debug-print the UI state and assert it contains no field named pass
 
 Advertise both DesktopSize (`-223`) and ExtendedDesktopSize (`-308`). Assert that a newly Ready native session with a stable valid viewport automatically issues its first request because Dynamic Resolution defaults on, and assert the exact one-screen SetDesktopSize (`251`) wire message for 1,600x900 and 1,920x1,080 viewports. Reject dimensions below 640x480 or above the existing 8,192-by-8,192 / 33,554,432-pixel policy before queueing.
 
-Test a 250-ms paused-clock debounce, one request in flight, replacement by the newest desired size, and no resize storm during 1,000 rapid viewport changes. Parse valid ExtendedDesktopSize reason/result/screen payloads with checked lengths and screen counts. Treat QEMU `Request forwarded` as Pending; only a subsequent matching valid framebuffer-size update is Applied. Rejection, unsupported layout, and a two-second no-change timeout leave the session healthy, stop automatic retries, and retain Fit to Window. Malformed responses fail closed without allocating outside protocol limits.
+Test a 250-ms paused-clock debounce, one unresolved transmitted lifecycle, replacement by the newest desired size, and no resize storm during 1,000 rapid viewport changes. Turning Dynamic Resolution off cancels unsent automatic work without forgetting an on-wire request; off/on, Retry, timeout, and late-response sequences cannot send a second request early or attribute an old response to a newer target. Parse valid ExtendedDesktopSize reason/result/screen payloads with checked lengths and screen counts. Treat QEMU `Request forwarded` as Pending; only a subsequent matching valid framebuffer-size update is Applied. Rejection, unsupported layout, and a two-second no-change timeout leave the session healthy, stop automatic retries, and retain Fit to Window. A valid server-driven unsupported multi-screen/flagged update advances the aggregate framebuffer dimensions and full-update request while remaining Unsupported; malformed responses fail closed without allocating outside protocol limits.
 
 - [ ] **Step 4: Run RED**
 
@@ -1170,7 +1170,7 @@ Expected: compile failure because the split app model does not exist.
 
 - [ ] **Step 5: Implement pure state reduction, action dispatch, and resize negotiation**
 
-`AppState::apply(AppEvent)` is deterministic and side-effect free. UI actions send typed `AppCommand` values; view code never launches processes or performs network I/O. Framebuffer texture updates use dirty rectangles and reuse textures when dimensions remain unchanged.
+`AppState::apply(AppEvent)` is deterministic and side-effect free. UI actions send typed `AppCommand` values; view code never launches processes or performs network I/O. Framebuffer state coalesces one bounded dirty region per session. Texture creation/dimension change may upload the full image once; unchanged-size updates extract only dirty rows and use egui partial texture updates.
 
 Add a bounded semantic ResizeDisplay command. The session worker owns debounce/in-flight state and the existing VNC command queue owns the only wire path. Derive the desired size from the usable viewport's backing pixels, round down to multiples of eight, and apply the existing framebuffer dimension/pixel ceilings. Advertise/parse ExtendedDesktopSize in the production parser; do not create a second parser. A resize rejection or timeout is a typed nonterminal capability result, not an RFB disconnect.
 
@@ -1189,11 +1189,13 @@ Status: profile | node | VM | inventory age | session phase | guest WxH | resize
 
 Session menu labels are exactly Open, Reconnect, Close, Open in TigerVNC, Ctrl+Alt+Delete, Release All Keys, View Only, Fit to Window, 1:1, Fullscreen, Send Clipboard, Receive Clipboard, and Diagnostics.
 
-Place Dynamic Resolution in the View menu and toolbar as a per-session checked control that starts enabled. Turning it off cancels pending automatic follow-ups without disconnecting; turning it back on manually retries the current stable viewport. Clearly distinguish an Applied guest resize from local Fit scaling. Rejected, Unsupported, and Timed out states remain visible and offer a manual Retry without changing VM hardware or guest configuration.
+Place Dynamic Resolution in the View menu and toolbar as a per-session checked control that starts enabled. Turning it off cancels pending unsent automatic follow-ups without disconnecting or discarding an on-wire request; turning it back on manually re-arms the current stable viewport when the prior wire lifecycle permits it. Clearly distinguish an Applied guest resize from local Fit scaling. Rejected, Unsupported, and Timed out states remain visible and offer a manual Retry without changing VM hardware or guest configuration.
+
+Track keyboard focus/modifiers and pointer buttons against the owning session. Tab changes, widget/window focus loss, reconnect, close, and tab removal release keys and pointer buttons on the outgoing session before a new owner accepts input. Restrict 1:1 pointer hit testing to the visible image/instrument-bay/UI-clip intersection while mapping coordinates against the full image.
 
 - [ ] **Step 7: Preserve responsiveness under worker delay**
 
-Add a test worker that delays inventory and framebuffer events. Drive 1,000 UI updates and assert `AppState::apply` never blocks on a worker channel send. Commands use non-blocking `try_send`; a full queue surfaces a typed Busy error rather than freezing egui.
+Add a test worker that delays inventory and framebuffer events. Drive 1,000 UI updates and assert `AppState::apply` never blocks on a worker channel send. Commands use non-blocking `try_send`; a full queue surfaces a typed Busy error rather than freezing egui. A Full viewport send retains only the newest unsent backing-pixel size and retries it on later frames. Extract and test a native-close coordinator that sends CancelClose while shutdown is Full/pending, retains the manager/runtime while events drain, and issues the final viewport Close only after worker-channel completion.
 
 - [ ] **Step 8: Run GREEN and launch local shell**
 
