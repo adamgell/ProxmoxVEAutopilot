@@ -1108,14 +1108,18 @@ git commit -m "feat: add reliable secure-attention input controls"
 - Create: `src/app/actions.rs`
 - Create: `src/app/view.rs`
 - Create: `tests/app_state_contract.rs`
+- Create: `tests/display_resize_contract.rs`
 - Modify: `src/main.rs`
 - Modify: `src/session/events.rs`
 - Modify: `src/session/model.rs`
+- Modify: `src/connection.rs`
+- Modify: `src/vnc/messages.rs`
+- Modify: `src/vnc/client.rs`
 - Delete after migration: `src/app.rs`
 
 **Interfaces:**
 - Consumes: `AppCommand`, `AppEvent`, `InventorySnapshot`, `SessionSnapshot`, and `InputAction`.
-- Produces: `RustedOutClientApp`, `AppState`, `ActionAvailability`, searchable inventory/favorites, native tabs, framebuffer viewport, Session menu, toolbar, and status bar.
+- Produces: `RustedOutClientApp`, `AppState`, `ActionAvailability`, searchable inventory/favorites, native tabs, framebuffer viewport, bounded dynamic-resolution state, Session/View menus, toolbar, and status bar.
 
 - [ ] **Step 1: Write failing action-availability tests**
 
@@ -1139,27 +1143,38 @@ fn unsafe_actions_require_a_ready_writable_session() {
 
 Test every menu action against no session, connecting, ready, view-only, error, and disconnected states.
 
+Dynamic Resolution is available only for a Ready native session with a valid viewport. Fit to Window and 1:1 remain available regardless of whether guest resize is supported.
+
 - [ ] **Step 2: Write failing inventory/tab state tests**
 
 Assert favorites sort before non-favorites, search matches alias/name/VMID case-insensitively, stale timestamps remain visible until live inventory arrives, stopped VMs cannot invoke Open, opening an active VM focuses its existing tab, and two different VMIDs produce two tabs.
 
 Serialize or debug-print the UI state and assert it contains no field named password, ticket, clipboard_text, environment, private_key, or raw_stderr.
 
-- [ ] **Step 3: Run RED**
+- [ ] **Step 3: Write failing dynamic-resolution protocol and state tests**
+
+Advertise both DesktopSize (`-223`) and ExtendedDesktopSize (`-308`). Assert the exact one-screen SetDesktopSize (`251`) wire message for 1,600x900 and 1,920x1,080 viewports. Reject dimensions below 640x480 or above the existing 8,192-by-8,192 / 33,554,432-pixel policy before queueing.
+
+Test a 250-ms paused-clock debounce, one request in flight, replacement by the newest desired size, and no resize storm during 1,000 rapid viewport changes. Parse valid ExtendedDesktopSize reason/result/screen payloads with checked lengths and screen counts. Treat QEMU `Request forwarded` as Pending; only a subsequent matching valid framebuffer-size update is Applied. Rejection, unsupported layout, and a two-second no-change timeout leave the session healthy, stop automatic retries, and retain Fit to Window. Malformed responses fail closed without allocating outside protocol limits.
+
+- [ ] **Step 4: Run RED**
 
 Run:
 
 ```bash
 cargo test --test app_state_contract
+cargo test --test display_resize_contract
 ```
 
 Expected: compile failure because the split app model does not exist.
 
-- [ ] **Step 4: Implement pure state reduction and action dispatch**
+- [ ] **Step 5: Implement pure state reduction, action dispatch, and resize negotiation**
 
 `AppState::apply(AppEvent)` is deterministic and side-effect free. UI actions send typed `AppCommand` values; view code never launches processes or performs network I/O. Framebuffer texture updates use dirty rectangles and reuse textures when dimensions remain unchanged.
 
-- [ ] **Step 5: Implement the window layout and menus**
+Add a bounded semantic ResizeDisplay command. The session worker owns debounce/in-flight state and the existing VNC command queue owns the only wire path. Derive the desired size from the usable viewport's backing pixels, round down to multiples of eight, and apply the existing framebuffer dimension/pixel ceilings. Advertise/parse ExtendedDesktopSize in the production parser; do not create a second parser. A resize rejection or timeout is a typed nonterminal capability result, not an RFB disconnect.
+
+- [ ] **Step 6: Implement the window layout and menus**
 
 Render:
 
@@ -1168,23 +1183,26 @@ Menu bar: RustedOutClient | Session | View | Help
 Sidebar: search, favorites, live/stale status, VMID, VM name
 Tabs: one per active native VM
 Viewport: framebuffer with fit or 1:1 scale
-Toolbar: Reconnect | CAD | Release Keys | View Only | Fit | 1:1 | Fullscreen | TigerVNC
-Status: profile | node | VM | inventory age | session phase | clipboard state
+Toolbar: Reconnect | CAD | Release Keys | View Only | Dynamic Resolution | Fit | 1:1 | Fullscreen | TigerVNC
+Status: profile | node | VM | inventory age | session phase | guest WxH | resize state | clipboard state
 ```
 
 Session menu labels are exactly Open, Reconnect, Close, Open in TigerVNC, Ctrl+Alt+Delete, Release All Keys, View Only, Fit to Window, 1:1, Fullscreen, Send Clipboard, Receive Clipboard, and Diagnostics.
 
-- [ ] **Step 6: Preserve responsiveness under worker delay**
+Place Dynamic Resolution in the View menu and toolbar. Clearly distinguish an Applied guest resize from local Fit scaling. Rejected, Unsupported, and Timed out states remain visible and offer a manual Retry without changing VM hardware or guest configuration.
+
+- [ ] **Step 7: Preserve responsiveness under worker delay**
 
 Add a test worker that delays inventory and framebuffer events. Drive 1,000 UI updates and assert `AppState::apply` never blocks on a worker channel send. Commands use non-blocking `try_send`; a full queue surfaces a typed Busy error rather than freezing egui.
 
-- [ ] **Step 7: Run GREEN and launch local shell**
+- [ ] **Step 8: Run GREEN and launch local shell**
 
 Run:
 
 ```bash
 cargo fmt --all
 cargo test --test app_state_contract
+cargo test --test display_resize_contract
 cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
 cargo run --release
@@ -1192,10 +1210,10 @@ cargo run --release
 
 Expected: automated gates pass; the app opens as RustedOutClient, shows cached/live inventory states when configured, contains no arbitrary endpoint/password field, and remains responsive while inventory loads.
 
-- [ ] **Step 8: Commit the application shell**
+- [ ] **Step 9: Commit the application shell**
 
 ```bash
-git add src/main.rs src/app src/session tests/app_state_contract.rs
+git add src/main.rs src/app src/session src/connection.rs src/vnc/messages.rs src/vnc/client.rs tests/app_state_contract.rs tests/display_resize_contract.rs
 git rm src/app.rs
 git commit -m "feat: add RustedOutClient session workspace"
 ```
@@ -1441,7 +1459,7 @@ Install `cargo-fuzz` 0.13.2 with `--locked`, build all targets, and run each com
 
 - [ ] **Step 4: Write the threat model and security policy**
 
-Document assets, system OpenSSH boundary, known-hosts trust, local attacker assumptions, malicious/malformed RFB server input, compromised Proxmox account impact, process-environment ticket exposure, clipboard risk, fallback listener boundary, supply-chain controls, and residual risks. State clearly that VNC Auth is not encryption and is allowed only inside verified SSH.
+Document assets, system OpenSSH boundary, known-hosts trust, local attacker assumptions, malicious/malformed RFB server input, compromised Proxmox account impact, process-environment ticket exposure, clipboard risk, dynamic-resolution request/response bounds and resize-storm controls, fallback listener boundary, supply-chain controls, and residual risks. State clearly that VNC Auth is not encryption and is allowed only inside verified SSH.
 
 `SECURITY.md` directs reports through GitHub private vulnerability reporting for `adamgell/RustedOutClient` and defines supported versions once releases exist.
 
@@ -1556,7 +1574,9 @@ Run:
 /Users/Adam.Gell/.local/bin/rustedoutclient open labz1-cm01
 ```
 
-Visibly verify exact VM selection, Windows boot/lock/desktop framebuffer correctness, pointer accuracy, normal keyboard input, Ctrl+Alt+Delete transition, Release All Keys recovery, fullscreen, fit, 1:1, resize, view-only, clipboard default-off, bounded explicit clipboard when enabled, proxy-kill reconnect, and no duplicate tab for the same VM.
+Visibly verify exact VM selection, Windows boot/lock/desktop framebuffer correctness, pointer accuracy, normal keyboard input, Ctrl+Alt+Delete transition, Release All Keys recovery, fullscreen, fit, 1:1, view-only, clipboard default-off, bounded explicit clipboard when enabled, proxy-kill reconnect, and no duplicate tab for the same VM.
+
+With read-only evidence, record the target VM's existing virtual display device and guest video-driver family. Enable Dynamic Resolution and request at least 1,600x900, 1,920x1,080, and the current usable fullscreen viewport. For each request record Requested/Pending/Applied and the observed framebuffer dimensions. If QEMU rejects the request or the guest does not resize within two seconds, verify RustedOutClient reports Rejected, Unsupported, or Timed out, remains connected, and Fit to Window continues to work. Do not change VM hardware or install a driver in this acceptance step; stop and request separate approval if that is needed to achieve Applied.
 
 - [ ] **Step 8: Measure warm-open and concurrency acceptance**
 

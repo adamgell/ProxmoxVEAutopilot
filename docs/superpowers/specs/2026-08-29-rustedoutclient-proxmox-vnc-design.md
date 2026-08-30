@@ -36,6 +36,7 @@ RustedOutClient must:
 - open a running VM through a fresh `qm vncproxy` ticket with one click;
 - support concurrent native console sessions in tabs;
 - provide explicit Ctrl+Alt+Delete, release-all-keys, reconnect, fullscreen, fit-to-window, 1:1 scaling, and view-only controls;
+- request a guest framebuffer that follows the usable console window through RFB ExtendedDesktopSize when the QEMU display device and guest driver support it, while retaining explicit scaled rendering when they do not;
 - track key-down state and release guest modifiers when focus or connection state changes;
 - store favorites, aliases, display preferences, and cached inventory without storing passwords, tickets, recovery material, or private keys;
 - bound and validate every server-controlled protocol length before allocating or decoding;
@@ -56,7 +57,8 @@ The initial release does not:
 - automatically trust a new or changed SSH host key;
 - remove TigerVNC or the current `pve-vnc` Python helper;
 - claim cross-platform acceptance beyond macOS arm64;
-- automatically reconnect after a trust, authentication, or protocol failure.
+- automatically reconnect after a trust, authentication, or protocol failure;
+- change VM display hardware, install or update guest video drivers, or claim that client-requested guest resizing works when QEMU reports it unsupported or the guest does not apply the request.
 
 ## Supported Platform and Toolchain
 
@@ -80,6 +82,7 @@ RustedOutClient
 │   ├── inventory and favorites
 │   ├── native session tabs
 │   ├── keyboard/menu actions
+│   ├── dynamic-resolution policy and status
 │   └── explicit TigerVNC fallback
 ├── session manager
 │   ├── startup preloader
@@ -257,6 +260,16 @@ The action is disabled in view-only mode and while the session is not Ready. A s
 
 Automatic bidirectional clipboard synchronization is disabled by default. The initial release supports explicit text-only Send Clipboard and Receive Clipboard actions when clipboard is enabled in session preferences. Each transfer is capped at 1 MiB, displayed as an explicit operator action, and never logged or persisted. File clipboard formats and drag-and-drop are unsupported.
 
+## Dynamic Guest Resolution
+
+Fit to Window scales pixels locally; it does not change the guest framebuffer. RustedOutClient separately supports a Dynamic Resolution mode that requests a guest framebuffer matching the usable viewport when the QEMU VNC/display backend and guest video driver support the RFB ExtendedDesktopSize flow.
+
+The client advertises both DesktopSize (`-223`) and ExtendedDesktopSize (`-308`). After the session is Ready and a stable viewport is known, Dynamic Resolution may send the standard one-screen SetDesktopSize client message (`251`). The initial subset accepts exactly one returned screen at origin `(0,0)` and rejects malformed or unsupported multi-screen layouts. Requests are constrained by the same 8,192-by-8,192 and 33,554,432-pixel framebuffer limits, never go below 640-by-480, and are rounded down to whole multiples of eight. The UI uses the viewport's backing-pixel dimensions, with those limits applied, so a Retina window is not silently fixed to its 1,280-by-800 logical-point size.
+
+Viewport changes are debounced for 250 ms. Only one request may be in flight; a newer desired size replaces the pending follow-up rather than adding another queue entry. A QEMU `Request forwarded` result is Pending, not proof that Windows changed resolution. Success requires a later valid DesktopSize/ExtendedDesktopSize update with the requested dimensions. A rejection, unsupported-layout result, or two-second no-change timeout disables automatic requests for that session and leaves Fit to Window available. The status bar shows Requested, Pending, Applied, Rejected, Unsupported, or Timed out without disconnecting an otherwise healthy console. Malformed resize messages still fail closed as protocol errors.
+
+QEMU's VNC dispatcher accepts SetDesktopSize but forwards it only when the selected display backend reports UI-resize support; this is the reason capability rejection and guest no-change are first-class states rather than connection failures ([QEMU `ui/vnc.c`](https://gitlab.com/qemu-project/qemu/-/blob/v7.2.9/ui/vnc.c?ref_type=tags)). Dynamic Resolution never runs `qm set`, edits VM configuration, chooses a different emulated display adapter, or installs a guest driver. Native acceptance records the existing VM display device and observed response. If the target Windows guest cannot apply forwarded requests, changing its virtual display/driver is a separate explicitly approved lab change.
+
 ## Session Manager and UI
 
 The main window contains:
@@ -264,10 +277,10 @@ The main window contains:
 - a searchable inventory/favorites sidebar with running, stopped, stale, connecting, ready, and error states;
 - a tab strip for active native sessions;
 - a central framebuffer viewport;
-- a status bar showing profile, VMID, VM name, live/stale inventory age, session phase, scale mode, view-only state, and clipboard state;
+- a status bar showing profile, VMID, VM name, live/stale inventory age, session phase, scale mode, guest framebuffer dimensions, dynamic-resolution state, view-only state, and clipboard state;
 - a Session menu and compact toolbar.
 
-The Session menu contains Open, Reconnect, Close, Open in TigerVNC, Ctrl+Alt+Delete, Release All Keys, View Only, Fit to Window, 1:1, Fullscreen, Send Clipboard, Receive Clipboard, and Diagnostics. Unsafe actions are disabled when their preconditions are false.
+The Session menu contains Open, Reconnect, Close, Open in TigerVNC, Ctrl+Alt+Delete, Release All Keys, View Only, Fit to Window, 1:1, Fullscreen, Send Clipboard, Receive Clipboard, and Diagnostics. The View menu and toolbar also expose Dynamic Resolution. Unsafe actions are disabled when their preconditions are false.
 
 Opening an already active VM focuses its tab instead of creating a duplicate proxy. Reconnect always creates a fresh ticket and child process after cleaning the previous owned resources. Multiple different VMs may be active concurrently.
 
@@ -304,7 +317,7 @@ All child processes, channels, runtime directories, listeners, and temporary fil
 
 ### Unit tests
 
-Unit tests cover configuration validation and atomic persistence, migration without secret fields, selector behavior, OpenSSH argument construction, fixed remote commands, host-key error classification, ticket generation shape, log redaction, protocol limits, security allowlisting, all supported decoders, framebuffer bounds, input event ordering, release-all behavior, session state transitions, and diagnostics redaction.
+Unit tests cover configuration validation and atomic persistence, migration without secret fields, selector behavior, OpenSSH argument construction, fixed remote commands, host-key error classification, ticket generation shape, log redaction, protocol limits, security allowlisting, all supported decoders, framebuffer bounds, DesktopSize and ExtendedDesktopSize parsing, bounded SetDesktopSize construction and debounce state, input event ordering, release-all behavior, session state transitions, and diagnostics redaction.
 
 ### Integration tests
 
@@ -366,6 +379,7 @@ Native acceptance also requires observed, visible proof of:
 - Ctrl+Alt+Delete producing the expected Windows secure-attention transition;
 - Release All Keys recovering an injected held modifier;
 - fullscreen, fit, 1:1, resize, and view-only behavior;
+- Dynamic Resolution at multiple viewport sizes when the existing QEMU display/guest driver supports it, or a truthful Unsupported/Timed out state with uninterrupted Fit to Window when it does not;
 - explicit clipboard default-off behavior and bounded text transfer when enabled;
 - reconnect after proxy termination with a fresh ticket;
 - two concurrent VM sessions;
@@ -400,6 +414,7 @@ Rollback consists of closing RustedOutClient and invoking the existing Python he
 - [ ] Fallback listener is loopback-only and its password file is always removed.
 - [ ] Clipboard is default-off, explicit, bounded, and non-persistent.
 - [ ] Ctrl+Alt+Delete and Release All Keys are visibly accepted on Windows.
+- [ ] Dynamic Resolution is bounded, debounced, and visibly applied on the target Windows guest, or the exact unsupported device/driver boundary is recorded without changing VM configuration.
 - [ ] No owned process or temporary artifact remains after repeated disconnects.
 - [ ] Existing TigerVNC/Python rollback remains operational.
 
