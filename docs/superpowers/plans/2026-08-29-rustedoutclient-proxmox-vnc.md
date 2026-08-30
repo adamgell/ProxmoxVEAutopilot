@@ -1143,7 +1143,7 @@ fn unsafe_actions_require_a_ready_writable_session() {
 
 Test every menu action against no session, connecting, ready, view-only, error, and disconnected states.
 
-Dynamic Resolution is available only for a Ready native session with a valid viewport. Fit to Window and 1:1 remain available regardless of whether guest resize is supported.
+Dynamic Resolution starts enabled for each new native session and becomes actionable only for a Ready native session with a valid viewport. Fit to Window and 1:1 remain available regardless of whether guest resize is supported.
 
 - [ ] **Step 2: Write failing inventory/tab state tests**
 
@@ -1153,7 +1153,7 @@ Serialize or debug-print the UI state and assert it contains no field named pass
 
 - [ ] **Step 3: Write failing dynamic-resolution protocol and state tests**
 
-Advertise both DesktopSize (`-223`) and ExtendedDesktopSize (`-308`). Assert the exact one-screen SetDesktopSize (`251`) wire message for 1,600x900 and 1,920x1,080 viewports. Reject dimensions below 640x480 or above the existing 8,192-by-8,192 / 33,554,432-pixel policy before queueing.
+Advertise both DesktopSize (`-223`) and ExtendedDesktopSize (`-308`). Assert that a newly Ready native session with a stable valid viewport automatically issues its first request because Dynamic Resolution defaults on, and assert the exact one-screen SetDesktopSize (`251`) wire message for 1,600x900 and 1,920x1,080 viewports. Reject dimensions below 640x480 or above the existing 8,192-by-8,192 / 33,554,432-pixel policy before queueing.
 
 Test a 250-ms paused-clock debounce, one request in flight, replacement by the newest desired size, and no resize storm during 1,000 rapid viewport changes. Parse valid ExtendedDesktopSize reason/result/screen payloads with checked lengths and screen counts. Treat QEMU `Request forwarded` as Pending; only a subsequent matching valid framebuffer-size update is Applied. Rejection, unsupported layout, and a two-second no-change timeout leave the session healthy, stop automatic retries, and retain Fit to Window. Malformed responses fail closed without allocating outside protocol limits.
 
@@ -1189,7 +1189,7 @@ Status: profile | node | VM | inventory age | session phase | guest WxH | resize
 
 Session menu labels are exactly Open, Reconnect, Close, Open in TigerVNC, Ctrl+Alt+Delete, Release All Keys, View Only, Fit to Window, 1:1, Fullscreen, Send Clipboard, Receive Clipboard, and Diagnostics.
 
-Place Dynamic Resolution in the View menu and toolbar. Clearly distinguish an Applied guest resize from local Fit scaling. Rejected, Unsupported, and Timed out states remain visible and offer a manual Retry without changing VM hardware or guest configuration.
+Place Dynamic Resolution in the View menu and toolbar as a per-session checked control that starts enabled. Turning it off cancels pending automatic follow-ups without disconnecting; turning it back on manually retries the current stable viewport. Clearly distinguish an Applied guest resize from local Fit scaling. Rejected, Unsupported, and Timed out states remain visible and offer a manual Retry without changing VM hardware or guest configuration.
 
 - [ ] **Step 7: Preserve responsiveness under worker delay**
 

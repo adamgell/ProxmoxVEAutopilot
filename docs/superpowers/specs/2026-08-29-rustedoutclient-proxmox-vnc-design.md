@@ -262,7 +262,7 @@ Automatic bidirectional clipboard synchronization is disabled by default. The in
 
 ## Dynamic Guest Resolution
 
-Fit to Window scales pixels locally; it does not change the guest framebuffer. RustedOutClient separately supports a Dynamic Resolution mode that requests a guest framebuffer matching the usable viewport when the QEMU VNC/display backend and guest video driver support the RFB ExtendedDesktopSize flow.
+Fit to Window scales pixels locally; it does not change the guest framebuffer. RustedOutClient separately supports a Dynamic Resolution mode that requests a guest framebuffer matching the usable viewport when the QEMU VNC/display backend and guest video driver support the RFB ExtendedDesktopSize flow. Dynamic Resolution starts enabled for every new native session so the first stable viewport is attempted automatically after the session becomes Ready; the checked View-menu/toolbar control can disable it for that session or manually retry after a capability failure.
 
 The client advertises both DesktopSize (`-223`) and ExtendedDesktopSize (`-308`). After the session is Ready and a stable viewport is known, Dynamic Resolution may send the standard one-screen SetDesktopSize client message (`251`). The initial subset accepts exactly one returned screen at origin `(0,0)` and rejects malformed or unsupported multi-screen layouts. Requests are constrained by the same 8,192-by-8,192 and 33,554,432-pixel framebuffer limits, never go below 640-by-480, and are rounded down to whole multiples of eight. The UI uses the viewport's backing-pixel dimensions, with those limits applied, so a Retina window is not silently fixed to its 1,280-by-800 logical-point size.
 
@@ -280,7 +280,7 @@ The main window contains:
 - a status bar showing profile, VMID, VM name, live/stale inventory age, session phase, scale mode, guest framebuffer dimensions, dynamic-resolution state, view-only state, and clipboard state;
 - a Session menu and compact toolbar.
 
-The Session menu contains Open, Reconnect, Close, Open in TigerVNC, Ctrl+Alt+Delete, Release All Keys, View Only, Fit to Window, 1:1, Fullscreen, Send Clipboard, Receive Clipboard, and Diagnostics. The View menu and toolbar also expose Dynamic Resolution. Unsafe actions are disabled when their preconditions are false.
+The Session menu contains Open, Reconnect, Close, Open in TigerVNC, Ctrl+Alt+Delete, Release All Keys, View Only, Fit to Window, 1:1, Fullscreen, Send Clipboard, Receive Clipboard, and Diagnostics. The View menu and toolbar expose Dynamic Resolution as a per-session checked control that starts enabled. Unsafe actions are disabled when their preconditions are false.
 
 Opening an already active VM focuses its tab instead of creating a duplicate proxy. Reconnect always creates a fresh ticket and child process after cleaning the previous owned resources. Multiple different VMs may be active concurrently.
 
