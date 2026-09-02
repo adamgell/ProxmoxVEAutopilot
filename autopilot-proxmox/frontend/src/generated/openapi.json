@@ -770,6 +770,30 @@
         "title": "Body_upload_hash_files_api_hashes_upload_post",
         "type": "object"
       },
+      "Body_upload_setup_cm_module_artifact_api_setup_cm_v1_module_artifacts_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "source_commit": {
+            "title": "Source Commit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "sha256",
+          "source_commit"
+        ],
+        "title": "Body_upload_setup_cm_module_artifact_api_setup_cm_v1_module_artifacts_post",
+        "type": "object"
+      },
       "Body_vm_sendkey_api_vms__vmid__sendkey_post": {
         "properties": {
           "key": {
@@ -2868,6 +2892,184 @@
           }
         },
         "title": "ServicesResponse",
+        "type": "object"
+      },
+      "SetupCmClientInstallBody": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_root": {
+            "minLength": 1,
+            "title": "Evidence Root",
+            "type": "string"
+          },
+          "management_point_fqdn": {
+            "minLength": 1,
+            "title": "Management Point Fqdn",
+            "type": "string"
+          },
+          "module_archive_path": {
+            "minLength": 1,
+            "title": "Module Archive Path",
+            "type": "string"
+          },
+          "module_archive_sha256": {
+            "pattern": "^[A-Fa-f0-9]{64}$",
+            "title": "Module Archive Sha256",
+            "type": "string"
+          },
+          "site_code": {
+            "pattern": "^[A-Z0-9]{3}$",
+            "title": "Site Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_code",
+          "management_point_fqdn",
+          "evidence_root",
+          "module_archive_path",
+          "module_archive_sha256"
+        ],
+        "title": "SetupCmClientInstallBody",
+        "type": "object"
+      },
+      "SetupCmContentLocationDiagnosticsBody": {
+        "additionalProperties": false,
+        "properties": {
+          "client_ipv4": {
+            "title": "Client Ipv4",
+            "type": "string"
+          },
+          "site_code": {
+            "const": "LAB",
+            "title": "Site Code",
+            "type": "string"
+          },
+          "target_computer_name": {
+            "pattern": "^[A-Za-z0-9-]{1,63}$",
+            "title": "Target Computer Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_code",
+          "target_computer_name",
+          "client_ipv4"
+        ],
+        "title": "SetupCmContentLocationDiagnosticsBody",
+        "type": "object"
+      },
+      "SetupCmContentLocationRemediationBody": {
+        "additionalProperties": false,
+        "properties": {
+          "boundary_group_name": {
+            "const": "LABZ1 Client Network",
+            "title": "Boundary Group Name",
+            "type": "string"
+          },
+          "client_subnet": {
+            "const": "192.168.16.0/24",
+            "title": "Client Subnet",
+            "type": "string"
+          },
+          "distribution_point_fqdn": {
+            "const": "LABZ1-CM01.test.gell.one",
+            "title": "Distribution Point Fqdn",
+            "type": "string"
+          },
+          "site_code": {
+            "const": "LAB",
+            "title": "Site Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_code",
+          "client_subnet",
+          "boundary_group_name",
+          "distribution_point_fqdn"
+        ],
+        "title": "SetupCmContentLocationRemediationBody",
+        "type": "object"
+      },
+      "SetupCmModulePublicationBody": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "pattern": "^[0-9a-f-]{36}$",
+            "title": "Artifact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id"
+        ],
+        "title": "SetupCmModulePublicationBody",
+        "type": "object"
+      },
+      "SetupCmSourceDiagnosticsBody": {
+        "additionalProperties": false,
+        "properties": {
+          "site_code": {
+            "pattern": "^[A-Z0-9]{3}$",
+            "title": "Site Code",
+            "type": "string"
+          },
+          "target_computer_name": {
+            "pattern": "^[A-Za-z0-9-]{1,63}$",
+            "title": "Target Computer Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site_code",
+          "target_computer_name"
+        ],
+        "title": "SetupCmSourceDiagnosticsBody",
+        "type": "object"
+      },
+      "SetupCmWorkBody": {
+        "additionalProperties": false,
+        "properties": {
+          "config_path": {
+            "minLength": 1,
+            "title": "Config Path",
+            "type": "string"
+          },
+          "evidence_root": {
+            "minLength": 1,
+            "title": "Evidence Root",
+            "type": "string"
+          },
+          "module_archive_path": {
+            "minLength": 1,
+            "title": "Module Archive Path",
+            "type": "string"
+          },
+          "module_archive_sha256": {
+            "pattern": "^[A-Fa-f0-9]{64}$",
+            "title": "Module Archive Sha256",
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              "acquire",
+              "sql",
+              "mecm",
+              "health"
+            ],
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "config_path",
+          "evidence_root",
+          "module_archive_path",
+          "module_archive_sha256"
+        ],
+        "title": "SetupCmWorkBody",
         "type": "object"
       },
       "SignalMetricResponse": {
@@ -6740,6 +6942,62 @@
         ]
       }
     },
+    "/api/agent/v1/setup-cm-module-artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "download_setup_cm_module_artifact_api_agent_v1_setup_cm_module_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Setup Cm Module Artifact",
+        "tags": [
+          "agent-v1"
+        ]
+      }
+    },
     "/api/agent/v1/update-check": {
       "post": {
         "operationId": "update_check_api_agent_v1_update_check_post",
@@ -7017,6 +7275,23 @@
           }
         },
         "summary": "Bulk Delete Agent Records"
+      }
+    },
+    "/api/agents/bulk-update": {
+      "post": {
+        "description": "Force the AutopilotAgent service to restart on each selected agent's VM.\n\nBody: { \"agent_ids\": [\"<id>\", ...] }\n\nThe agent already self-upgrades: Worker.cs calls\nAgentUpdateService.CheckAndApplyOnceAsync after every heartbeat, so a\nhealthy agent picks up a newly published MSI within one heartbeat\ninterval (30s by default) with no help from us. What it cannot do is\nupgrade itself when its service is wedged and no longer heartbeating,\nwhich is exactly the \"Stale\" state the fleet table shows most often.\n\nRestarting the service through the guest agent forces an immediate\nheartbeat and therefore an immediate update-check, which both un-wedges a\nstale agent and pulls a pending upgrade forward. Per-agent outcomes are\nreported so one unreachable VM does not abort the batch.",
+        "operationId": "bulk_update_agent_software_api_agents_bulk_update_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Bulk Update Agent Software"
       }
     },
     "/api/agents/{agent_id}/delete": {
@@ -11186,6 +11461,48 @@
         ]
       }
     },
+    "/api/labs/reconcile-sweep": {
+      "post": {
+        "description": "Fleet-wide network reconcile across every managed lab.\n\nPropose-only by default (records findings + pending fix actions but does\nnot touch Proxmox). Pass ``auto_apply=true`` to also execute pending fixes\nfor labs whose plan status is ``fixing`` in the same pass.",
+        "operationId": "reconcile_sweep_api_labs_reconcile_sweep_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "auto_apply",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Auto Apply",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reconcile Sweep",
+        "tags": [
+          "labs"
+        ]
+      }
+    },
     "/api/labs/{lab_id}": {
       "get": {
         "operationId": "get_lab_api_labs__lab_id__get",
@@ -14523,6 +14840,47 @@
           }
         },
         "summary": "React Agent Download Bootstrap Token"
+      }
+    },
+    "/api/remote-powershell/v1/agents/{agent_id}/endpoint-facts": {
+      "post": {
+        "description": "Queue the sole v1 read-only runbook without accepting arbitrary script text.",
+        "operationId": "queue_endpoint_facts_api_remote_powershell_v1_agents__agent_id__endpoint_facts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Endpoint Facts",
+        "tags": [
+          "remote-powershell"
+        ]
       }
     },
     "/api/runs/page": {
@@ -17947,6 +18305,515 @@
           }
         },
         "summary": "Node Options"
+      }
+    },
+    "/api/setup-cm/v1/agents/{agent_id}/client-install": {
+      "post": {
+        "operationId": "queue_setup_cm_client_install_api_setup_cm_v1_agents__agent_id__client_install_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupCmClientInstallBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Setup Cm Client Install",
+        "tags": [
+          "setup-cm"
+        ]
+      }
+    },
+    "/api/setup-cm/v1/agents/{agent_id}/client-network-repair": {
+      "post": {
+        "operationId": "queue_setup_cm_client_network_repair_api_setup_cm_v1_agents__agent_id__client_network_repair_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Setup Cm Client Network Repair",
+        "tags": [
+          "setup-cm"
+        ]
+      }
+    },
+    "/api/setup-cm/v1/agents/{agent_id}/console-domain-admins": {
+      "post": {
+        "operationId": "queue_setup_cm_console_domain_admins_api_setup_cm_v1_agents__agent_id__console_domain_admins_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Setup Cm Console Domain Admins",
+        "tags": [
+          "setup-cm"
+        ]
+      }
+    },
+    "/api/setup-cm/v1/agents/{agent_id}/content-location-diagnostics": {
+      "post": {
+        "operationId": "queue_setup_cm_content_location_diagnostics_api_setup_cm_v1_agents__agent_id__content_location_diagnostics_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupCmContentLocationDiagnosticsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Setup Cm Content Location Diagnostics",
+        "tags": [
+          "setup-cm"
+        ]
+      }
+    },
+    "/api/setup-cm/v1/agents/{agent_id}/content-location-remediation": {
+      "post": {
+        "operationId": "queue_setup_cm_content_location_remediation_api_setup_cm_v1_agents__agent_id__content_location_remediation_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupCmContentLocationRemediationBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Setup Cm Content Location Remediation",
+        "tags": [
+          "setup-cm"
+        ]
+      }
+    },
+    "/api/setup-cm/v1/agents/{agent_id}/health-client-target-reconciliation": {
+      "post": {
+        "operationId": "queue_setup_cm_health_client_target_reconciliation_api_setup_cm_v1_agents__agent_id__health_client_target_reconciliation_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Setup Cm Health Client Target Reconciliation",
+        "tags": [
+          "setup-cm"
+        ]
+      }
+    },
+    "/api/setup-cm/v1/agents/{agent_id}/module-publications": {
+      "post": {
+        "operationId": "queue_setup_cm_module_publication_api_setup_cm_v1_agents__agent_id__module_publications_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupCmModulePublicationBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Setup Cm Module Publication",
+        "tags": [
+          "setup-cm"
+        ]
+      }
+    },
+    "/api/setup-cm/v1/agents/{agent_id}/source-access": {
+      "post": {
+        "operationId": "queue_setup_cm_source_access_api_setup_cm_v1_agents__agent_id__source_access_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupCmSourceDiagnosticsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Setup Cm Source Access",
+        "tags": [
+          "setup-cm"
+        ]
+      }
+    },
+    "/api/setup-cm/v1/agents/{agent_id}/source-diagnostics": {
+      "post": {
+        "operationId": "queue_setup_cm_source_diagnostics_api_setup_cm_v1_agents__agent_id__source_diagnostics_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupCmSourceDiagnosticsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Setup Cm Source Diagnostics",
+        "tags": [
+          "setup-cm"
+        ]
+      }
+    },
+    "/api/setup-cm/v1/agents/{agent_id}/work": {
+      "post": {
+        "operationId": "queue_setup_cm_work_api_setup_cm_v1_agents__agent_id__work_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupCmWorkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Queue Setup Cm Work",
+        "tags": [
+          "setup-cm"
+        ]
+      }
+    },
+    "/api/setup-cm/v1/module-artifacts": {
+      "post": {
+        "operationId": "upload_setup_cm_module_artifact_api_setup_cm_v1_module_artifacts_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_setup_cm_module_artifact_api_setup_cm_v1_module_artifacts_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Setup Cm Module Artifact",
+        "tags": [
+          "setup-cm"
+        ]
       }
     },
     "/api/setup/v1/agent-seed/{rid}/AutopilotAgent.exe": {

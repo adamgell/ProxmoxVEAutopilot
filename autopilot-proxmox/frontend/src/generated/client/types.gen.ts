@@ -557,6 +557,24 @@ export type BodyUploadHashFilesApiHashesUploadPost = {
 };
 
 /**
+ * Body_upload_setup_cm_module_artifact_api_setup_cm_v1_module_artifacts_post
+ */
+export type BodyUploadSetupCmModuleArtifactApiSetupCmV1ModuleArtifactsPost = {
+    /**
+     * File
+     */
+    file: Blob | File;
+    /**
+     * Sha256
+     */
+    sha256: string;
+    /**
+     * Source Commit
+     */
+    source_commit: string;
+};
+
+/**
  * Body_vm_sendkey_api_vms__vmid__sendkey_post
  */
 export type BodyVmSendkeyApiVmsVmidSendkeyPost = {
@@ -1926,6 +1944,122 @@ export type ServicesResponse = {
     services?: Array<{
         [key: string]: unknown;
     }>;
+};
+
+/**
+ * SetupCmClientInstallBody
+ */
+export type SetupCmClientInstallBody = {
+    /**
+     * Evidence Root
+     */
+    evidence_root: string;
+    /**
+     * Management Point Fqdn
+     */
+    management_point_fqdn: string;
+    /**
+     * Module Archive Path
+     */
+    module_archive_path: string;
+    /**
+     * Module Archive Sha256
+     */
+    module_archive_sha256: string;
+    /**
+     * Site Code
+     */
+    site_code: string;
+};
+
+/**
+ * SetupCmContentLocationDiagnosticsBody
+ */
+export type SetupCmContentLocationDiagnosticsBody = {
+    /**
+     * Client Ipv4
+     */
+    client_ipv4: string;
+    /**
+     * Site Code
+     */
+    site_code: 'LAB';
+    /**
+     * Target Computer Name
+     */
+    target_computer_name: string;
+};
+
+/**
+ * SetupCmContentLocationRemediationBody
+ */
+export type SetupCmContentLocationRemediationBody = {
+    /**
+     * Boundary Group Name
+     */
+    boundary_group_name: 'LABZ1 Client Network';
+    /**
+     * Client Subnet
+     */
+    client_subnet: '192.168.16.0/24';
+    /**
+     * Distribution Point Fqdn
+     */
+    distribution_point_fqdn: 'LABZ1-CM01.test.gell.one';
+    /**
+     * Site Code
+     */
+    site_code: 'LAB';
+};
+
+/**
+ * SetupCmModulePublicationBody
+ */
+export type SetupCmModulePublicationBody = {
+    /**
+     * Artifact Id
+     */
+    artifact_id: string;
+};
+
+/**
+ * SetupCmSourceDiagnosticsBody
+ */
+export type SetupCmSourceDiagnosticsBody = {
+    /**
+     * Site Code
+     */
+    site_code: string;
+    /**
+     * Target Computer Name
+     */
+    target_computer_name: string;
+};
+
+/**
+ * SetupCmWorkBody
+ */
+export type SetupCmWorkBody = {
+    /**
+     * Config Path
+     */
+    config_path: string;
+    /**
+     * Evidence Root
+     */
+    evidence_root: string;
+    /**
+     * Module Archive Path
+     */
+    module_archive_path: string;
+    /**
+     * Module Archive Sha256
+     */
+    module_archive_sha256: string;
+    /**
+     * Stage
+     */
+    stage: 'acquire' | 'sql' | 'mecm' | 'health';
 };
 
 /**
@@ -4262,6 +4396,40 @@ export type HeartbeatApiAgentV1HeartbeatPostResponses = {
     200: unknown;
 };
 
+export type DownloadSetupCmModuleArtifactApiAgentV1SetupCmModuleArtifactsArtifactIdGetData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+    };
+    path: {
+        /**
+         * Artifact Id
+         */
+        artifact_id: string;
+    };
+    query?: never;
+    url: '/api/agent/v1/setup-cm-module-artifacts/{artifact_id}';
+};
+
+export type DownloadSetupCmModuleArtifactApiAgentV1SetupCmModuleArtifactsArtifactIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DownloadSetupCmModuleArtifactApiAgentV1SetupCmModuleArtifactsArtifactIdGetError = DownloadSetupCmModuleArtifactApiAgentV1SetupCmModuleArtifactsArtifactIdGetErrors[keyof DownloadSetupCmModuleArtifactApiAgentV1SetupCmModuleArtifactsArtifactIdGetErrors];
+
+export type DownloadSetupCmModuleArtifactApiAgentV1SetupCmModuleArtifactsArtifactIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type UpdateCheckApiAgentV1UpdateCheckPostData = {
     body: UpdateCheckBody;
     headers?: {
@@ -4410,6 +4578,20 @@ export type BulkDeleteAgentRecordsApiAgentsBulkDeletePostData = {
 };
 
 export type BulkDeleteAgentRecordsApiAgentsBulkDeletePostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type BulkUpdateAgentSoftwareApiAgentsBulkUpdatePostData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/agents/bulk-update';
+};
+
+export type BulkUpdateAgentSoftwareApiAgentsBulkUpdatePostResponses = {
     /**
      * Successful Response
      */
@@ -7228,6 +7410,34 @@ export type PageApiLabsPageGetResponses = {
     200: unknown;
 };
 
+export type ReconcileSweepApiLabsReconcileSweepPostData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Auto Apply
+         */
+        auto_apply?: boolean;
+    };
+    url: '/api/labs/reconcile-sweep';
+};
+
+export type ReconcileSweepApiLabsReconcileSweepPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReconcileSweepApiLabsReconcileSweepPostError = ReconcileSweepApiLabsReconcileSweepPostErrors[keyof ReconcileSweepApiLabsReconcileSweepPostErrors];
+
+export type ReconcileSweepApiLabsReconcileSweepPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type GetLabApiLabsLabIdGetData = {
     body?: never;
     path: {
@@ -9475,6 +9685,34 @@ export type ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenG
 };
 
 export type ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetResponse = ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetResponses[keyof ReactAgentDownloadBootstrapTokenApiReactAgentDownloadBootstrapTokenGetResponses];
+
+export type QueueEndpointFactsApiRemotePowershellV1AgentsAgentIdEndpointFactsPostData = {
+    body?: never;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/remote-powershell/v1/agents/{agent_id}/endpoint-facts';
+};
+
+export type QueueEndpointFactsApiRemotePowershellV1AgentsAgentIdEndpointFactsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueEndpointFactsApiRemotePowershellV1AgentsAgentIdEndpointFactsPostError = QueueEndpointFactsApiRemotePowershellV1AgentsAgentIdEndpointFactsPostErrors[keyof QueueEndpointFactsApiRemotePowershellV1AgentsAgentIdEndpointFactsPostErrors];
+
+export type QueueEndpointFactsApiRemotePowershellV1AgentsAgentIdEndpointFactsPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
 
 export type GetRunsPageApiRunsPageGetData = {
     body?: never;
@@ -11761,6 +11999,309 @@ export type NodeOptionsApiSettingsNodeOptionsNodeGetResponses = {
      * Successful Response
      */
     200: unknown;
+};
+
+export type QueueSetupCmClientInstallApiSetupCmV1AgentsAgentIdClientInstallPostData = {
+    body: SetupCmClientInstallBody;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/setup-cm/v1/agents/{agent_id}/client-install';
+};
+
+export type QueueSetupCmClientInstallApiSetupCmV1AgentsAgentIdClientInstallPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueSetupCmClientInstallApiSetupCmV1AgentsAgentIdClientInstallPostError = QueueSetupCmClientInstallApiSetupCmV1AgentsAgentIdClientInstallPostErrors[keyof QueueSetupCmClientInstallApiSetupCmV1AgentsAgentIdClientInstallPostErrors];
+
+export type QueueSetupCmClientInstallApiSetupCmV1AgentsAgentIdClientInstallPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
+
+export type QueueSetupCmClientNetworkRepairApiSetupCmV1AgentsAgentIdClientNetworkRepairPostData = {
+    body?: never;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/setup-cm/v1/agents/{agent_id}/client-network-repair';
+};
+
+export type QueueSetupCmClientNetworkRepairApiSetupCmV1AgentsAgentIdClientNetworkRepairPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueSetupCmClientNetworkRepairApiSetupCmV1AgentsAgentIdClientNetworkRepairPostError = QueueSetupCmClientNetworkRepairApiSetupCmV1AgentsAgentIdClientNetworkRepairPostErrors[keyof QueueSetupCmClientNetworkRepairApiSetupCmV1AgentsAgentIdClientNetworkRepairPostErrors];
+
+export type QueueSetupCmClientNetworkRepairApiSetupCmV1AgentsAgentIdClientNetworkRepairPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
+
+export type QueueSetupCmConsoleDomainAdminsApiSetupCmV1AgentsAgentIdConsoleDomainAdminsPostData = {
+    body?: never;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/setup-cm/v1/agents/{agent_id}/console-domain-admins';
+};
+
+export type QueueSetupCmConsoleDomainAdminsApiSetupCmV1AgentsAgentIdConsoleDomainAdminsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueSetupCmConsoleDomainAdminsApiSetupCmV1AgentsAgentIdConsoleDomainAdminsPostError = QueueSetupCmConsoleDomainAdminsApiSetupCmV1AgentsAgentIdConsoleDomainAdminsPostErrors[keyof QueueSetupCmConsoleDomainAdminsApiSetupCmV1AgentsAgentIdConsoleDomainAdminsPostErrors];
+
+export type QueueSetupCmConsoleDomainAdminsApiSetupCmV1AgentsAgentIdConsoleDomainAdminsPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
+
+export type QueueSetupCmContentLocationDiagnosticsApiSetupCmV1AgentsAgentIdContentLocationDiagnosticsPostData = {
+    body: SetupCmContentLocationDiagnosticsBody;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/setup-cm/v1/agents/{agent_id}/content-location-diagnostics';
+};
+
+export type QueueSetupCmContentLocationDiagnosticsApiSetupCmV1AgentsAgentIdContentLocationDiagnosticsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueSetupCmContentLocationDiagnosticsApiSetupCmV1AgentsAgentIdContentLocationDiagnosticsPostError = QueueSetupCmContentLocationDiagnosticsApiSetupCmV1AgentsAgentIdContentLocationDiagnosticsPostErrors[keyof QueueSetupCmContentLocationDiagnosticsApiSetupCmV1AgentsAgentIdContentLocationDiagnosticsPostErrors];
+
+export type QueueSetupCmContentLocationDiagnosticsApiSetupCmV1AgentsAgentIdContentLocationDiagnosticsPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
+
+export type QueueSetupCmContentLocationRemediationApiSetupCmV1AgentsAgentIdContentLocationRemediationPostData = {
+    body: SetupCmContentLocationRemediationBody;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/setup-cm/v1/agents/{agent_id}/content-location-remediation';
+};
+
+export type QueueSetupCmContentLocationRemediationApiSetupCmV1AgentsAgentIdContentLocationRemediationPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueSetupCmContentLocationRemediationApiSetupCmV1AgentsAgentIdContentLocationRemediationPostError = QueueSetupCmContentLocationRemediationApiSetupCmV1AgentsAgentIdContentLocationRemediationPostErrors[keyof QueueSetupCmContentLocationRemediationApiSetupCmV1AgentsAgentIdContentLocationRemediationPostErrors];
+
+export type QueueSetupCmContentLocationRemediationApiSetupCmV1AgentsAgentIdContentLocationRemediationPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
+
+export type QueueSetupCmHealthClientTargetReconciliationApiSetupCmV1AgentsAgentIdHealthClientTargetReconciliationPostData = {
+    body?: never;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/setup-cm/v1/agents/{agent_id}/health-client-target-reconciliation';
+};
+
+export type QueueSetupCmHealthClientTargetReconciliationApiSetupCmV1AgentsAgentIdHealthClientTargetReconciliationPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueSetupCmHealthClientTargetReconciliationApiSetupCmV1AgentsAgentIdHealthClientTargetReconciliationPostError = QueueSetupCmHealthClientTargetReconciliationApiSetupCmV1AgentsAgentIdHealthClientTargetReconciliationPostErrors[keyof QueueSetupCmHealthClientTargetReconciliationApiSetupCmV1AgentsAgentIdHealthClientTargetReconciliationPostErrors];
+
+export type QueueSetupCmHealthClientTargetReconciliationApiSetupCmV1AgentsAgentIdHealthClientTargetReconciliationPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
+
+export type QueueSetupCmModulePublicationApiSetupCmV1AgentsAgentIdModulePublicationsPostData = {
+    body: SetupCmModulePublicationBody;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/setup-cm/v1/agents/{agent_id}/module-publications';
+};
+
+export type QueueSetupCmModulePublicationApiSetupCmV1AgentsAgentIdModulePublicationsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueSetupCmModulePublicationApiSetupCmV1AgentsAgentIdModulePublicationsPostError = QueueSetupCmModulePublicationApiSetupCmV1AgentsAgentIdModulePublicationsPostErrors[keyof QueueSetupCmModulePublicationApiSetupCmV1AgentsAgentIdModulePublicationsPostErrors];
+
+export type QueueSetupCmModulePublicationApiSetupCmV1AgentsAgentIdModulePublicationsPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
+
+export type QueueSetupCmSourceAccessApiSetupCmV1AgentsAgentIdSourceAccessPostData = {
+    body: SetupCmSourceDiagnosticsBody;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/setup-cm/v1/agents/{agent_id}/source-access';
+};
+
+export type QueueSetupCmSourceAccessApiSetupCmV1AgentsAgentIdSourceAccessPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueSetupCmSourceAccessApiSetupCmV1AgentsAgentIdSourceAccessPostError = QueueSetupCmSourceAccessApiSetupCmV1AgentsAgentIdSourceAccessPostErrors[keyof QueueSetupCmSourceAccessApiSetupCmV1AgentsAgentIdSourceAccessPostErrors];
+
+export type QueueSetupCmSourceAccessApiSetupCmV1AgentsAgentIdSourceAccessPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
+
+export type QueueSetupCmSourceDiagnosticsApiSetupCmV1AgentsAgentIdSourceDiagnosticsPostData = {
+    body: SetupCmSourceDiagnosticsBody;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/setup-cm/v1/agents/{agent_id}/source-diagnostics';
+};
+
+export type QueueSetupCmSourceDiagnosticsApiSetupCmV1AgentsAgentIdSourceDiagnosticsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueSetupCmSourceDiagnosticsApiSetupCmV1AgentsAgentIdSourceDiagnosticsPostError = QueueSetupCmSourceDiagnosticsApiSetupCmV1AgentsAgentIdSourceDiagnosticsPostErrors[keyof QueueSetupCmSourceDiagnosticsApiSetupCmV1AgentsAgentIdSourceDiagnosticsPostErrors];
+
+export type QueueSetupCmSourceDiagnosticsApiSetupCmV1AgentsAgentIdSourceDiagnosticsPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
+
+export type QueueSetupCmWorkApiSetupCmV1AgentsAgentIdWorkPostData = {
+    body: SetupCmWorkBody;
+    path: {
+        /**
+         * Agent Id
+         */
+        agent_id: string;
+    };
+    query?: never;
+    url: '/api/setup-cm/v1/agents/{agent_id}/work';
+};
+
+export type QueueSetupCmWorkApiSetupCmV1AgentsAgentIdWorkPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type QueueSetupCmWorkApiSetupCmV1AgentsAgentIdWorkPostError = QueueSetupCmWorkApiSetupCmV1AgentsAgentIdWorkPostErrors[keyof QueueSetupCmWorkApiSetupCmV1AgentsAgentIdWorkPostErrors];
+
+export type QueueSetupCmWorkApiSetupCmV1AgentsAgentIdWorkPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
+
+export type UploadSetupCmModuleArtifactApiSetupCmV1ModuleArtifactsPostData = {
+    body: BodyUploadSetupCmModuleArtifactApiSetupCmV1ModuleArtifactsPost;
+    path?: never;
+    query?: never;
+    url: '/api/setup-cm/v1/module-artifacts';
+};
+
+export type UploadSetupCmModuleArtifactApiSetupCmV1ModuleArtifactsPostErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UploadSetupCmModuleArtifactApiSetupCmV1ModuleArtifactsPostError = UploadSetupCmModuleArtifactApiSetupCmV1ModuleArtifactsPostErrors[keyof UploadSetupCmModuleArtifactApiSetupCmV1ModuleArtifactsPostErrors];
+
+export type UploadSetupCmModuleArtifactApiSetupCmV1ModuleArtifactsPostResponses = {
+    /**
+     * Successful Response
+     */
+    201: unknown;
 };
 
 export type SetupSeedAgentExeApiSetupV1AgentSeedRidAutopilotAgentExeGetData = {
