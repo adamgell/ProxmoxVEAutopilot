@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import ipaddress
+from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from web import agent_telemetry_pg
+from web import agent_telemetry_pg, setup_artifacts
 from web.agent_v1_endpoints import _conn, _public_work_item
 
 
@@ -14,6 +15,11 @@ router = APIRouter(prefix="/api/setup-cm/v1", tags=["setup-cm"])
 
 _SETUP_CM_ROOT = "C:\\ProgramData\\SetupCm\\"
 _SETUP_CM_VAULT_ROOT = "\\\\LABZ1-DC02\\SetupCm\\"
+_SETUP_CM_MODULE_MAX_BYTES = 64 * 1024 * 1024
+_SETUP_CM_MODULE_UPLOAD_CHUNK_BYTES = 1024 * 1024
+_LABZ1_CLIENT_NETWORK_REPAIR_AGENT_ID = "agent-ring0ivy24-01"
+_LABZ1_HEALTH_CLIENT_TARGET_RECONCILIATION_AGENT_ID = "agent-labz1-cm01"
+_LABZ1_CONSOLE_DOMAIN_ADMINS_AGENT_ID = "agent-labz1-cm01"
 _WORK_KIND_BY_STAGE = {
     "acquire": "setup_cm_acquire",
     "sql": "setup_cm_sql",
@@ -53,6 +59,42 @@ class SetupCmWorkBody(BaseModel):
         return self
 
 
+@router.post("/module-artifacts", status_code=201)
+async def upload_setup_cm_module_artifact(
+    file: UploadFile = File(...),
+    sha256: str = Form(...),
+    source_commit: str = Form(...),
+):
+    if Path(file.filename or "").suffix.casefold() != ".zip":
+        raise HTTPException(status_code=422, detail="file must be a ZIP")
+
+    target = setup_artifacts.safe_artifact_path("setup-cm-module", "setup-cm.zip")
+    total_bytes = 0
+    try:
+        with target.open("xb") as handle:
+            while chunk := await file.read(_SETUP_CM_MODULE_UPLOAD_CHUNK_BYTES):
+                total_bytes += len(chunk)
+                if total_bytes > _SETUP_CM_MODULE_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="setup-cm-module exceeds 64 MiB",
+                    )
+                handle.write(chunk)
+        return setup_artifacts.register_existing_artifact(
+            kind="setup-cm-module",
+            path=target,
+            metadata={"sha256": sha256, "source_commit": source_commit},
+        )
+    except ValueError as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+
 class SetupCmClientInstallBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -76,6 +118,12 @@ class SetupCmClientInstallBody(BaseModel):
         ) or not self.module_archive_path.lower().endswith(".zip"):
             raise ValueError("module_archive_path must be a ZIP below an approved Setup-CM root")
         return self
+
+
+class SetupCmModulePublicationBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str = Field(pattern=r"^[0-9a-f-]{36}$")
 
 
 class SetupCmSourceDiagnosticsBody(BaseModel):
@@ -139,6 +187,105 @@ def queue_setup_cm_client_install(agent_id: str, body: SetupCmClientInstallBody)
             agent_id=agent_id,
             kind="setup_cm_client_install",
             request=body.model_dump(),
+            vmid=device.get("vmid"),
+        )
+    return _public_work_item(work)
+
+
+@router.post("/agents/{agent_id}/client-network-repair", status_code=202)
+def queue_setup_cm_client_network_repair(agent_id: str):
+    if agent_id != _LABZ1_CLIENT_NETWORK_REPAIR_AGENT_ID:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "client network repair target must be "
+                "agent-ring0ivy24-01"
+            ),
+        )
+    with _conn() as conn:
+        device = agent_telemetry_pg.get_device(conn, agent_id)
+        if not device:
+            raise HTTPException(status_code=404, detail=f"agent is not registered: {agent_id}")
+        work = agent_telemetry_pg.create_work_item(
+            conn,
+            agent_id=agent_id,
+            kind="setup_cm_client_network_repair",
+            request={},
+            vmid=device.get("vmid"),
+        )
+    return _public_work_item(work)
+
+
+@router.post("/agents/{agent_id}/health-client-target-reconciliation", status_code=202)
+def queue_setup_cm_health_client_target_reconciliation(agent_id: str):
+    if agent_id != _LABZ1_HEALTH_CLIENT_TARGET_RECONCILIATION_AGENT_ID:
+        raise HTTPException(
+            status_code=422,
+            detail="health client target reconciliation target must be agent-labz1-cm01",
+        )
+    with _conn() as conn:
+        device = agent_telemetry_pg.get_device(conn, agent_id)
+        if not device:
+            raise HTTPException(status_code=404, detail=f"agent is not registered: {agent_id}")
+        work = agent_telemetry_pg.create_work_item(
+            conn,
+            agent_id=agent_id,
+            kind="setup_cm_health_client_target_reconciliation",
+            request={},
+            vmid=device.get("vmid"),
+        )
+    return _public_work_item(work)
+
+
+@router.post("/agents/{agent_id}/console-domain-admins", status_code=202)
+def queue_setup_cm_console_domain_admins(agent_id: str):
+    if agent_id != _LABZ1_CONSOLE_DOMAIN_ADMINS_AGENT_ID:
+        raise HTTPException(
+            status_code=422,
+            detail="console Domain Admins target must be agent-labz1-cm01",
+        )
+    with _conn() as conn:
+        device = agent_telemetry_pg.get_device(conn, agent_id)
+        if not device:
+            raise HTTPException(status_code=404, detail=f"agent is not registered: {agent_id}")
+        work = agent_telemetry_pg.create_work_item(
+            conn,
+            agent_id=agent_id,
+            kind="setup_cm_console_domain_admins",
+            request={},
+            vmid=device.get("vmid"),
+        )
+    return _public_work_item(work)
+
+
+@router.post("/agents/{agent_id}/module-publications", status_code=202)
+def queue_setup_cm_module_publication(
+    agent_id: str,
+    body: SetupCmModulePublicationBody,
+):
+    if agent_id != "agent-labz1-dc02":
+        raise HTTPException(
+            status_code=422,
+            detail="module publication target must be agent-labz1-dc02",
+        )
+    artifact = setup_artifacts.get_artifact(body.artifact_id, kind="setup-cm-module")
+    if not artifact:
+        raise HTTPException(status_code=404, detail="setup-cm-module artifact not found")
+    metadata = artifact.get("metadata") or {}
+    request = {
+        "artifact_id": artifact["artifact_id"],
+        "archive_sha256": artifact["sha256"],
+        "source_commit": metadata["source_commit"],
+    }
+    with _conn() as conn:
+        device = agent_telemetry_pg.get_device(conn, agent_id)
+        if not device:
+            raise HTTPException(status_code=404, detail=f"agent is not registered: {agent_id}")
+        work = agent_telemetry_pg.create_work_item(
+            conn,
+            agent_id=agent_id,
+            kind="publish_setup_cm_module",
+            request=request,
             vmid=device.get("vmid"),
         )
     return _public_work_item(work)

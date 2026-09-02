@@ -1,4 +1,6 @@
 using System.Net;
+using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 using AutopilotAgent;
 
@@ -13,9 +15,17 @@ VerifyBuildHostVirtioRootsMatchOsDeployScript();
 VerifyOsDeployOutputSelectionRejectsStaleManifests();
 VerifyOsDeployResolvesStagedSourceMedia();
 VerifySetupCmWorkContracts();
+VerifySetupCmModulePublicationContracts();
 VerifySetupCmDiagnosticsContracts();
 VerifySetupCmContentLocationDiagnosticsContracts();
 VerifySetupCmContentLocationRemediationContracts();
+VerifySetupCmClientNetworkRepairContracts();
+VerifySetupCmHealthClientTargetReconciliationContracts();
+VerifySetupCmConsoleDomainAdminsContracts();
+VerifySetupCmConsolePrincipalContracts();
+VerifySetupCmMarkerDeploymentContracts();
+VerifySetupCmConsoleConnectivityDiagnosticsContracts();
+VerifyRemotePowerShellContracts();
 Console.WriteLine("AutopilotAgent contract tests passed.");
 
 static async Task AgentApiClientRegistersCloudOsdRunAsFullOsV2Agent()
@@ -518,6 +528,96 @@ static void VerifySetupCmWorkContracts()
     }
 }
 
+static void VerifySetupCmModulePublicationContracts()
+{
+    Assert(
+        SetupCmModulePublishWorkService.SupportedKind == "publish_setup_cm_module",
+        "Setup-CM module publication kind is not registered");
+
+    var valid = new Dictionary<string, JsonElement>
+    {
+        ["artifact_id"] = JsonSerializer.SerializeToElement("00000000-0000-0000-0000-000000000001"),
+        ["archive_sha256"] = JsonSerializer.SerializeToElement(new string('a', 64)),
+        ["source_commit"] = JsonSerializer.SerializeToElement(new string('b', 40)),
+    };
+    var request = SetupCmModulePublishWorkService.ValidateRequest(valid);
+    Assert(request.ArtifactId == "00000000-0000-0000-0000-000000000001", "publication artifact id did not round-trip");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmModulePublishWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["destination_path"] = JsonSerializer.SerializeToElement(@"C:\\Windows\\Temp\\setup-cm.zip"),
+            }),
+        "module publication accepted an arbitrary destination");
+
+    var worker = File.ReadAllText(
+        Path.Combine(
+            Directory.GetCurrentDirectory(),
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "Worker.cs"));
+    Assert(
+        worker.Contains("SetupCmModulePublishWorkService.SupportedKind", StringComparison.Ordinal),
+        "Agent worker does not route Setup-CM module publication work");
+
+    var program = File.ReadAllText(
+        Path.Combine(
+            Directory.GetCurrentDirectory(),
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "Program.cs"));
+    Assert(
+        program.Contains("AddSingleton<SetupCmModulePublishWorkService>", StringComparison.Ordinal),
+        "Agent host does not register Setup-CM module publication work");
+
+    var archivePath = Path.Combine(Path.GetTempPath(), $"setup-cm-publication-{Guid.NewGuid():N}.zip");
+    try
+    {
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+        {
+            foreach (var entryName in new[]
+            {
+                "scripts/Invoke-SetupCm.ps1",
+                "scripts/Invoke-SetupCmClient.ps1",
+                "src/SetupCm/SetupCm.psd1",
+                "src/SetupCm/SetupCm.psm1",
+            })
+            {
+                using var writer = new StreamWriter(archive.CreateEntry(entryName).Open());
+                writer.Write("# runtime");
+            }
+        }
+        var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archivePath))).ToLowerInvariant();
+        var validated = SetupCmModulePublishWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["archive_sha256"] = JsonSerializer.SerializeToElement(hash),
+            });
+        SetupCmModulePublishWorkService.ValidateArchive(archivePath, validated);
+
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Update))
+        {
+            using var writer = new StreamWriter(archive.CreateEntry("../outside.txt").Open());
+            writer.Write("blocked");
+        }
+        var unsafeHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archivePath))).ToLowerInvariant();
+        var unsafeRequest = SetupCmModulePublishWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>(valid)
+            {
+                ["archive_sha256"] = JsonSerializer.SerializeToElement(unsafeHash),
+            });
+        AssertThrows<InvalidOperationException>(
+            () => SetupCmModulePublishWorkService.ValidateArchive(archivePath, unsafeRequest),
+            "module publication accepted a traversal ZIP entry");
+    }
+    finally
+    {
+        File.Delete(archivePath);
+    }
+}
+
 static void VerifySetupCmDiagnosticsContracts()
 {
     Assert(
@@ -575,6 +675,18 @@ static void VerifySetupCmContentLocationDiagnosticsContracts()
         SetupCmDiagnosticsWorkService.ContentLocationDiagnosticScriptResourceName
             == "AutopilotAgent.SetupCmContentLocationDiagnostics.ps1",
         "content location work does not use the fixed packaged script");
+    var diagnosticScript = File.ReadAllText(
+        Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "SetupCmContentLocationDiagnostics.ps1"));
+    Assert(
+        diagnosticScript.Contains("$clientSubnetValue = $clientSubnet.Split('/')[0]", StringComparison.Ordinal),
+        "content location diagnostics did not normalize the CIDR for SMS_Boundary matching");
+    Assert(
+        diagnosticScript.Contains("-eq $clientSubnetValue", StringComparison.Ordinal),
+        "content location diagnostics compared the SMS_Boundary value to the unnormalized CIDR");
 
     var valid = new Dictionary<string, JsonElement>
     {
@@ -636,6 +748,18 @@ static void VerifySetupCmContentLocationRemediationContracts()
             "New-PSDrive -Name $SiteCode -PSProvider CMSite -Root $DistributionPointFqdn -ErrorAction Stop",
             StringComparison.Ordinal),
         "content remediation used unsupported CMSite drive parameters");
+    Assert(
+        !remediationScript.Contains("-Description $BoundaryGroupName", StringComparison.Ordinal),
+        "content remediation passed an unsupported Description parameter to New-CMBoundary");
+    Assert(
+        remediationScript.Contains("$boundaryValue = $ClientSubnet.Split('/')[0]", StringComparison.Ordinal),
+        "content remediation did not normalize the requested CIDR for SMS_Boundary readback");
+    Assert(
+        remediationScript.Contains("Value = '$boundaryValue'", StringComparison.Ordinal),
+        "content remediation queried SMS_Boundary with the unnormalized CIDR value");
+    Assert(
+        remediationScript.Contains("(?i)Display=", StringComparison.Ordinal),
+        "content remediation did not parse case-variant ServerNALPath Display keys");
 
     var valid = new Dictionary<string, JsonElement>
     {
@@ -668,6 +792,10 @@ static void VerifySetupCmContentLocationRemediationContracts()
             "[\"Display=\\\\LABZ1-CM01.test.gell.one.evil.test\"]MSWNET")
             != "labz1-cm01.test.gell.one",
         "content remediation accepted a suffixed DP host");
+    Assert(
+        SetupCmDiagnosticsWorkService.NormalizeContentLocationBoundaryValue("192.168.16.0/24")
+            == "192.168.16.0",
+        "content remediation did not normalize the CIDR request for strict boundary readback");
     var failure = SetupCmDiagnosticsWorkService.FormatContentLocationRemediationFailure(
         exitCode: 1,
         stdout: "partial script output",
@@ -845,6 +973,307 @@ static void VerifyOsDeployResolvesStagedSourceMedia()
     {
         Directory.Delete(root, recursive: true);
     }
+}
+
+static void VerifySetupCmClientNetworkRepairContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+            "setup_cm_client_network_repair"),
+        "Setup-CM client network repair kind is not registered");
+    Assert(
+        SetupCmDiagnosticsWorkService.ClientNetworkRepairScriptResourceName
+            == "AutopilotAgent.SetupCmClientNetworkRepair.ps1",
+        "client network repair does not use the fixed packaged script");
+
+    var repairScript = File.ReadAllText(
+        Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "SetupCmClientNetworkRepair.ps1"));
+    foreach (var value in new[]
+    {
+        "BC-24-11-9C-43-E6",
+        "192.168.16.103",
+        "192.168.16.1",
+        "192.168.16.12",
+        "LABZ1-DC02.test.gell.one",
+    })
+    {
+        Assert(
+            repairScript.Contains(value, StringComparison.Ordinal),
+            $"client network repair is missing fixed value: {value}");
+    }
+}
+
+static void VerifySetupCmHealthClientTargetReconciliationContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+            "setup_cm_health_client_target_reconciliation"),
+        "Setup-CM health client target reconciliation kind is not registered");
+
+    var reconciliationScript = Path.Combine(
+        "autopilot-agent",
+        "src",
+        "AutopilotAgent",
+        "SetupCmHealthClientTargetReconciliation.ps1");
+    Assert(
+        File.Exists(reconciliationScript),
+        "Setup-CM health client target reconciliation script is missing");
+
+    var source = File.ReadAllText(reconciliationScript);
+    foreach (var value in new[]
+    {
+        @"C:\ProgramData\SetupCm\labz1.local.yaml",
+        "testClient:",
+        "LABZ1-CMCLIENT01",
+        "RING0IVY24-01",
+        "previous_client_name",
+        "client_name",
+        "TrimStart([char]0xFEFF)",
+        "testClient block lines",
+    })
+    {
+        Assert(
+            source.Contains(value, StringComparison.Ordinal),
+            $"health client target reconciliation is missing fixed value: {value}");
+    }
+}
+
+static void VerifySetupCmConsoleDomainAdminsContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+            "setup_cm_console_domain_admins"),
+        "Setup-CM console Domain Admins kind is not registered");
+
+    Assert(
+        SetupCmDiagnosticsWorkService.ConsoleDomainAdminsScriptResourceName
+            == "AutopilotAgent.SetupCmConsoleDomainAdmins.ps1",
+        "Setup-CM console Domain Admins does not use the fixed packaged script");
+
+    var script = Path.Combine(
+        "autopilot-agent",
+        "src",
+        "AutopilotAgent",
+        "SetupCmConsoleDomainAdmins.ps1");
+    Assert(File.Exists(script), "Setup-CM console Domain Admins script is missing");
+
+    var source = File.ReadAllText(script);
+    foreach (var value in new[]
+    {
+        "Domain Admins",
+        "Full Administrator",
+        "Default",
+        "Add-CMSecurityRoleToAdministrativeUser",
+        "Add-CMSecurityScopeToAdministrativeUser",
+        "SMS Admins",
+        "MachineLaunchRestriction",
+        "DefaultLaunchPermission",
+        "[System.Security.AccessControl.AceFlags]::None",
+        "sms_admins_membership",
+        "machine_launch_remote_activation",
+        "default_launch_remote_activation",
+        "full_administrator",
+        "default_scope",
+    })
+    {
+        Assert(
+            source.Contains(value, StringComparison.Ordinal),
+            $"console Domain Admins script is missing fixed value: {value}");
+    }
+}
+
+static void VerifySetupCmConsolePrincipalContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains("setup_cm_console_principal"),
+        "Setup-CM direct console principal repair kind is not registered");
+    Assert(
+        SetupCmDiagnosticsWorkService.ConsolePrincipalScriptResourceName
+            == "AutopilotAgent.SetupCmConsolePrincipal.ps1",
+        "Setup-CM direct console principal repair does not use the fixed packaged script");
+    var request = SetupCmDiagnosticsWorkService.ValidateConsolePrincipalRequest(
+        new Dictionary<string, JsonElement>
+        {
+            ["principal"] = JsonSerializer.SerializeToElement(@"TEST\adam"),
+        });
+    Assert(request.Principal == @"TEST\adam", "direct console principal must round-trip");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateConsolePrincipalRequest(
+            new Dictionary<string, JsonElement>
+            {
+                ["principal"] = JsonSerializer.SerializeToElement("adam"),
+            }),
+        "direct console principal accepted an unqualified account");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ValidateConsolePrincipalRequest(
+            new Dictionary<string, JsonElement>
+            {
+                ["principal"] = JsonSerializer.SerializeToElement(@"TEST\adam"),
+                ["extra"] = JsonSerializer.SerializeToElement("must-not-be-accepted"),
+            }),
+        "direct console principal accepted an arbitrary request field");
+    var principalScript = File.ReadAllText(
+        Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "SetupCmConsolePrincipal.ps1"));
+    foreach (var value in new[]
+    {
+        "Get-CMAdministrativeUser",
+        "New-CMAdministrativeUser",
+        "Full Administrator",
+        "Default",
+        "principal",
+    })
+    {
+        Assert(
+            principalScript.Contains(value, StringComparison.Ordinal),
+            $"direct console principal repair is missing fixed value: {value}");
+    }
+}
+
+static void VerifySetupCmMarkerDeploymentContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.ExtractJsonObject("\u001b[33mwarning\u001b[0m\n{\"ok\":true}\n")
+            == "{\"ok\":true}",
+        "marker deployment result parser must isolate JSON after ConfigMgr console output");
+    AssertThrows<InvalidOperationException>(
+        () => SetupCmDiagnosticsWorkService.ExtractJsonObject("warning without a result"),
+        "marker deployment result parser accepted output without a JSON object");
+    foreach (var kind in new[]
+    {
+        "setup_cm_marker_deployment",
+        "setup_cm_marker_deployment_verification",
+        "setup_cm_marker_application_deployment",
+        "setup_cm_marker_application_verification",
+    })
+    {
+        Assert(
+            SetupCmDiagnosticsWorkService.SupportedKinds.Contains(kind),
+            $"Setup-CM marker deployment kind is not registered: {kind}");
+    }
+    foreach (var scriptName in new[]
+    {
+        "SetupCmMarkerDeployment.ps1",
+        "SetupCmMarkerDeploymentVerification.ps1",
+        "SetupCmMarkerApplicationDeployment.ps1",
+        "SetupCmMarkerApplicationVerification.ps1",
+    })
+    {
+        var source = File.ReadAllText(Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            scriptName));
+        var requiredValues = new List<string> { "RING0IVY24-01", "LAB", "MECM Marker" };
+        if (scriptName == "SetupCmMarkerDeployment.ps1")
+        {
+            requiredValues.Add("New-CMSchedule");
+            requiredValues.Add("Global:CMPSSuppressFastNotUsedCheck");
+        }
+        if (scriptName == "SetupCmMarkerApplicationDeployment.ps1")
+        {
+            requiredValues.Add("New-CMApplication");
+            requiredValues.Add("Add-CMScriptDeploymentType");
+            requiredValues.Add("New-CMApplicationDeployment");
+            requiredValues.Add("Start-CMContentDistribution");
+            requiredValues.Add("already been distributed");
+            requiredValues.Add("\\\\LABZ1-CM01.test.gell.one\\C$");
+        }
+        foreach (var value in requiredValues)
+        {
+            Assert(
+                source.Contains(value, StringComparison.Ordinal),
+                $"{scriptName} is missing fixed marker deployment value: {value}");
+        }
+        if (scriptName == "SetupCmMarkerApplicationDeployment.ps1")
+        {
+            Assert(
+                !source.Contains("-UserNotification HideAll", StringComparison.Ordinal),
+                "marker application deployment must use the minimal documented required-deployment syntax");
+        }
+    }
+}
+
+static void VerifyRemotePowerShellContracts()
+{
+    Assert(
+        RemotePowerShellWorkService.SupportedKind == "remote_powershell",
+        "remote PowerShell work kind is not registered");
+
+    var request = RemotePowerShellWorkService.ValidateRequest(
+        new Dictionary<string, JsonElement>
+        {
+            ["command_id"] = JsonSerializer.SerializeToElement("endpoint_facts"),
+        });
+    Assert(
+        request.CommandId == "endpoint_facts",
+        "endpoint facts command did not round-trip through the Agent contract");
+
+    AssertThrows<InvalidOperationException>(
+        () => RemotePowerShellWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>
+            {
+                ["command_id"] = JsonSerializer.SerializeToElement("endpoint_facts"),
+                ["script"] = JsonSerializer.SerializeToElement("Get-ChildItem"),
+            }),
+        "remote PowerShell accepted arbitrary script input");
+    AssertThrows<InvalidOperationException>(
+        () => RemotePowerShellWorkService.ValidateRequest(
+            new Dictionary<string, JsonElement>
+            {
+                ["command_id"] = JsonSerializer.SerializeToElement("restart_endpoint"),
+            }),
+        "remote PowerShell accepted an unsupported runbook");
+}
+
+static void VerifySetupCmConsoleConnectivityDiagnosticsContracts()
+{
+    Assert(
+        SetupCmDiagnosticsWorkService.SupportedKinds.Contains(
+            "setup_cm_console_connectivity_diagnostics"),
+        "Setup-CM console connectivity diagnostic kind is not registered");
+    Assert(
+        SetupCmDiagnosticsWorkService.ConsoleConnectivityDiagnosticScriptResourceName
+            == "AutopilotAgent.SetupCmConsoleConnectivityDiagnostics.ps1",
+        "console connectivity diagnostics do not use the fixed packaged script");
+
+    var diagnosticScript = File.ReadAllText(
+        Path.Combine(
+            "autopilot-agent",
+            "src",
+            "AutopilotAgent",
+            "SetupCmConsoleConnectivityDiagnostics.ps1"));
+    Assert(
+        diagnosticScript.Contains("MachineLaunchRestriction", StringComparison.Ordinal),
+        "console connectivity diagnostics do not inspect the DCOM machine launch restriction");
+    Assert(
+        diagnosticScript.Contains("Get-CMAdministrativeUser", StringComparison.Ordinal),
+        "console connectivity diagnostics do not read Configuration Manager RBAC");
+    Assert(
+        diagnosticScript.Contains("DistributedCOM", StringComparison.Ordinal),
+        "console connectivity diagnostics do not collect recent DCOM denial evidence");
+    Assert(
+        diagnosticScript.Contains("sms_admins_remote_activation", StringComparison.Ordinal),
+        "console connectivity diagnostics do not verify the effective SMS Admins DCOM path");
+    Assert(
+        diagnosticScript.Contains("SMSAdminUI.log", StringComparison.Ordinal),
+        "console connectivity diagnostics do not collect the Configuration Manager console log");
+    Assert(
+        diagnosticScript.Contains("SMSProv.log", StringComparison.Ordinal),
+        "console connectivity diagnostics do not collect the SMS Provider log");
+    Assert(
+        diagnosticScript.Contains("WindowsIdentity", StringComparison.Ordinal),
+        "console connectivity diagnostics do not inspect the running console process token");
+    Assert(
+        diagnosticScript.Contains("Microsoft.ConfigurationManagement", StringComparison.Ordinal),
+        "console connectivity diagnostics do not target the Configuration Manager console process");
 }
 
 static void Assert(bool condition, string message)

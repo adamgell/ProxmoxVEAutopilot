@@ -21,5 +21,15 @@
     <EmbeddedResource Include="SetupCmSourceDiagnostics.ps1" />
     <EmbeddedResource Include="SetupCmContentLocationDiagnostics.ps1" />
     <EmbeddedResource Include="SetupCmContentLocationRemediation.ps1" />
+    <EmbeddedResource Include="SetupCmClientNetworkRepair.ps1" />
+    <EmbeddedResource Include="SetupCmHealthClientTargetReconciliation.ps1" />
+    <EmbeddedResource Include="SetupCmConsoleDomainAdmins.ps1" />
+    <EmbeddedResource Include="SetupCmConsolePrincipal.ps1" />
+    <EmbeddedResource Include="SetupCmMarkerDeployment.ps1" />
+    <EmbeddedResource Include="SetupCmMarkerDeploymentVerification.ps1" />
+    <EmbeddedResource Include="SetupCmMarkerApplicationDeployment.ps1" />
+    <EmbeddedResource Include="SetupCmMarkerApplicationVerification.ps1" />
+    <EmbeddedResource Include="SetupCmConsoleConnectivityDiagnostics.ps1" />
+    <EmbeddedResource Include="RemotePowerShellEndpointFacts.ps1" />
   </ItemGroup>
 </Project>

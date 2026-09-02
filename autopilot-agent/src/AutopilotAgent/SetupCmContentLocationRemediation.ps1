@@ -20,7 +20,7 @@ if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
 
 Import-Module -Name $modulePath -Force -ErrorAction Stop
 function Get-ContentLocationSystemHost([string]$ServerNalPath) {
-    $match = [regex]::Match($ServerNalPath, 'Display=\\\\(?<host>[^"\\\]\[]+)')
+    $match = [regex]::Match($ServerNalPath, '(?i)Display=\\\\(?<host>[^"\\\]\[]+)')
     if (-not $match.Success) {
         throw 'Boundary group site system ServerNALPath does not contain a Display host.'
     }
@@ -28,6 +28,7 @@ function Get-ContentLocationSystemHost([string]$ServerNalPath) {
 }
 
 $expectedHost = $DistributionPointFqdn.TrimEnd('.').ToLowerInvariant()
+$boundaryValue = $ClientSubnet.Split('/')[0]
 $siteDrive = Get-PSDrive -PSProvider CMSite -ErrorAction Stop |
     Where-Object { $_.Name -eq $SiteCode } |
     Select-Object -First 1
@@ -39,13 +40,12 @@ if (-not $siteDrive) {
 Push-Location -LiteralPath "$SiteCode`:"
 try {
     $boundary = Get-CimInstance -Namespace $namespace -ClassName SMS_Boundary `
-        -Filter "BoundaryType = 0 AND Value = '$ClientSubnet'" -ErrorAction Stop |
+        -Filter "BoundaryType = 0 AND Value = '$boundaryValue'" -ErrorAction Stop |
         Select-Object -First 1
     if (-not $boundary) {
-        New-CMBoundary -BoundaryType IPSubnet -Value $ClientSubnet `
-            -Description $BoundaryGroupName -ErrorAction Stop | Out-Null
+        New-CMBoundary -BoundaryType IPSubnet -Value $ClientSubnet -ErrorAction Stop | Out-Null
         $boundary = Get-CimInstance -Namespace $namespace -ClassName SMS_Boundary `
-            -Filter "BoundaryType = 0 AND Value = '$ClientSubnet'" -ErrorAction Stop |
+            -Filter "BoundaryType = 0 AND Value = '$boundaryValue'" -ErrorAction Stop |
             Select-Object -First 1
         if (-not $boundary) { throw "Boundary $ClientSubnet was not created." }
         $changed = $true

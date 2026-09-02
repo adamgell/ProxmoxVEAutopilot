@@ -14,18 +14,48 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
     private const int FailureOutputLimitChars = 4096;
     private static readonly Regex SiteCodePattern = new("^[A-Z0-9]{3}$", RegexOptions.CultureInvariant);
     private static readonly Regex ComputerNamePattern = new("^[A-Za-z0-9-]{1,63}$", RegexOptions.CultureInvariant);
+    private static readonly Regex ConsolePrincipalPattern = new(
+        @"^[^\\/:*?""<>|]+\\[^\\/:*?""<>|]+$",
+        RegexOptions.CultureInvariant);
 
     public const string DiagnosticScriptResourceName = "AutopilotAgent.SetupCmSourceDiagnostics.ps1";
     public const string ContentLocationDiagnosticScriptResourceName =
         "AutopilotAgent.SetupCmContentLocationDiagnostics.ps1";
     public const string ContentLocationRemediationScriptResourceName =
         "AutopilotAgent.SetupCmContentLocationRemediation.ps1";
+    public const string ClientNetworkRepairScriptResourceName =
+        "AutopilotAgent.SetupCmClientNetworkRepair.ps1";
+    public const string HealthClientTargetReconciliationScriptResourceName =
+        "AutopilotAgent.SetupCmHealthClientTargetReconciliation.ps1";
+    public const string ConsoleDomainAdminsScriptResourceName =
+        "AutopilotAgent.SetupCmConsoleDomainAdmins.ps1";
+    public const string ConsolePrincipalScriptResourceName =
+        "AutopilotAgent.SetupCmConsolePrincipal.ps1";
+    public const string MarkerDeploymentScriptResourceName =
+        "AutopilotAgent.SetupCmMarkerDeployment.ps1";
+    public const string MarkerDeploymentVerificationScriptResourceName =
+        "AutopilotAgent.SetupCmMarkerDeploymentVerification.ps1";
+    public const string MarkerApplicationDeploymentScriptResourceName =
+        "AutopilotAgent.SetupCmMarkerApplicationDeployment.ps1";
+    public const string MarkerApplicationVerificationScriptResourceName =
+        "AutopilotAgent.SetupCmMarkerApplicationVerification.ps1";
+    public const string ConsoleConnectivityDiagnosticScriptResourceName =
+        "AutopilotAgent.SetupCmConsoleConnectivityDiagnostics.ps1";
     public static readonly string[] SupportedKinds =
     [
         "setup_cm_diagnostics",
         "setup_cm_source_access",
         "setup_cm_content_location_diagnostics",
         "setup_cm_content_location_remediation",
+        "setup_cm_client_network_repair",
+        "setup_cm_health_client_target_reconciliation",
+        "setup_cm_console_domain_admins",
+        "setup_cm_console_principal",
+        "setup_cm_marker_deployment",
+        "setup_cm_marker_deployment_verification",
+        "setup_cm_marker_application_deployment",
+        "setup_cm_marker_application_verification",
+        "setup_cm_console_connectivity_diagnostics",
     ];
 
     public async Task ProcessAsync(
@@ -47,6 +77,75 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
                 StringComparison.Ordinal))
         {
             await ProcessContentLocationRemediationAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_client_network_repair",
+                StringComparison.Ordinal))
+        {
+            await ProcessClientNetworkRepairAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_health_client_target_reconciliation",
+                StringComparison.Ordinal))
+        {
+            await ProcessHealthClientTargetReconciliationAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_console_domain_admins",
+                StringComparison.Ordinal))
+        {
+            await ProcessConsoleDomainAdminsAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_console_principal",
+                StringComparison.Ordinal))
+        {
+            await ProcessConsolePrincipalAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(work.Kind, "setup_cm_marker_deployment", StringComparison.Ordinal))
+        {
+            await ProcessMarkerDeploymentAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_marker_deployment_verification",
+                StringComparison.Ordinal))
+        {
+            await ProcessMarkerDeploymentVerificationAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_marker_application_deployment",
+                StringComparison.Ordinal))
+        {
+            await ProcessMarkerApplicationDeploymentAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_marker_application_verification",
+                StringComparison.Ordinal))
+        {
+            await ProcessMarkerApplicationVerificationAsync(config, work, cancellationToken);
+            return;
+        }
+        if (string.Equals(
+                work.Kind,
+                "setup_cm_console_connectivity_diagnostics",
+                StringComparison.Ordinal))
+        {
+            await ProcessConsoleConnectivityDiagnosticsAsync(config, work, cancellationToken);
             return;
         }
 
@@ -113,6 +212,203 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         log.Info($"Setup-CM content location remediation completed ({work.Id}).");
     }
 
+    private async Task ProcessClientNetworkRepairAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, ClientNetworkRepairScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM client network repair failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        var result = ParseClientNetworkRepairResult(output.Stdout);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM client network repair completed ({work.Id}).");
+    }
+
+    private async Task ProcessHealthClientTargetReconciliationAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, HealthClientTargetReconciliationScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM health client target reconciliation failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        var result = ParseHealthClientTargetReconciliationResult(output.Stdout);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM health client target reconciliation completed ({work.Id}).");
+    }
+
+    private async Task ProcessConsoleDomainAdminsAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, ConsoleDomainAdminsScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM console Domain Admins assignment failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        var result = ParseConsoleDomainAdminsResult(output.Stdout);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM console Domain Admins assignment completed ({work.Id}).");
+    }
+
+    private async Task ProcessConsolePrincipalAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        var request = ValidateConsolePrincipalRequest(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, ConsolePrincipalScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, request, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM direct console principal assignment failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        var result = ParseConsolePrincipalResult(output.Stdout, request);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM direct console principal assignment completed ({work.Id}).");
+    }
+
+    private async Task ProcessMarkerDeploymentAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, MarkerDeploymentScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM marker deployment failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+        await apiClient.CompleteWorkAsync(
+            config,
+            work.Id,
+            ParseMarkerDeploymentResult(output.Stdout),
+            cancellationToken);
+        log.Info($"Setup-CM marker deployment completed ({work.Id}).");
+    }
+
+    private async Task ProcessMarkerDeploymentVerificationAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, MarkerDeploymentVerificationScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM marker deployment verification failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+        await apiClient.CompleteWorkAsync(
+            config,
+            work.Id,
+            ParseMarkerDeploymentVerificationResult(output.Stdout),
+            cancellationToken);
+        log.Info($"Setup-CM marker deployment verification completed ({work.Id}).");
+    }
+
+    private async Task ProcessMarkerApplicationDeploymentAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, MarkerApplicationDeploymentScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM marker application deployment failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        await apiClient.CompleteWorkAsync(
+            config,
+            work.Id,
+            ParseMarkerDeploymentResult(output.Stdout),
+            cancellationToken);
+        log.Info($"Setup-CM marker application deployment completed ({work.Id}).");
+    }
+
+    private async Task ProcessMarkerApplicationVerificationAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, MarkerApplicationVerificationScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM marker application verification failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        await apiClient.CompleteWorkAsync(
+            config,
+            work.Id,
+            ParseMarkerDeploymentVerificationResult(output.Stdout),
+            cancellationToken);
+        log.Info($"Setup-CM marker application verification completed ({work.Id}).");
+    }
+
+    private async Task ProcessConsoleConnectivityDiagnosticsAsync(
+        AgentConfig config,
+        AgentWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        RequireOnlyFields(work.Request);
+        var scriptPath = WriteDiagnosticScript(work.Id, ConsoleConnectivityDiagnosticScriptResourceName);
+        var output = await RunPowerShellAsync(scriptPath, cancellationToken);
+        if (output.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Setup-CM console connectivity diagnostics failed with exit code {output.ExitCode}. "
+                + $"stderr={TruncateFailureOutput(output.Stderr)} "
+                + $"stdout={TruncateFailureOutput(output.Stdout)}");
+        }
+
+        var result = ParseConsoleConnectivityDiagnosticResult(output.Stdout);
+        await apiClient.CompleteWorkAsync(config, work.Id, result, cancellationToken);
+        log.Info($"Setup-CM console connectivity diagnostics completed ({work.Id}).");
+    }
+
     public static SetupCmDiagnosticsRequest ValidateRequest(
         IReadOnlyDictionary<string, JsonElement> values)
     {
@@ -128,6 +424,18 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             throw new InvalidOperationException("target_computer_name must be a NetBIOS computer name.");
         }
         return new SetupCmDiagnosticsRequest(siteCode, targetComputerName);
+    }
+
+    public static SetupCmConsolePrincipalRequest ValidateConsolePrincipalRequest(
+        IReadOnlyDictionary<string, JsonElement> values)
+    {
+        RequireOnlyFields(values, "principal");
+        var principal = RequiredString(values, "principal");
+        if (principal.Length > 256 || !ConsolePrincipalPattern.IsMatch(principal))
+        {
+            throw new InvalidOperationException("principal must be a DOMAIN\\account value.");
+        }
+        return new SetupCmConsolePrincipalRequest(principal);
     }
 
     public static SetupCmContentLocationDiagnosticsRequest ValidateContentLocationRequest(
@@ -268,6 +576,89 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             ?? throw new InvalidOperationException("Failed to start pwsh.exe for Setup-CM diagnostics.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(5));
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+            throw;
+        }
+        return new ProcessOutput(await stdoutTask, await stderrTask, process.ExitCode);
+    }
+
+    private static async Task<ProcessOutput> RunPowerShellAsync(
+        string scriptPath,
+        SetupCmConsolePrincipalRequest request,
+        CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "pwsh.exe",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-ExecutionPolicy");
+        startInfo.ArgumentList.Add("Bypass");
+        startInfo.ArgumentList.Add("-File");
+        startInfo.ArgumentList.Add(scriptPath);
+        startInfo.ArgumentList.Add("-Principal");
+        startInfo.ArgumentList.Add(request.Principal);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start pwsh.exe for direct console principal assignment.");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromMinutes(2));
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+            throw;
+        }
+        return new ProcessOutput(await stdoutTask, await stderrTask, process.ExitCode);
+    }
+
+    private static async Task<ProcessOutput> RunPowerShellAsync(
+        string scriptPath,
+        CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "pwsh.exe",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-ExecutionPolicy");
+        startInfo.ArgumentList.Add("Bypass");
+        startInfo.ArgumentList.Add("-File");
+        startInfo.ArgumentList.Add(scriptPath);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start pwsh.exe for Setup-CM client network repair.");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromMinutes(2));
         var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
         var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
         try
@@ -450,7 +841,10 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
         {
             throw new InvalidOperationException("Setup-CM remediation boundary readback must be an object.");
         }
-        RequireExactString(boundary, "Value", request.ClientSubnet);
+        RequireExactString(
+            boundary,
+            "Value",
+            NormalizeContentLocationBoundaryValue(request.ClientSubnet));
         var boundaryGroup = document.RootElement.GetProperty("boundary_group");
         if (boundaryGroup.ValueKind != JsonValueKind.Object)
         {
@@ -477,6 +871,286 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
             property => property.Name,
             property => (object?)property.Value.Clone(),
             StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseClientNetworkRepairResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException("Setup-CM client network repair output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Setup-CM client network repair output must be a JSON object.");
+        }
+        var required = new[]
+        {
+            "adapter_mac", "ipv4_address", "prefix_length", "default_gateway",
+            "dns_servers", "dc_lookup", "tcp_53", "tcp_445", "errors",
+        };
+        foreach (var name in required)
+        {
+            if (!document.RootElement.TryGetProperty(name, out _))
+            {
+                throw new InvalidOperationException($"Setup-CM client network repair result is missing {name}.");
+            }
+        }
+        RequireExactString(document.RootElement, "adapter_mac", "BC-24-11-9C-43-E6");
+        RequireExactString(document.RootElement, "ipv4_address", "192.168.16.103");
+        RequireExactString(document.RootElement, "default_gateway", "192.168.16.1");
+        if (document.RootElement.GetProperty("prefix_length").GetInt32() != 24)
+        {
+            throw new InvalidOperationException("Setup-CM client network repair prefix length is invalid.");
+        }
+        var dnsServers = document.RootElement.GetProperty("dns_servers");
+        if (dnsServers.ValueKind != JsonValueKind.Array || dnsServers.GetArrayLength() != 1
+            || dnsServers[0].ValueKind != JsonValueKind.String
+            || !string.Equals(dnsServers[0].GetString(), "192.168.16.12", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Setup-CM client network repair DNS readback is invalid.");
+        }
+        foreach (var name in new[] { "dc_lookup", "tcp_53", "tcp_445" })
+        {
+            if (document.RootElement.GetProperty(name).ValueKind != JsonValueKind.True)
+            {
+                throw new InvalidOperationException($"Setup-CM client network repair did not prove {name}.");
+            }
+        }
+        var errors = document.RootElement.GetProperty("errors");
+        if (errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() != 0)
+        {
+            throw new InvalidOperationException("Setup-CM client network repair returned errors.");
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseHealthClientTargetReconciliationResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM health client target reconciliation output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM health client target reconciliation output must be a JSON object.");
+        }
+        RequireExactString(document.RootElement, "previous_client_name", "LABZ1-CMCLIENT01");
+        RequireExactString(document.RootElement, "client_name", "RING0IVY24-01");
+        if (document.RootElement.EnumerateObject().Count() != 2)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM health client target reconciliation returned unexpected fields.");
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseConsoleDomainAdminsResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM console Domain Admins output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM console Domain Admins output must be a JSON object.");
+        }
+        if (!document.RootElement.TryGetProperty("principal", out var principal)
+            || principal.ValueKind != JsonValueKind.String
+            || !principal.GetString()!.EndsWith("\\Domain Admins", StringComparison.OrdinalIgnoreCase)
+            || !document.RootElement.TryGetProperty("full_administrator", out var fullAdministrator)
+            || fullAdministrator.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("default_scope", out var defaultScope)
+            || defaultScope.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("sms_admins_membership", out var smsAdminsMembership)
+            || smsAdminsMembership.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("machine_launch_remote_activation", out var machineLaunchRemoteActivation)
+            || machineLaunchRemoteActivation.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("default_launch_remote_activation", out var defaultLaunchRemoteActivation)
+            || defaultLaunchRemoteActivation.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("changed", out var changed)
+            || (changed.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+            || document.RootElement.EnumerateObject().Count() != 7)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM console Domain Admins assignment did not produce the required readback.");
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseConsolePrincipalResult(
+        string stdout,
+        SetupCmConsolePrincipalRequest request)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM direct console principal output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM direct console principal output must be a JSON object.");
+        }
+        RequireExactString(
+            document.RootElement,
+            "principal",
+            request.Principal,
+            StringComparison.OrdinalIgnoreCase);
+        if (!document.RootElement.TryGetProperty("full_administrator", out var fullAdministrator)
+            || fullAdministrator.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("default_scope", out var defaultScope)
+            || defaultScope.ValueKind != JsonValueKind.True
+            || !document.RootElement.TryGetProperty("changed", out var changed)
+            || (changed.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+            || document.RootElement.EnumerateObject().Count() != 4)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM direct console principal assignment did not produce the required readback.");
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseMarkerDeploymentResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException("Setup-CM marker deployment output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(ExtractJsonObject(stdout));
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Setup-CM marker deployment output must be a JSON object.");
+        }
+        foreach (var name in new[]
+        {
+            "site_code", "device_name", "collection_id", "package_id", "program_name",
+            "deployment_created", "content_distribution_requested", "machine_policy_requested", "changed",
+        })
+        {
+            if (!document.RootElement.TryGetProperty(name, out _))
+            {
+                throw new InvalidOperationException($"Setup-CM marker deployment result is missing {name}.");
+            }
+        }
+        RequireExactString(document.RootElement, "site_code", "LAB");
+        RequireExactString(document.RootElement, "device_name", "RING0IVY24-01", StringComparison.OrdinalIgnoreCase);
+        foreach (var name in new[] { "collection_id", "package_id", "program_name" })
+        {
+            if (document.RootElement.GetProperty(name).ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(document.RootElement.GetProperty(name).GetString()))
+            {
+                throw new InvalidOperationException($"Setup-CM marker deployment {name} is invalid.");
+            }
+        }
+        foreach (var name in new[] { "deployment_created", "content_distribution_requested", "machine_policy_requested", "changed" })
+        {
+            if (document.RootElement.GetProperty(name).ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+            {
+                throw new InvalidOperationException($"Setup-CM marker deployment {name} must be boolean.");
+            }
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseMarkerDeploymentVerificationResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM marker deployment verification output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(ExtractJsonObject(stdout));
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM marker deployment verification output must be a JSON object.");
+        }
+        RequireExactString(document.RootElement, "site_code", "LAB");
+        RequireExactString(document.RootElement, "device_name", "RING0IVY24-01", StringComparison.OrdinalIgnoreCase);
+        foreach (var name in new[] { "marker_present", "marker_content_matches", "appenforce_mentions_marker" })
+        {
+            if (!document.RootElement.TryGetProperty(name, out var value)
+                || value.ValueKind != JsonValueKind.True)
+            {
+                throw new InvalidOperationException(
+                    $"Setup-CM marker deployment verification did not prove {name}.");
+            }
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, object?> ParseConsoleConnectivityDiagnosticResult(string stdout)
+    {
+        if (Encoding.UTF8.GetByteCount(stdout) > OutputLimitBytes)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM console connectivity diagnostic output exceeded the 256 KiB limit.");
+        }
+        using var document = JsonDocument.Parse(stdout);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Setup-CM console connectivity diagnostic output must be a JSON object.");
+        }
+        foreach (var name in new[]
+        {
+            "domain_admins_principal", "rbac", "interactive_principals",
+            "console_process_tokens", "dcom", "console_log", "sms_provider_log",
+            "recent_distributed_com_events", "errors",
+        })
+        {
+            if (!document.RootElement.TryGetProperty(name, out _))
+            {
+                throw new InvalidOperationException(
+                    $"Setup-CM console connectivity diagnostic result is missing {name}.");
+            }
+        }
+        return document.RootElement.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => (object?)property.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    public static string NormalizeContentLocationBoundaryValue(string clientSubnet)
+    {
+        return clientSubnet.Split('/', 2)[0];
+    }
+
+    public static string ExtractJsonObject(string stdout)
+    {
+        var start = stdout.IndexOf('{');
+        var end = stdout.LastIndexOf('}');
+        if (start < 0 || end < start)
+        {
+            throw new InvalidOperationException("Setup-CM marker deployment output did not contain a JSON object.");
+        }
+        return stdout[start..(end + 1)];
     }
 
     public static string ExtractContentLocationDistributionPointHost(string serverNalPath)
@@ -548,6 +1222,8 @@ public sealed class SetupCmDiagnosticsWorkService(AgentApiClient apiClient, Agen
 }
 
 public sealed record SetupCmDiagnosticsRequest(string SiteCode, string TargetComputerName);
+
+public sealed record SetupCmConsolePrincipalRequest(string Principal);
 
 public sealed record SetupCmContentLocationDiagnosticsRequest(
     string SiteCode,

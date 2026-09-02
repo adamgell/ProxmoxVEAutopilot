@@ -60,6 +60,7 @@ function Test-ClientAddressInRange {
 $clientSubnet = Get-DiagnosticValue -Name 'client_subnet' -Fallback '' -Action {
     Get-ClientSubnet -Ipv4 $ClientIpv4
 }
+$clientSubnetValue = $clientSubnet.Split('/')[0]
 $allBoundaries = Get-DiagnosticValue -Name 'boundaries' -Fallback @() -Action {
     @(Get-CimInstance -Namespace $namespace -ClassName SMS_Boundary -ErrorAction Stop)
 }
@@ -67,7 +68,7 @@ $matchingBoundaries = @(
     $allBoundaries |
         Where-Object {
             $type = [int]$_.BoundaryType
-            ($type -eq 0 -and ([string]$_.Value).Trim() -eq $clientSubnet) -or
+            ($type -eq 0 -and ([string]$_.Value).Trim() -eq $clientSubnetValue) -or
             ($type -eq 3 -and (Test-ClientAddressInRange -Ipv4 $ClientIpv4 -Range ([string]$_.Value)))
         } |
         Select-Object -First $maximumRows -Property BoundaryID, BoundaryType, DisplayName, Value
