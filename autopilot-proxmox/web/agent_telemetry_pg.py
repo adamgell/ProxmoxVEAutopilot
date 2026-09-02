@@ -69,6 +69,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_heartbeats_vmid_time
     ON agent_heartbeats(vmid, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_heartbeats_agent_time
     ON agent_heartbeats(agent_id, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_heartbeats_run_time
+    ON agent_heartbeats(current_run_id, received_at DESC, id DESC)
+    INCLUDE (agent_id);
 
 CREATE TABLE IF NOT EXISTS agent_events (
     id bigserial PRIMARY KEY,
