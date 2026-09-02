@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 
 def test_init_indexes_latest_heartbeat_lookup_by_run(pg_conn):
     """A run lookup must not scan the full heartbeat history."""
@@ -38,3 +40,38 @@ def test_init_indexes_latest_heartbeat_lookup_by_run(pg_conn):
             "agent_id",
         ],
     }
+
+
+def test_latest_by_vmid_omits_historical_vmids_no_longer_assigned(pg_conn):
+    """Current inventory must not resurrect a VMID an agent moved away from."""
+    from web import agent_telemetry_pg
+
+    agent_telemetry_pg.reset_for_tests(pg_conn)
+    agent_telemetry_pg.init(pg_conn)
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="agent-reassigned",
+        token="agent-token",
+        vmid=202,
+    )
+    now = datetime.now(timezone.utc)
+    pg_conn.execute(
+        """
+        INSERT INTO agent_heartbeats (agent_id, received_at, vmid)
+        VALUES (%s, %s, %s), (%s, %s, %s)
+        """,
+        (
+            "agent-reassigned",
+            now - timedelta(minutes=1),
+            101,
+            "agent-reassigned",
+            now,
+            202,
+        ),
+    )
+    pg_conn.commit()
+
+    latest = agent_telemetry_pg.latest_by_vmid(pg_conn)
+
+    assert set(latest) == {202}
+    assert latest[202]["agent_id"] == "agent-reassigned"

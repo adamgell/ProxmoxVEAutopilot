@@ -705,12 +705,23 @@ def latest_by_vmid(conn: Connection | None = None) -> dict[int, dict]:
             return latest_by_vmid(live)
     rows = conn.execute(
         """
-        SELECT DISTINCT ON (h.vmid)
-            h.*, d.revoked
-        FROM agent_heartbeats h
-        JOIN agent_devices d ON d.agent_id = h.agent_id
-        WHERE h.vmid IS NOT NULL AND d.revoked = false
-        ORDER BY h.vmid, h.received_at DESC, h.id DESC
+        WITH current_vmids AS MATERIALIZED (
+            SELECT DISTINCT vmid
+            FROM agent_devices
+            WHERE vmid IS NOT NULL
+              AND revoked = false
+        )
+        SELECT latest.*
+        FROM current_vmids v
+        CROSS JOIN LATERAL (
+            SELECT h.*, d.revoked
+            FROM agent_heartbeats h
+            JOIN agent_devices d ON d.agent_id = h.agent_id
+            WHERE h.vmid = v.vmid
+              AND d.revoked = false
+            ORDER BY h.received_at DESC, h.id DESC
+            LIMIT 1
+        ) latest
         """
     ).fetchall()
     return {int(row["vmid"]): _row_dict(row) for row in rows}
