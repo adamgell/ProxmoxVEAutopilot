@@ -207,6 +207,39 @@ def test_agent_update_check_reports_current_when_versions_match(
     assert response.json()["download_url"] is None
 
 
+def test_agent_update_check_reconciles_version_without_clearing_identity(
+    agent_client,
+    pg_conn,
+):
+    from web import agent_telemetry_pg
+
+    token = _approved_agent_with_heartbeat(
+        agent_client,
+        agent_id="agent-version-reconcile",
+        token="agent-version-token",
+        vmid=120,
+        computer_name="GELL-VERSION120",
+        agent_version="0.1.1",
+    )
+
+    response = agent_client.post(
+        "/api/agent/v1/update-check",
+        headers=_bearer(token),
+        json={
+            "agent_id": "agent-version-reconcile",
+            "installed_version": "0.1.2",
+            "runtime_identifier": "win-x64",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    device = agent_telemetry_pg.get_device(pg_conn, "agent-version-reconcile")
+    assert device["agent_version"] == "0.1.2"
+    assert device["vmid"] == 120
+    assert device["computer_name"] == "GELL-VERSION120"
+    assert device["serial_number"] == "GELL-VERSION120"
+
+
 @pytest.fixture
 def agent_client(pg_conn, monkeypatch):
     from web import agent_telemetry_pg, lab_bubbles_pg, ts_engine_pg

@@ -508,7 +508,7 @@ def update_check(body: UpdateCheckBody, device: dict = Depends(_require_agent)):
     if reported and reported != recorded:
         try:
             with _conn() as conn:
-                agent_telemetry_pg.update_agent_metadata(
+                agent_telemetry_pg.update_agent_version(
                     conn,
                     agent_id=device["agent_id"],
                     agent_version=reported,

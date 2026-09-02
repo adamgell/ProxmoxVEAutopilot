@@ -394,6 +394,27 @@ def update_agent_metadata(
     return _row_dict(row) if row else None
 
 
+def update_agent_version(
+    conn: Connection,
+    *,
+    agent_id: str,
+    agent_version: str,
+) -> dict | None:
+    """Reconcile a reported version without clearing device identity fields."""
+    row = conn.execute(
+        """
+        UPDATE agent_devices
+        SET agent_version = %s,
+            last_seen_at = %s
+        WHERE agent_id = %s
+        RETURNING *
+        """,
+        (agent_version, _now(), agent_id),
+    ).fetchone()
+    _commit(conn)
+    return _row_dict(row) if row else None
+
+
 def hard_delete_agent(conn: Connection, agent_id: str) -> bool:
     row = conn.execute(
         "DELETE FROM agent_devices WHERE agent_id = %s RETURNING agent_id",
@@ -719,6 +740,7 @@ def latest_by_vmid(conn: Connection | None = None) -> dict[int, dict]:
             JOIN agent_devices d ON d.agent_id = h.agent_id
             WHERE h.vmid = v.vmid
               AND d.revoked = false
+              AND d.vmid = v.vmid
             ORDER BY h.received_at DESC, h.id DESC
             LIMIT 1
         ) latest

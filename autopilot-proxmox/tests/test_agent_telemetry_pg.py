@@ -75,3 +75,47 @@ def test_latest_by_vmid_omits_historical_vmids_no_longer_assigned(pg_conn):
 
     assert set(latest) == {202}
     assert latest[202]["agent_id"] == "agent-reassigned"
+
+
+def test_latest_by_vmid_uses_current_owner_when_vmid_is_reassigned(pg_conn):
+    """A moved agent's newer historical row must not beat the VM's owner."""
+    from web import agent_telemetry_pg
+
+    agent_telemetry_pg.reset_for_tests(pg_conn)
+    agent_telemetry_pg.init(pg_conn)
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="agent-moved",
+        token="moved-token",
+        vmid=202,
+    )
+    agent_telemetry_pg.upsert_device(
+        pg_conn,
+        agent_id="agent-current",
+        token="current-token",
+        vmid=101,
+    )
+    now = datetime.now(timezone.utc)
+    pg_conn.execute(
+        """
+        INSERT INTO agent_heartbeats (agent_id, received_at, vmid)
+        VALUES (%s, %s, %s), (%s, %s, %s), (%s, %s, %s)
+        """,
+        (
+            "agent-current",
+            now - timedelta(minutes=2),
+            101,
+            "agent-moved",
+            now - timedelta(minutes=1),
+            101,
+            "agent-moved",
+            now,
+            202,
+        ),
+    )
+    pg_conn.commit()
+
+    latest = agent_telemetry_pg.latest_by_vmid(pg_conn)
+
+    assert latest[101]["agent_id"] == "agent-current"
+    assert latest[202]["agent_id"] == "agent-moved"
