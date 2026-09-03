@@ -255,6 +255,7 @@ def _package_response(
         "bearer_token": pe_token,
         "workflow_name": run["workflow_name"],
         "server_base_url": server_base_url,
+        "preserve_autopilot_oobe": True,
         "artifact": artifact,
         "identity": {
             "vmid": run["vmid"],

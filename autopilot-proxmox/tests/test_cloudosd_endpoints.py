@@ -457,6 +457,7 @@ def test_cloudosd_run_registers_by_identity_and_returns_workflow_package(
     assert body["schema_version"] == 1
     assert body["run_id"] == run_body["run_id"]
     assert body["workflow_name"] == run_body["workflow_name"]
+    assert body["preserve_autopilot_oobe"] is True
     assert body["identity"]["computer_name"] == "CLOUDOSD-001"
     assert body["server_base_url"] == "http://autopilot.test:5000"
     assert body["artifact"]["osdcloud_module_version"] == "26.4.17.1"

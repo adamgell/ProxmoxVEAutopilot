@@ -290,6 +290,27 @@ Describe 'Add-PVEAutopilotSpecializeUnattend' {
         $content | Should -Match '<Group>Administrators</Group>'
     }
 
+    It 'preserves Autopilot OOBE without staging a local account or autologon' {
+        $windowsRoot = Join-Path $TestDrive 'WindowsAutopilotOobe'
+        New-Item -ItemType Directory -Path $windowsRoot -Force | Out-Null
+
+        Add-PVEAutopilotSpecializeUnattend -WindowsRoot $windowsRoot `
+            -ComputerName 'AP-OOBE-001' `
+            -PreserveAutopilotOobe `
+            -LocalAdmin ([pscustomobject]@{
+                username = 'localadmin'
+                password = 'Ab7!cDef9'
+            })
+
+        $content = Get-Content -LiteralPath (Join-Path $windowsRoot 'Panther/Unattend.xml') -Raw
+        $content | Should -Match '<settings pass="oobeSystem">'
+        $content | Should -Match 'Microsoft-Windows-International-Core'
+        $content | Should -Not -Match '<AutoLogon>'
+        $content | Should -Not -Match '<UserAccounts>'
+        $content | Should -Not -Match '<HideOnlineAccountScreens>'
+        $content | Should -Not -Match '<HideLocalAccountScreen>'
+    }
+
     It 'writes Microsoft-Windows-UnattendedJoin when domain join is requested' {
         $windowsRoot = Join-Path $TestDrive 'WindowsDomain'
         New-Item -ItemType Directory -Path $windowsRoot -Force | Out-Null

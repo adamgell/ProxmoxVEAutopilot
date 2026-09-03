@@ -318,6 +318,7 @@ function Add-PVEAutopilotOobeSystemUnattend {
         [Parameter(Mandatory)] [System.Xml.XmlElement] $RootElement,
         [Parameter(Mandatory)] [System.Xml.XmlNamespaceManager] $NamespaceManager,
         [Parameter(Mandatory)] [string] $UnattendNamespace,
+        [switch] $PreserveAutopilotOobe,
         [AllowNull()] [object] $LocalAdmin
     )
 
@@ -328,6 +329,7 @@ function Add-PVEAutopilotOobeSystemUnattend {
         $RootElement.AppendChild($settings) | Out-Null
     }
 
+    if (-not $PreserveAutopilotOobe) {
     $shellComponent = $settings.SelectSingleNode("u:component[@name='Microsoft-Windows-Shell-Setup' and @processorArchitecture='amd64']", $NamespaceManager)
     if (-not $shellComponent) {
         $shellComponent = $Xml.CreateElement('component', $UnattendNamespace)
@@ -427,6 +429,7 @@ function Add-PVEAutopilotOobeSystemUnattend {
         -Namespace $UnattendNamespace `
         -Name 'LogonCount' `
         -Value '1' | Out-Null
+    }
 
     $intlComponent = $settings.SelectSingleNode("u:component[@name='Microsoft-Windows-International-Core' and @processorArchitecture='amd64']", $NamespaceManager)
     if (-not $intlComponent) {
@@ -934,6 +937,7 @@ function Add-PVEAutopilotSpecializeUnattend {
         [Parameter(Mandatory)] [string] $WindowsRoot,
         [string] $ComputerName,
         [object] $DomainJoin,
+        [switch] $PreserveAutopilotOobe,
         [object] $LocalAdmin
     )
 
@@ -1049,6 +1053,7 @@ function Add-PVEAutopilotSpecializeUnattend {
         -RootElement $rootElement `
         -NamespaceManager $ns `
         -UnattendNamespace $unattendNs `
+        -PreserveAutopilotOobe:$PreserveAutopilotOobe `
         -LocalAdmin $LocalAdmin
 
     $writerSettings = New-Object System.Xml.XmlWriterSettings
@@ -1627,6 +1632,7 @@ function Invoke-CloudOSDBridge {
         Add-PVEAutopilotSpecializeUnattend -WindowsRoot $windowsRoot `
             -ComputerName (Get-PVEAutopilotPackageComputerName -Package $package) `
             -DomainJoin $package.domain_join `
+            -PreserveAutopilotOobe:([bool] (Get-CloudOSDObjectProperty -Value $package -Name 'preserve_autopilot_oobe')) `
             -LocalAdmin $package.local_admin
         if (Test-CloudOSDDomainJoinEnabled -DomainJoin $package.domain_join) {
             Write-CloudOSDEvent -BaseUrl $baseUrl -FallbackBaseUrl $fallbackUrl `
