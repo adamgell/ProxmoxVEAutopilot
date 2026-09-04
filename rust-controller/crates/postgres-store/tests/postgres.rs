@@ -478,7 +478,8 @@ async fn schema_enforces_journal_outbox_projection_authority_and_lease_invariant
     ) = sqlx::query_as(
         "INSERT INTO rust_controller.worker_leases \
          (operation_id, attempt_id, executor_kind, generation, worker_id, lease_token) \
-         VALUES ($1::uuid, $2::uuid, 'rust', 1, 'worker-one', 'lease-token-one') \
+         VALUES ($1::uuid, $2::uuid, 'rust', 1, 'worker-one', \
+                 '018f0f7e-7b7a-7cc0-8c1e-000000000041') \
          RETURNING acquired_at, lease_expires_at, deadline_at",
     )
     .bind(operation_id)
@@ -940,7 +941,8 @@ async fn worker_lease_requires_attempt_owned_by_the_same_operation() {
     sqlx::query(
         "INSERT INTO rust_controller.worker_leases \
          (operation_id, attempt_id, executor_kind, generation, worker_id, lease_token) \
-         VALUES ($1, $2, 'rust', 1, 'worker-one', 'lease-one')",
+         VALUES ($1, $2, 'rust', 1, 'worker-one', \
+                 '018f0f7e-7b7a-7cc0-8c1e-000000000051')",
     )
     .bind(operation_id.as_uuid())
     .bind(attempt_id.as_uuid())
@@ -951,13 +953,37 @@ async fn worker_lease_requires_attempt_owned_by_the_same_operation() {
     let wrong_owner = sqlx::query(
         "INSERT INTO rust_controller.worker_leases \
          (operation_id, attempt_id, executor_kind, generation, worker_id, lease_token) \
-         VALUES ($1, $2, 'rust', 1, 'worker-two', 'lease-two')",
+         VALUES ($1, $2, 'rust', 1, 'worker-two', \
+                 '018f0f7e-7b7a-7cc0-8c1e-000000000052')",
     )
     .bind(other_operation_id.as_uuid())
     .bind(attempt_id.as_uuid())
     .execute(&pool)
     .await;
     assert!(wrong_owner.is_err());
+
+    let invalid_token_operation_id = create_operation(&store, "lease-invalid-token").await;
+    let invalid_token_attempt_id = AttemptId::new();
+    sqlx::query(
+        "INSERT INTO rust_controller.attempts \
+         (attempt_id, operation_id, attempt_number, state) \
+         VALUES ($1, $2, 1, 'leased')",
+    )
+    .bind(invalid_token_attempt_id.as_uuid())
+    .bind(invalid_token_operation_id.as_uuid())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let invalid_token = sqlx::query(
+        "INSERT INTO rust_controller.worker_leases \
+         (operation_id, attempt_id, executor_kind, generation, worker_id, lease_token) \
+         VALUES ($1, $2, 'rust', 1, 'worker-three', 'not-a-uuidv7')",
+    )
+    .bind(invalid_token_operation_id.as_uuid())
+    .bind(invalid_token_attempt_id.as_uuid())
+    .execute(&pool)
+    .await;
+    assert!(invalid_token.is_err());
 }
 
 #[tokio::test]

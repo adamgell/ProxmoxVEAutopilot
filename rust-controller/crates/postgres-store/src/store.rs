@@ -127,8 +127,16 @@ impl PgStore {
         Self { pool }
     }
 
+    #[must_use]
+    pub const fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     pub async fn migrate(&self) -> Result<(), StoreError> {
         sqlx::raw_sql(include_str!("../migrations/0001_foundation.sql"))
+            .execute(&self.pool)
+            .await?;
+        sqlx::raw_sql(include_str!("../migrations/0002_scheduler.sql"))
             .execute(&self.pool)
             .await?;
         Ok(())
