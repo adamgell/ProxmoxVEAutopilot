@@ -3,8 +3,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 macro_rules! opaque_id {
-    ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+    ($name:ident, $validate:expr, $error:literal) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize)]
         #[serde(transparent)]
         pub struct $name(Uuid);
 
@@ -25,13 +25,39 @@ macro_rules! opaque_id {
                 Self::new()
             }
         }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: de::Deserializer<'de>,
+            {
+                let uuid = Uuid::deserialize(deserializer)?;
+                if !($validate)(uuid) {
+                    return Err(de::Error::custom($error));
+                }
+                Ok(Self(uuid))
+            }
+        }
     };
 }
 
-opaque_id!(RunId);
-opaque_id!(OperationId);
-opaque_id!(AttemptId);
-opaque_id!(EventId);
+fn is_existing_workflow_uuid(uuid: Uuid) -> bool {
+    !uuid.is_nil()
+}
+
+fn is_uuid_v7(uuid: Uuid) -> bool {
+    uuid.get_version_num() == 7
+}
+
+// A run can refer to a pre-Rust workflow UUID, while newly-created runs use UUIDv7.
+opaque_id!(
+    RunId,
+    is_existing_workflow_uuid,
+    "run id must be a non-nil workflow UUID"
+);
+opaque_id!(OperationId, is_uuid_v7, "operation id must be a UUIDv7");
+opaque_id!(AttemptId, is_uuid_v7, "attempt id must be a UUIDv7");
+opaque_id!(EventId, is_uuid_v7, "event id must be a UUIDv7");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

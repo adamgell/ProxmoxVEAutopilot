@@ -52,6 +52,58 @@ mod tests {
     }
 
     #[test]
+    fn operation_attempt_and_event_ids_reject_v4_and_nil_json() {
+        let v4 = serde_json::json!("550e8400-e29b-41d4-a716-446655440000");
+        let nil = serde_json::json!(uuid::Uuid::nil());
+
+        for value in [v4, nil] {
+            assert!(serde_json::from_value::<OperationId>(value.clone()).is_err());
+            assert!(serde_json::from_value::<AttemptId>(value.clone()).is_err());
+            assert!(serde_json::from_value::<EventId>(value).is_err());
+        }
+    }
+
+    #[test]
+    fn uuid_v7_identity_ids_round_trip_through_json() {
+        let operation_id = OperationId::new();
+        let attempt_id = AttemptId::new();
+        let event_id = EventId::new();
+
+        assert_eq!(
+            serde_json::from_value::<OperationId>(serde_json::to_value(operation_id).unwrap())
+                .unwrap(),
+            operation_id
+        );
+        assert_eq!(
+            serde_json::from_value::<AttemptId>(serde_json::to_value(attempt_id).unwrap()).unwrap(),
+            attempt_id
+        );
+        assert_eq!(
+            serde_json::from_value::<EventId>(serde_json::to_value(event_id).unwrap()).unwrap(),
+            event_id
+        );
+    }
+
+    #[test]
+    fn run_id_deserialization_accepts_an_existing_workflow_uuid() {
+        let existing_workflow_id =
+            uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+
+        let run_id =
+            serde_json::from_value::<RunId>(serde_json::json!(existing_workflow_id)).unwrap();
+
+        assert_eq!(run_id.as_uuid(), existing_workflow_id);
+        assert!(serde_json::from_value::<RunId>(serde_json::json!(uuid::Uuid::nil())).is_err());
+        assert_eq!(
+            serde_json::from_value::<RunId>(serde_json::to_value(RunId::new()).unwrap())
+                .unwrap()
+                .as_uuid()
+                .get_version_num(),
+            7
+        );
+    }
+
+    #[test]
     fn semantic_operation_key_rejects_blank_operation_key_and_zero_contract_version() {
         let run_id = RunId::new();
         assert!(
