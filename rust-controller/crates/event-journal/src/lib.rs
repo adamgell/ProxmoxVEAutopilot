@@ -1,18 +1,19 @@
 mod canonical;
 mod event;
 
-pub use canonical::{canonical_json_bytes, payload_digest};
+pub use canonical::{CanonicalizationError, canonical_json_bytes, payload_digest};
 pub use event::{AppendDecision, EventKind, EventValidationError, JournalEvent, decide_append};
 
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
     use controller_domain::{EventId, ExecutionState, OperationId};
+    use proptest::prelude::*;
     use serde_json::json;
 
     use super::{
-        AppendDecision, EventKind, JournalEvent, canonical_json_bytes, decide_append,
-        payload_digest,
+        AppendDecision, CanonicalizationError, EventKind, EventValidationError, JournalEvent,
+        canonical_json_bytes, decide_append, payload_digest,
     };
 
     fn valid_event(semantic_key: &str, payload: serde_json::Value) -> JournalEvent {
@@ -49,6 +50,54 @@ mod tests {
             payload_digest(&json!({"a": 1})).unwrap(),
             "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
         );
+    }
+
+    #[test]
+    fn semantically_equivalent_json_number_spellings_have_one_digest() {
+        let integer = json!({"value": 1});
+        let decimal = serde_json::from_str(r#"{"value":1.0}"#).unwrap();
+        let exponent = serde_json::from_str(r#"{"value":1e0}"#).unwrap();
+        let many_decimals = serde_json::from_str(r#"{"value":1.000}"#).unwrap();
+
+        let digest = payload_digest(&integer).unwrap();
+        assert_eq!(payload_digest(&decimal).unwrap(), digest);
+        assert_eq!(payload_digest(&exponent).unwrap(), digest);
+        assert_eq!(payload_digest(&many_decimals).unwrap(), digest);
+    }
+
+    #[test]
+    fn signed_zero_has_the_same_digest_as_zero() {
+        assert_eq!(
+            payload_digest(&json!({"value": -0.0})).unwrap(),
+            payload_digest(&json!({"value": 0})).unwrap()
+        );
+    }
+
+    #[test]
+    fn numeric_policy_supports_integer_and_non_integral_float_limits() {
+        let signed_minimum = json!(i64::MIN);
+        let unsigned_maximum = json!(u64::MAX);
+        let smallest_positive_float = json!(f64::from_bits(1));
+        let largest_supported_fractional_float = json!(4_503_599_627_370_495.5_f64);
+
+        assert!(canonical_json_bytes(&signed_minimum).is_ok());
+        assert!(canonical_json_bytes(&unsigned_maximum).is_ok());
+        assert!(canonical_json_bytes(&smallest_positive_float).is_ok());
+        assert!(canonical_json_bytes(&largest_supported_fractional_float).is_ok());
+        assert_ne!(
+            payload_digest(&smallest_positive_float).unwrap(),
+            payload_digest(&largest_supported_fractional_float).unwrap()
+        );
+    }
+
+    #[test]
+    fn numeric_policy_rejects_integral_float_values_outside_the_safe_range() {
+        let unsupported = serde_json::from_str(r#"{"value":9007199254740992.0}"#).unwrap();
+        let maximum_float = json!(f64::MAX);
+
+        assert!(canonical_json_bytes(&unsupported).is_err());
+        assert!(payload_digest(&unsupported).is_err());
+        assert!(canonical_json_bytes(&maximum_float).is_err());
     }
 
     #[test]
@@ -136,6 +185,58 @@ mod tests {
     }
 
     #[test]
+    fn journal_event_uses_numeric_canonicalization_for_constructor_and_serde_ingress() {
+        let integer_payload = serde_json::from_str(r#"{"progress":1}"#).unwrap();
+        let decimal_payload = serde_json::from_str(r#"{"progress":1.0}"#).unwrap();
+        let digest = payload_digest(&integer_payload).unwrap();
+        let event = JournalEvent::new(
+            EventId::new(),
+            OperationId::new(),
+            None,
+            1,
+            "progress:reported",
+            digest,
+            EventKind::EvidenceRecorded,
+            decimal_payload,
+            Utc::now(),
+        )
+        .unwrap();
+
+        assert!(
+            serde_json::from_value::<JournalEvent>(serde_json::to_value(event).unwrap()).is_ok()
+        );
+    }
+
+    #[test]
+    fn journal_event_rejects_unsupported_numeric_payloads_on_constructor_and_serde_ingress() {
+        let unsupported: serde_json::Value =
+            serde_json::from_str(r#"{"progress":9007199254740992.0}"#).unwrap();
+
+        assert!(matches!(
+            JournalEvent::new(
+                EventId::new(),
+                OperationId::new(),
+                None,
+                1,
+                "progress:reported",
+                "not-a-digest",
+                EventKind::EvidenceRecorded,
+                unsupported.clone(),
+                Utc::now(),
+            ),
+            Err(EventValidationError::Canonicalization(
+                CanonicalizationError::IntegralFloatOutsideSafeRange
+            ))
+        ));
+
+        let event = valid_event("progress:reported", json!({"progress": 1}));
+        let mut encoded = serde_json::to_value(event).unwrap();
+        encoded["payload"] = unsupported;
+
+        assert!(serde_json::from_value::<JournalEvent>(encoded).is_err());
+    }
+
+    #[test]
     fn matching_duplicate_is_already_present_but_different_digest_conflicts() {
         let existing = valid_event("callback:ready", json!({"ready": true}));
         let duplicate = JournalEvent::new(
@@ -196,5 +297,27 @@ mod tests {
             decide_append(Some(&existing), &incoming),
             AppendDecision::Append
         );
+    }
+
+    proptest! {
+        #[test]
+        fn safe_integral_floats_hash_like_their_equivalent_integer(
+            value in -9_007_199_254_740_991i64..=9_007_199_254_740_991i64
+        ) {
+            prop_assert_eq!(
+                payload_digest(&json!(value)).unwrap(),
+                payload_digest(&json!(value as f64)).unwrap(),
+            );
+        }
+
+        #[test]
+        fn distinct_safe_integers_never_collapse_to_one_digest(
+            value in -9_007_199_254_740_991i64..9_007_199_254_740_990i64
+        ) {
+            prop_assert_ne!(
+                payload_digest(&json!(value)).unwrap(),
+                payload_digest(&json!(value + 1)).unwrap(),
+            );
+        }
     }
 }

@@ -159,6 +159,7 @@ dependencies = [
  "chrono",
  "controller-domain",
  "hex",
+ "proptest",
  "serde",
  "serde_json",
  "sha2",

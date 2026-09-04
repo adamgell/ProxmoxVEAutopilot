@@ -180,7 +180,7 @@ pub enum EventValidationError {
     #[error("payload digest must match the canonical payload digest")]
     PayloadDigestMismatch,
     #[error(transparent)]
-    CanonicalJson(#[from] serde_json::Error),
+    Canonicalization(#[from] crate::CanonicalizationError),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
