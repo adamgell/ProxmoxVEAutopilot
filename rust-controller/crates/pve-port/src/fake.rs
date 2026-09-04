@@ -138,6 +138,9 @@ impl PveReadPort for FakePve {
     }
 
     async fn task_status(&self, node: &NodeName, upid: &Upid) -> Result<TaskStatus, PveReadError> {
+        if upid.node() != node {
+            return Err(PveReadError::UpidNodeMismatch);
+        }
         let mut state = self.state.lock().expect("fake PVE state lock poisoned");
         state.requests.push(PveRequest::TaskStatus {
             node: node.clone(),

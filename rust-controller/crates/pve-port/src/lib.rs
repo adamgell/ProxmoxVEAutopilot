@@ -46,13 +46,16 @@ fn evaluate_clone_evidence(
     let mut errors = Vec::new();
     let mut stale = false;
     let mut contradicted = false;
+    let mut task_state = None;
 
     let task_complete = match task {
         Ok(status) if status.upid() == &intent.upid => {
             stale |= is_stale(status.observed_at(), intent);
+            let state = status.state();
+            task_state = Some(state);
             let complete = status.succeeded();
             facts.push(PveFact {
-                kind: PveFactKind::TaskCompletion { complete },
+                kind: PveFactKind::TaskState { state },
                 observed_at: status.observed_at(),
             });
             Some(complete)
@@ -102,6 +105,7 @@ fn evaluate_clone_evidence(
 
     PveEvidence {
         task_complete,
+        task_state,
         vm_identity_satisfied,
         health,
         observed_at: intent.as_of,
@@ -121,10 +125,8 @@ fn is_stale(observed_at: chrono::DateTime<chrono::Utc>, intent: &CloneIntent) ->
 mod tests {
     use std::{
         collections::BTreeSet,
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
+        io,
+        sync::{Arc, Mutex},
         time::Duration,
     };
 
@@ -132,7 +134,8 @@ mod tests {
     use controller_domain::ObservationHealth;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
+        net::{TcpListener, TcpStream},
+        task::JoinHandle,
     };
 
     use super::{
@@ -150,7 +153,7 @@ mod tests {
     }
 
     fn upid() -> Upid {
-        Upid::parse("UPID:pve-test:00000001:00000002:00000003:clone:101:test:").unwrap()
+        Upid::parse("UPID:pve-test:00000001:00000002:00000003:clone:101:tester@pve:").unwrap()
     }
 
     fn expected_uuid() -> VmUuid {
@@ -194,6 +197,74 @@ mod tests {
         assert!(PveBaseUrl::parse("https://pve.example.invalid:8006/api2/json?raw=1").is_err());
         assert!(PveBaseUrl::parse("http://127.0.0.1:8006").is_ok());
         assert!(PveBaseUrl::parse("https://pve.example.invalid:8006").is_ok());
+    }
+
+    #[test]
+    fn upid_requires_the_documented_proxmox_field_shape() {
+        for malformed in [
+            "UPID:pve-test",
+            "UPID:pve-test:1:00000002:00000003:clone:101:tester@pve:",
+            "UPID:pve-test:0000000g:00000002:00000003:clone:101:tester@pve:",
+            "UPID:pve-test:00000001:00000002:00000003::101:tester@pve:",
+            "UPID:pve-test:00000001:00000002:00000003:clone:101:tester:",
+            "UPID:pve-test:00000001:00000002:00000003:clone:101:tester@pve@other:",
+            "UPID:pve-test:00000001:00000002:00000003:clone:101:tester@pve",
+        ] {
+            assert!(Upid::parse(malformed).is_err(), "accepted {malformed}");
+        }
+
+        let parsed = upid();
+        assert_eq!(parsed.node(), &node());
+        assert_eq!(parsed.process_id(), 1);
+        assert_eq!(parsed.process_start(), 2);
+        assert_eq!(parsed.task_start(), 3);
+        assert_eq!(parsed.worker_type(), "clone");
+        assert_eq!(parsed.worker_id(), Some("101"));
+        assert_eq!(parsed.authenticated_user(), "tester@pve");
+    }
+
+    #[test]
+    fn clone_intent_rejects_a_upid_for_another_node() {
+        let other_node_upid =
+            Upid::parse("UPID:pve-other:00000001:00000002:00000003:clone:101:tester@pve:").unwrap();
+
+        assert!(
+            CloneIntent::new(
+                node(),
+                Vmid::new(101).unwrap(),
+                other_node_upid,
+                expected_uuid(),
+                BTreeSet::from([expected_mac()]),
+                time("2026-09-04T12:00:00Z"),
+                Duration::from_secs(30),
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn task_status_rejects_route_node_mismatch_before_a_request() {
+        let audit = super::PveRequestAudit::new();
+        let observer = ReqwestPveObserver::new(
+            PveObserverConfig::new(
+                PveBaseUrl::parse("http://127.0.0.1:9").unwrap(),
+                PveAccessMode::Observe,
+                false,
+            )
+            .with_request_audit(audit.clone()),
+        )
+        .unwrap();
+        let other_node_upid =
+            Upid::parse("UPID:pve-other:00000001:00000002:00000003:clone:101:tester@pve:").unwrap();
+
+        assert_eq!(
+            observer
+                .task_status(&node(), &other_node_upid)
+                .await
+                .unwrap_err(),
+            PveReadError::UpidNodeMismatch
+        );
+        assert_eq!(audit.request_count(), 0);
     }
 
     #[tokio::test]
@@ -318,41 +389,168 @@ mod tests {
         let late = observe_clone_outcome(&fake, intent(time("2026-09-04T12:00:20Z"))).await;
 
         assert_eq!(first.task_complete, Some(false));
+        assert_eq!(first.task_state, Some(super::TaskState::Running));
         assert_eq!(late.task_complete, Some(true));
+        assert_eq!(late.task_state, Some(super::TaskState::CompleteSuccess));
         assert_eq!(late.vm_identity_satisfied, Some(true));
         assert_eq!(fake.recorded_requests().len(), 4);
     }
 
-    async fn serve_once(
+    #[tokio::test]
+    async fn stopped_failure_is_distinct_from_a_running_task() {
+        let observed_at = time("2026-09-04T12:00:00Z");
+        let fake = FakePve::new();
+        fake.enqueue_task_status(node(), upid(), Ok(TaskStatus::failed(upid(), observed_at)));
+        fake.enqueue_vm_config(
+            node(),
+            Vmid::new(101).unwrap(),
+            Ok(matching_vm(observed_at)),
+        );
+
+        let evidence = observe_clone_outcome(&fake, intent(time("2026-09-04T12:00:10Z"))).await;
+
+        assert_eq!(evidence.task_complete, Some(false));
+        assert_eq!(evidence.task_state, Some(super::TaskState::CompleteFailure));
+        assert_eq!(evidence.health, ObservationHealth::Fresh);
+    }
+
+    const MAX_TEST_HEADER_BYTES: usize = 16 * 1024;
+
+    struct TestResponse {
         status: u16,
-        body: &'static str,
+        body: String,
         delay: Duration,
-    ) -> (String, Arc<AtomicUsize>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let requests = Arc::new(AtomicUsize::new(0));
-        let recorded = Arc::clone(&requests);
-        tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = [0_u8; 4096];
-            let _ = stream.read(&mut request).await.unwrap();
-            recorded.fetch_add(1, Ordering::SeqCst);
-            tokio::time::sleep(delay).await;
-            let reason = match status {
-                200 => "OK",
-                401 => "Unauthorized",
-                403 => "Forbidden",
-                404 => "Not Found",
-                409 => "Conflict",
-                _ => "Test",
-            };
-            let response = format!(
-                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(response.as_bytes()).await;
-        });
-        (format!("http://{address}"), requests)
+        headers: Vec<(String, String)>,
+    }
+
+    impl TestResponse {
+        fn json(status: u16, body: impl Into<String>) -> Self {
+            Self {
+                status,
+                body: body.into(),
+                delay: Duration::ZERO,
+                headers: Vec::new(),
+            }
+        }
+
+        const fn delayed(mut self, delay: Duration) -> Self {
+            self.delay = delay;
+            self
+        }
+
+        fn with_header(mut self, name: &str, value: impl Into<String>) -> Self {
+            self.headers.push((name.to_owned(), value.into()));
+            self
+        }
+    }
+
+    struct TestServer {
+        base_url: String,
+        requests: Arc<Mutex<Vec<String>>>,
+        handle: Option<JoinHandle<()>>,
+    }
+
+    impl TestServer {
+        async fn start(response: TestResponse) -> Self {
+            Self::start_with_accept_timeout(response, Duration::from_secs(1)).await
+        }
+
+        async fn start_with_accept_timeout(
+            response: TestResponse,
+            accept_timeout: Duration,
+        ) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&requests);
+            let handle = tokio::spawn(async move {
+                let Ok(Ok((mut stream, _))) =
+                    tokio::time::timeout(accept_timeout, listener.accept()).await
+                else {
+                    return;
+                };
+                let request = read_test_headers(&mut stream).await.unwrap();
+                recorded.lock().unwrap().push(request);
+                tokio::time::sleep(response.delay).await;
+                let reason = match response.status {
+                    200 => "OK",
+                    302 => "Found",
+                    401 => "Unauthorized",
+                    403 => "Forbidden",
+                    404 => "Not Found",
+                    409 => "Conflict",
+                    _ => "Test",
+                };
+                let extra_headers = response
+                    .headers
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {value}\r\n"))
+                    .collect::<String>();
+                let wire = format!(
+                    "HTTP/1.1 {} {reason}\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.status,
+                    response.body.len(),
+                    response.body
+                );
+                let _ = stream.write_all(wire.as_bytes()).await;
+            });
+            Self {
+                base_url: format!("http://{address}"),
+                requests,
+                handle: Some(handle),
+            }
+        }
+
+        fn base_url(&self) -> &str {
+            &self.base_url
+        }
+
+        async fn finish(mut self) -> Vec<String> {
+            let mut handle = self.handle.take().unwrap();
+            match tokio::time::timeout(Duration::from_secs(2), &mut handle).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => panic!("loopback test server failed: {error}"),
+                Err(_) => {
+                    handle.abort();
+                    let _ = handle.await;
+                    panic!("loopback test server did not finish");
+                }
+            }
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            if let Some(handle) = &self.handle {
+                handle.abort();
+            }
+        }
+    }
+
+    async fn read_test_headers(stream: &mut TcpStream) -> io::Result<String> {
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let length = stream.read(&mut chunk).await?;
+            if length == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "request ended before HTTP headers",
+                ));
+            }
+            request.extend_from_slice(&chunk[..length]);
+            if request.len() > MAX_TEST_HEADER_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "test request headers exceeded bound",
+                ));
+            }
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                return String::from_utf8(request)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+            }
+        }
     }
 
     fn observer_for(base_url: &str, timeout: Duration) -> ReqwestPveObserver {
@@ -370,91 +568,161 @@ mod tests {
     #[tokio::test]
     async fn http_401_and_403_are_unauthorized_without_response_payloads() {
         for status in [401, 403] {
-            let (base_url, requests) = serve_once(status, "sensitive body", Duration::ZERO).await;
-            let observer = observer_for(&base_url, Duration::from_secs(1));
+            let server = TestServer::start(TestResponse::json(status, "sensitive body")).await;
+            let observer = observer_for(server.base_url(), Duration::from_secs(1));
 
             let error = observer.task_status(&node(), &upid()).await.unwrap_err();
+            let requests = server.finish().await;
 
             assert_eq!(error, PveReadError::Unauthorized);
             assert!(!error.to_string().contains("sensitive body"));
-            assert_eq!(requests.load(Ordering::SeqCst), 1);
+            assert_eq!(requests.len(), 1);
         }
     }
 
     #[tokio::test]
     async fn http_404_and_409_remain_distinct_read_errors() {
         for (status, expected) in [(404, PveReadError::NotFound), (409, PveReadError::Conflict)] {
-            let (base_url, _) = serve_once(status, "", Duration::ZERO).await;
-            let observer = observer_for(&base_url, Duration::from_secs(1));
+            let server = TestServer::start(TestResponse::json(status, "")).await;
+            let observer = observer_for(server.base_url(), Duration::from_secs(1));
 
-            assert_eq!(
-                observer.task_status(&node(), &upid()).await.unwrap_err(),
-                expected
-            );
+            let error = observer.task_status(&node(), &upid()).await.unwrap_err();
+            let requests = server.finish().await;
+
+            assert_eq!(error, expected);
+            assert_eq!(requests.len(), 1);
         }
     }
 
     #[tokio::test]
     async fn delayed_loopback_response_maps_to_timeout() {
-        let (base_url, requests) = serve_once(
-            200,
-            r#"{"data":{"status":"running"}}"#,
-            Duration::from_millis(100),
+        let server = TestServer::start(
+            TestResponse::json(200, r#"{"data":{"status":"running"}}"#)
+                .delayed(Duration::from_millis(100)),
         )
         .await;
-        let observer = observer_for(&base_url, Duration::from_millis(10));
+        let observer = observer_for(server.base_url(), Duration::from_millis(10));
 
-        assert_eq!(
-            observer.task_status(&node(), &upid()).await.unwrap_err(),
-            PveReadError::TimedOut
+        let error = observer.task_status(&node(), &upid()).await.unwrap_err();
+        let requests = server.finish().await;
+
+        assert_eq!(error, PveReadError::TimedOut);
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn observer_never_follows_a_redirect_hop() {
+        let destination = TestServer::start_with_accept_timeout(
+            TestResponse::json(200, r#"{"data":{"status":"running"}}"#),
+            Duration::from_millis(250),
+        )
+        .await;
+        let destination_url = format!(
+            "{}/api2/json/nodes/pve-test/tasks/{}/status",
+            destination.base_url(),
+            upid()
         );
-        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        let redirect =
+            TestServer::start(TestResponse::json(302, "").with_header("Location", destination_url))
+                .await;
+        let observer = observer_for(redirect.base_url(), Duration::from_secs(1));
+
+        let result = observer.task_status(&node(), &upid()).await;
+        let redirect_requests = redirect.finish().await;
+        let destination_requests = destination.finish().await;
+
+        assert_eq!(result.unwrap_err(), PveReadError::TransportUnavailable);
+        assert_eq!(redirect_requests.len(), 1);
+        assert!(destination_requests.is_empty());
+    }
+
+    #[tokio::test]
+    async fn redirect_to_production_is_rejected_without_a_production_attempt() {
+        let server = TestServer::start(TestResponse::json(302, "").with_header(
+            "Location",
+            format!(
+                "https://192.168.2.4:8006/api2/json/nodes/pve-test/tasks/{}/status",
+                upid()
+            ),
+        ))
+        .await;
+        let audit = super::PveRequestAudit::new();
+        let observer = ReqwestPveObserver::new(
+            PveObserverConfig::new(
+                PveBaseUrl::parse(server.base_url()).unwrap(),
+                PveAccessMode::Observe,
+                false,
+            )
+            .with_timeout(Duration::from_secs(1))
+            .with_request_audit(audit.clone()),
+        )
+        .unwrap();
+
+        let result = observer.task_status(&node(), &upid()).await;
+        let requests = server.finish().await;
+
+        assert_eq!(result.unwrap_err(), PveReadError::TransportUnavailable);
+        assert_eq!(
+            audit.request_count(),
+            1,
+            "only the loopback request is built"
+        );
+        assert_eq!(requests.len(), 1);
+        assert!(
+            requests[0]
+                .to_ascii_lowercase()
+                .contains("host: 127.0.0.1:")
+        );
+        assert!(!requests[0].contains("192.168.2.4"));
     }
 
     #[tokio::test]
     async fn sanitized_upid_fixture_decodes_as_completed_task() {
-        let (base_url, _) = serve_once(
+        let server = TestServer::start(TestResponse::json(
             200,
             include_str!("../../../fixtures/pve/upid-complete.json"),
-            Duration::ZERO,
-        )
+        ))
         .await;
-        let observer = observer_for(&base_url, Duration::from_secs(1));
+        let observer = observer_for(server.base_url(), Duration::from_secs(1));
 
         let status = observer.task_status(&node(), &upid()).await.unwrap();
+        let requests = server.finish().await;
 
         assert!(status.succeeded());
         assert_eq!(status.upid(), &upid());
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn sanitized_upid_fixture_decodes_as_failed_task() {
+        let server = TestServer::start(TestResponse::json(
+            200,
+            include_str!("../../../fixtures/pve/upid-failed.json"),
+        ))
+        .await;
+        let observer = observer_for(server.base_url(), Duration::from_secs(1));
+
+        let status = observer.task_status(&node(), &upid()).await.unwrap();
+        let requests = server.finish().await;
+
+        assert_eq!(status.state(), super::TaskState::CompleteFailure);
+        assert_eq!(requests.len(), 1);
     }
 
     #[tokio::test]
     async fn qga_ping_uses_the_typed_post_observation_endpoint() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (request_sender, request_receiver) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = [0_u8; 4096];
-            let length = stream.read(&mut request).await.unwrap();
-            request_sender
-                .send(String::from_utf8_lossy(&request[..length]).into_owned())
-                .unwrap();
-            let body = r#"{"data":{}}"#;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            stream.write_all(response.as_bytes()).await.unwrap();
-        });
-        let observer = observer_for(&format!("http://{address}"), Duration::from_secs(1));
+        let server = TestServer::start(TestResponse::json(200, r#"{"data":{}}"#)).await;
+        let observer = observer_for(server.base_url(), Duration::from_secs(1));
 
         let status = observer
             .qga_ping(&node(), Vmid::new(101).unwrap())
             .await
             .unwrap();
-        let request = request_receiver.await.unwrap();
+        let requests = server.finish().await;
 
         assert!(status.reachable());
-        assert!(request.starts_with("POST /api2/json/nodes/pve-test/qemu/101/agent/ping HTTP/1.1"));
+        assert!(
+            requests[0].starts_with("POST /api2/json/nodes/pve-test/qemu/101/agent/ping HTTP/1.1")
+        );
     }
 }

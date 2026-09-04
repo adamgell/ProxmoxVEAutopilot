@@ -79,7 +79,7 @@ impl PveObserverConfig {
     }
 
     fn permits_target(&self) -> bool {
-        !self.base_url.is_builtin_production()
+        self.base_url.is_loopback()
             || (self.mode == PveAccessMode::Observe && self.allow_production_reads)
     }
 }
@@ -110,7 +110,7 @@ impl ReqwestPveObserver {
         B: VerifiedClientBuilder,
     {
         if !config.permits_target() {
-            return Err(PveObserverBuildError::ProductionReadDenied);
+            return Err(PveObserverBuildError::TargetReadDenied);
         }
         let client = builder.build(config.timeout)?;
         Ok(Self {
@@ -165,6 +165,7 @@ impl VerifiedClientBuilder for RustlsClientBuilder {
     fn build(self, timeout: Duration) -> Result<Client, PveObserverBuildError> {
         Client::builder()
             .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| PveObserverBuildError::HttpClient)
     }
@@ -172,8 +173,8 @@ impl VerifiedClientBuilder for RustlsClientBuilder {
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum PveObserverBuildError {
-    #[error("production PVE reads require observe mode and explicit read permission")]
-    ProductionReadDenied,
+    #[error("non-loopback PVE reads require observe mode and explicit read permission")]
+    TargetReadDenied,
     #[error("failed to construct certificate-verifying rustls HTTP client")]
     HttpClient,
 }
@@ -261,6 +262,9 @@ impl PveReadPort for ReqwestPveObserver {
     }
 
     async fn task_status(&self, node: &NodeName, upid: &Upid) -> Result<TaskStatus, PveReadError> {
+        if upid.node() != node {
+            return Err(PveReadError::UpidNodeMismatch);
+        }
         let wire: TaskStatusWire = self
             .get_data(&[
                 "api2",
@@ -350,20 +354,26 @@ mod boundary_tests {
 
     #[test]
     fn denied_production_target_never_reaches_client_builder() {
-        let builds = Arc::new(AtomicUsize::new(0));
-        let config = PveObserverConfig::new(
-            PveBaseUrl::parse("https://192.168.2.4:8006").unwrap(),
-            PveAccessMode::Adapter,
-            false,
-        );
+        for target in [
+            "https://192.168.2.4:8006",
+            "https://[::ffff:192.168.2.4]:8006",
+            "https://pve-production.invalid:8006",
+        ] {
+            let builds = Arc::new(AtomicUsize::new(0));
+            let config = PveObserverConfig::new(
+                PveBaseUrl::parse(target).unwrap(),
+                PveAccessMode::Observe,
+                false,
+            );
 
-        let error = ReqwestPveObserver::new_with_client_builder(
-            config,
-            CountingBuilder(Arc::clone(&builds)),
-        )
-        .unwrap_err();
+            let error = ReqwestPveObserver::new_with_client_builder(
+                config,
+                CountingBuilder(Arc::clone(&builds)),
+            )
+            .unwrap_err();
 
-        assert_eq!(error, PveObserverBuildError::ProductionReadDenied);
-        assert_eq!(builds.load(Ordering::SeqCst), 0);
+            assert_eq!(error, PveObserverBuildError::TargetReadDenied);
+            assert_eq!(builds.load(Ordering::SeqCst), 0, "built for {target}");
+        }
     }
 }

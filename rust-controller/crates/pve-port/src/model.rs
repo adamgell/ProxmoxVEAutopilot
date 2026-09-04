@@ -61,17 +61,143 @@ fn safe_pve_name(value: &str) -> bool {
         })
 }
 
-fn safe_upid(value: &str) -> bool {
-    value.starts_with("UPID:")
-        && value.len() <= 512
-        && value.chars().all(|character| {
-            character.is_ascii_graphic() && !matches!(character, '/' | '\\' | '?' | '#')
+validated_text!(NodeName, safe_pve_name, "invalid PVE node name");
+validated_text!(StorageName, safe_pve_name, "invalid PVE storage name");
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Upid {
+    raw: String,
+    node: NodeName,
+    process_id: u32,
+    process_start: u32,
+    task_start: u32,
+    worker_type: String,
+    worker_id: Option<String>,
+    authenticated_user: String,
+}
+
+impl Upid {
+    pub fn parse(value: impl Into<String>) -> Result<Self, PveValidationError> {
+        let raw = value.into();
+        let fields = raw.split(':').collect::<Vec<_>>();
+        if raw.len() > 512
+            || fields.len() != 9
+            || fields[0] != "UPID"
+            || !fields[8].is_empty()
+            || !safe_upid_field(fields[5], false)
+            || !safe_upid_field(fields[6], true)
+            || !valid_authenticated_user(fields[7])
+        {
+            return Err(PveValidationError::InvalidIdentifier("invalid PVE UPID"));
+        }
+
+        let node = NodeName::parse(fields[1])
+            .map_err(|_| PveValidationError::InvalidIdentifier("invalid PVE UPID"))?;
+        let process_id = parse_upid_hex(fields[2])?;
+        let process_start = parse_upid_hex(fields[3])?;
+        let task_start = parse_upid_hex(fields[4])?;
+        let worker_type = fields[5].to_owned();
+        let worker_id = (!fields[6].is_empty()).then(|| fields[6].to_owned());
+        let authenticated_user = fields[7].to_owned();
+
+        Ok(Self {
+            raw,
+            node,
+            process_id,
+            process_start,
+            task_start,
+            worker_type,
+            worker_id,
+            authenticated_user,
+        })
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.raw
+    }
+
+    #[must_use]
+    pub const fn node(&self) -> &NodeName {
+        &self.node
+    }
+
+    #[must_use]
+    pub const fn process_id(&self) -> u32 {
+        self.process_id
+    }
+
+    #[must_use]
+    pub const fn process_start(&self) -> u32 {
+        self.process_start
+    }
+
+    #[must_use]
+    pub const fn task_start(&self) -> u32 {
+        self.task_start
+    }
+
+    #[must_use]
+    pub fn worker_type(&self) -> &str {
+        &self.worker_type
+    }
+
+    #[must_use]
+    pub fn worker_id(&self) -> Option<&str> {
+        self.worker_id.as_deref()
+    }
+
+    #[must_use]
+    pub fn authenticated_user(&self) -> &str {
+        &self.authenticated_user
+    }
+}
+
+fn parse_upid_hex(value: &str) -> Result<u32, PveValidationError> {
+    if value.len() != 8 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(PveValidationError::InvalidIdentifier("invalid PVE UPID"));
+    }
+    u32::from_str_radix(value, 16)
+        .map_err(|_| PveValidationError::InvalidIdentifier("invalid PVE UPID"))
+}
+
+fn safe_upid_field(value: &str, allow_empty: bool) -> bool {
+    (allow_empty || !value.is_empty())
+        && value
+            .chars()
+            .all(|character| character.is_ascii_graphic() && character != ':')
+}
+
+fn valid_authenticated_user(value: &str) -> bool {
+    safe_upid_field(value, false)
+        && value.split_once('@').is_some_and(|(user, realm)| {
+            !user.is_empty() && !realm.is_empty() && !user.contains('@') && !realm.contains('@')
         })
 }
 
-validated_text!(NodeName, safe_pve_name, "invalid PVE node name");
-validated_text!(StorageName, safe_pve_name, "invalid PVE storage name");
-validated_text!(Upid, safe_upid, "invalid PVE UPID");
+impl fmt::Display for Upid {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.raw)
+    }
+}
+
+impl Serialize for Upid {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.raw)
+    }
+}
+
+impl<'de> Deserialize<'de> for Upid {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::parse(String::deserialize(deserializer)?).map_err(de::Error::custom)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
@@ -185,9 +311,13 @@ impl PveBaseUrl {
     pub fn parse(value: &str) -> Result<Self, PveValidationError> {
         let url = reqwest::Url::parse(value).map_err(|_| PveValidationError::InvalidBaseUrl)?;
         let host = url.host_str().ok_or(PveValidationError::InvalidBaseUrl)?;
-        let loopback = host
+        let normalized_host = host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(host);
+        let loopback = normalized_host
             .parse::<std::net::IpAddr>()
-            .is_ok_and(|address| address.is_loopback());
+            .is_ok_and(is_normalized_loopback);
         if !matches!(url.scheme(), "http" | "https")
             || (url.scheme() == "http" && !loopback)
             || !url.username().is_empty()
@@ -202,8 +332,14 @@ impl PveBaseUrl {
     }
 
     #[must_use]
-    pub fn is_builtin_production(&self) -> bool {
-        self.0.host_str() == Some("192.168.2.4")
+    pub fn is_loopback(&self) -> bool {
+        self.0.host_str().is_some_and(|host| {
+            host.strip_prefix('[')
+                .and_then(|host| host.strip_suffix(']'))
+                .unwrap_or(host)
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(is_normalized_loopback)
+        })
     }
 
     pub(crate) fn endpoint(&self, segments: &[&str]) -> reqwest::Url {
@@ -213,6 +349,18 @@ impl PveBaseUrl {
             .clear()
             .extend(segments);
         url
+    }
+}
+
+fn is_normalized_loopback(address: std::net::IpAddr) -> bool {
+    match address {
+        std::net::IpAddr::V4(address) => address.is_loopback(),
+        std::net::IpAddr::V6(address) => {
+            address.is_loopback()
+                || address
+                    .to_ipv4_mapped()
+                    .is_some_and(|mapped| mapped.is_loopback())
+        }
     }
 }
 
@@ -230,6 +378,8 @@ pub enum PveValidationError {
     InvalidBaseUrl,
     #[error("clone intent requires at least one expected MAC address")]
     MissingExpectedMac,
+    #[error("UPID node must match the requested PVE node")]
+    UpidNodeMismatch,
     #[error("observation maximum age must be greater than zero")]
     ZeroMaximumAge,
     #[error("volume identifier must not be blank")]
@@ -419,6 +569,9 @@ impl CloneIntent {
         as_of: DateTime<Utc>,
         maximum_age: Duration,
     ) -> Result<Self, PveValidationError> {
+        if upid.node() != &node {
+            return Err(PveValidationError::UpidNodeMismatch);
+        }
         if expected_macs.is_empty() {
             return Err(PveValidationError::MissingExpectedMac);
         }
@@ -446,7 +599,7 @@ pub enum EvidenceSource {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "fact", rename_all = "snake_case")]
 pub enum PveFactKind {
-    TaskCompletion { complete: bool },
+    TaskState { state: TaskState },
     VmIdentity { satisfied: bool },
 }
 
@@ -459,6 +612,7 @@ pub struct PveFact {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PveEvidence {
     pub task_complete: Option<bool>,
+    pub task_state: Option<TaskState>,
     pub vm_identity_satisfied: Option<bool>,
     pub health: ObservationHealth,
     pub observed_at: DateTime<Utc>,
@@ -478,6 +632,8 @@ pub enum PveReadError {
     TimedOut,
     #[error("PVE response did not match the typed contract")]
     InvalidResponse,
+    #[error("UPID node does not match the requested PVE node")]
+    UpidNodeMismatch,
     #[error("PVE transport was unavailable")]
     TransportUnavailable,
 }
