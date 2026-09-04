@@ -1,15 +1,15 @@
 {
   "id": "synthetic-job-0001",
-  "job_type": "synthetic_long_sleep",
-  "playbook": "_test_long_sleep.yml",
+  "job_type": "test_long_sleep",
+  "playbook": "/app/playbooks/_test_long_sleep.yml",
   "cmd": [
     "ansible-playbook",
-    "_test_long_sleep.yml",
+    "/app/playbooks/_test_long_sleep.yml",
     "-e",
-    "sleep_seconds=5"
+    "duration=5"
   ],
   "args": {
-    "sleep_seconds": 5
+    "duration": "5"
   },
   "status": "pending"
 }

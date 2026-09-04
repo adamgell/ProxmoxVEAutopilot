@@ -1,9 +1,32 @@
-use std::{collections::BTreeMap, fmt, net::IpAddr};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    net::{IpAddr, Ipv4Addr},
+};
 
-use serde::{Deserialize, Deserializer, de};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD},
+};
+use serde::{Deserialize, de};
 use serde_json::{Map, Number, Value};
 use thiserror::Error;
 
+const MAX_JSON_BYTES: usize = 16 * 1024;
+const MAX_DEPTH: usize = 8;
+const MAX_CONTAINER_ITEMS: usize = 32;
+const MAX_STRING_BYTES: usize = 1024;
+const MAX_DECODE_ROUNDS: usize = 3;
+
+/// A legacy job can only enter through duplicate-aware raw JSON parsing.
+/// Already-collapsed `serde_json::Value` input is deliberately unsupported.
+///
+/// ```compile_fail
+/// use api_compat::JobEnvelope;
+///
+/// let value = serde_json::json!({"id": "already-collapsed"});
+/// let _ = JobEnvelope::try_from(value);
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobEnvelope {
     id: String,
@@ -16,13 +39,38 @@ pub struct JobEnvelope {
 
 impl JobEnvelope {
     pub fn from_json_str(json: &str) -> Result<Self, JobValidationError> {
-        serde_json::from_str(json).map_err(JobValidationError::InvalidJson)
+        Self::from_json_bytes(json.as_bytes())
+    }
+
+    pub fn from_json_bytes(json: &[u8]) -> Result<Self, JobValidationError> {
+        if json.len() > MAX_JSON_BYTES {
+            return Err(JobValidationError::DocumentTooLarge);
+        }
+        let unique: UniqueValue =
+            serde_json::from_slice(json).map_err(JobValidationError::InvalidJson)?;
+        Self::from_unique_value(unique.0)
     }
 
     pub fn validate_sanitized(&self) -> Result<(), JobValidationError> {
         let value = serde_json::to_value(JobEnvelopeWireRef::from(self))
             .map_err(JobValidationError::InvalidJson)?;
-        validate_value(&value)
+        validate_value(&value, 0)
+    }
+
+    fn from_unique_value(value: Value) -> Result<Self, JobValidationError> {
+        validate_value(&value, 0)?;
+        let wire: JobEnvelopeWire =
+            serde_json::from_value(value).map_err(JobValidationError::InvalidJson)?;
+        let envelope = Self {
+            id: wire.id,
+            job_type: wire.job_type,
+            playbook: wire.playbook,
+            cmd: wire.cmd,
+            args: wire.args,
+            status: wire.status,
+        };
+        envelope.validate_sanitized()?;
+        Ok(envelope)
     }
 
     pub(crate) fn id(&self) -> &str {
@@ -84,42 +132,20 @@ impl<'a> From<&'a JobEnvelope> for JobEnvelopeWireRef<'a> {
     }
 }
 
-impl TryFrom<Value> for JobEnvelope {
-    type Error = JobValidationError;
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        validate_value(&value)?;
-        let wire: JobEnvelopeWire =
-            serde_json::from_value(value).map_err(JobValidationError::InvalidJson)?;
-        let envelope = Self {
-            id: wire.id,
-            job_type: wire.job_type,
-            playbook: wire.playbook,
-            cmd: wire.cmd,
-            args: wire.args,
-            status: wire.status,
-        };
-        envelope.validate_sanitized()?;
-        Ok(envelope)
-    }
-}
-
-impl<'de> Deserialize<'de> for JobEnvelope {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        UniqueValue::deserialize(deserializer)?
-            .0
-            .try_into()
-            .map_err(de::Error::custom)
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum JobValidationError {
     #[error("invalid legacy job JSON: {0}")]
     InvalidJson(serde_json::Error),
+    #[error("legacy job JSON exceeds the size limit")]
+    DocumentTooLarge,
+    #[error("legacy job JSON exceeds the nesting limit")]
+    TooDeep,
+    #[error("legacy job JSON container exceeds the item limit")]
+    ContainerTooLarge,
+    #[error("legacy job contains an oversized or non-ASCII string")]
+    InvalidCharacters,
+    #[error("legacy job contains malformed encoded text")]
+    UnsafeEncoding,
     #[error("duplicate JSON key: {0}")]
     DuplicateKey(String),
     #[error("unsafe key in sanitized job")]
@@ -135,7 +161,7 @@ struct UniqueValue(Value);
 impl<'de> Deserialize<'de> for UniqueValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de>,
+        D: serde::Deserializer<'de>,
     {
         deserializer.deserialize_any(UniqueValueVisitor)
     }
@@ -197,6 +223,9 @@ impl<'de> de::Visitor<'de> for UniqueValueVisitor {
     {
         let mut values = Vec::new();
         while let Some(value) = sequence.next_element::<UniqueValue>()? {
+            if values.len() == MAX_CONTAINER_ITEMS {
+                return Err(de::Error::custom(JobValidationError::ContainerTooLarge));
+            }
             values.push(value.0);
         }
         Ok(UniqueValue(Value::Array(values)))
@@ -208,6 +237,9 @@ impl<'de> de::Visitor<'de> for UniqueValueVisitor {
     {
         let mut values = Map::new();
         while let Some(key) = map.next_key::<String>()? {
+            if values.len() == MAX_CONTAINER_ITEMS {
+                return Err(de::Error::custom(JobValidationError::ContainerTooLarge));
+            }
             if values.contains_key(&key) {
                 return Err(de::Error::custom(JobValidationError::DuplicateKey(key)));
             }
@@ -218,48 +250,69 @@ impl<'de> de::Visitor<'de> for UniqueValueVisitor {
     }
 }
 
-fn validate_value(value: &Value) -> Result<(), JobValidationError> {
+fn validate_value(value: &Value, depth: usize) -> Result<(), JobValidationError> {
+    if depth > MAX_DEPTH {
+        return Err(JobValidationError::TooDeep);
+    }
     match value {
         Value::Object(values) => {
+            if values.len() > MAX_CONTAINER_ITEMS {
+                return Err(JobValidationError::ContainerTooLarge);
+            }
             for (key, value) in values {
-                validate_key(key, value)?;
-                validate_value(value)?;
+                validate_ascii(key)?;
+                validate_key(key)?;
+                validate_value(value, depth + 1)?;
             }
         }
         Value::Array(values) => {
+            if values.len() > MAX_CONTAINER_ITEMS {
+                return Err(JobValidationError::ContainerTooLarge);
+            }
             for value in values {
-                validate_value(value)?;
+                validate_value(value, depth + 1)?;
             }
         }
         Value::String(value) => validate_string(value)?,
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+        Value::Number(value) => validate_integer_address(value)?,
+        Value::Null | Value::Bool(_) => {}
     }
     Ok(())
 }
 
-fn validate_key(key: &str, value: &Value) -> Result<(), JobValidationError> {
-    let normalized: String = key
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect();
+fn validate_ascii(value: &str) -> Result<(), JobValidationError> {
+    if value.len() > MAX_STRING_BYTES
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii() && (!byte.is_ascii_control() || byte == b' '))
+    {
+        return Err(JobValidationError::InvalidCharacters);
+    }
+    Ok(())
+}
+
+fn validate_key(key: &str) -> Result<(), JobValidationError> {
+    let normalized = key
+        .bytes()
+        .filter(u8::is_ascii_alphanumeric)
+        .map(|byte| byte.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let normalized = String::from_utf8(normalized).expect("ASCII normalization stays UTF-8");
     if ["token", "password", "secret", "bearer", "privatekey"]
         .iter()
         .any(|pattern| normalized.contains(pattern))
-    {
-        return Err(JobValidationError::UnsafeKey);
-    }
-
-    if [
-        "tenantid",
-        "tenantuuid",
-        "applicationid",
-        "applicationuuid",
-        "clientid",
-        "appid",
-    ]
-    .contains(&normalized.as_str())
-        && value.as_str().is_some_and(is_uuid)
+        || (normalized != "id"
+            && [
+                "tenant",
+                "directoryid",
+                "application",
+                "appid",
+                "clientid",
+                "serviceprincipal",
+                "objectid",
+            ]
+            .iter()
+            .any(|pattern| normalized.contains(pattern)))
     {
         return Err(JobValidationError::UnsafeKey);
     }
@@ -267,6 +320,11 @@ fn validate_key(key: &str, value: &Value) -> Result<(), JobValidationError> {
 }
 
 fn validate_string(value: &str) -> Result<(), JobValidationError> {
+    validate_ascii(value)?;
+    validate_decoded(value, 0)
+}
+
+fn validate_decoded(value: &str, round: usize) -> Result<(), JobValidationError> {
     let lowercase = value.to_ascii_lowercase();
     if [
         "token",
@@ -281,22 +339,94 @@ fn validate_string(value: &str) -> Result<(), JobValidationError> {
     {
         return Err(JobValidationError::UnsafeValue);
     }
-    if contains_non_loopback_ip(value) {
+    if contains_non_loopback_ip(value) || contains_non_loopback_integer_ip(value) {
+        return Err(JobValidationError::NonLoopbackAddress);
+    }
+    if round == MAX_DECODE_ROUNDS {
+        return Ok(());
+    }
+
+    if value.contains('%') {
+        let decoded = percent_decode(value)?;
+        validate_ascii(&decoded)?;
+        validate_decoded(&decoded, round + 1)?;
+    }
+    if looks_like_base64(value)
+        && let Some(decoded) = decode_base64(value)
+        && let Ok(decoded) = String::from_utf8(decoded)
+    {
+        validate_ascii(&decoded)?;
+        validate_decoded(&decoded, round + 1)?;
+    }
+    Ok(())
+}
+
+fn percent_decode(value: &str) -> Result<String, JobValidationError> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        let Some(hex) = bytes.get(index + 1..index + 3) else {
+            return Err(JobValidationError::UnsafeEncoding);
+        };
+        let hex = std::str::from_utf8(hex).map_err(|_| JobValidationError::UnsafeEncoding)?;
+        decoded.push(u8::from_str_radix(hex, 16).map_err(|_| JobValidationError::UnsafeEncoding)?);
+        index += 3;
+    }
+    String::from_utf8(decoded).map_err(|_| JobValidationError::UnsafeEncoding)
+}
+
+fn looks_like_base64(value: &str) -> bool {
+    value.len() >= 8
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'-' | b'_' | b'=')
+        })
+}
+
+fn decode_base64(value: &str) -> Option<Vec<u8>> {
+    STANDARD
+        .decode(value)
+        .or_else(|_| STANDARD_NO_PAD.decode(value))
+        .or_else(|_| URL_SAFE.decode(value))
+        .or_else(|_| URL_SAFE_NO_PAD.decode(value))
+        .ok()
+}
+
+fn validate_integer_address(value: &Number) -> Result<(), JobValidationError> {
+    if let Some(value) = value.as_u64()
+        && let Ok(value) = u32::try_from(value)
+        && value >= 0x0100_0000
+        && !Ipv4Addr::from(value).is_loopback()
+    {
         return Err(JobValidationError::NonLoopbackAddress);
     }
     Ok(())
 }
 
-fn is_uuid(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 36
-        && [8, 13, 18, 23]
-            .into_iter()
-            .all(|index| bytes.get(index) == Some(&b'-'))
-        && bytes
-            .iter()
-            .enumerate()
-            .all(|(index, byte)| [8, 13, 18, 23].contains(&index) || byte.is_ascii_hexdigit())
+fn contains_non_loopback_integer_ip(value: &str) -> bool {
+    value
+        .split(|character: char| !character.is_ascii_hexdigit() && !matches!(character, 'x' | 'X'))
+        .filter_map(|candidate| {
+            candidate
+                .strip_prefix("0x")
+                .or_else(|| candidate.strip_prefix("0X"))
+                .map_or_else(
+                    || {
+                        candidate
+                            .parse::<u32>()
+                            .ok()
+                            .filter(|_| candidate.len() >= 8)
+                    },
+                    |hex| u32::from_str_radix(hex, 16).ok(),
+                )
+        })
+        .filter(|value| *value >= 0x0100_0000)
+        .any(|value| !Ipv4Addr::from(value).is_loopback())
 }
 
 fn contains_non_loopback_ip(value: &str) -> bool {
@@ -306,7 +436,7 @@ fn contains_non_loopback_ip(value: &str) -> bool {
         })
         .filter(|candidate| !candidate.is_empty())
         .filter_map(parse_ip_candidate)
-        .any(|address| !address.is_loopback())
+        .any(|address| !is_normalized_loopback(address))
 }
 
 fn parse_ip_candidate(candidate: &str) -> Option<IpAddr> {
@@ -318,4 +448,16 @@ fn parse_ip_candidate(candidate: &str) -> Option<IpAddr> {
         return None;
     }
     host.parse().ok()
+}
+
+fn is_normalized_loopback(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => address.is_loopback(),
+        IpAddr::V6(address) => {
+            address.is_loopback()
+                || address
+                    .to_ipv4_mapped()
+                    .is_some_and(|mapped| mapped.is_loopback())
+        }
+    }
 }

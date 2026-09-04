@@ -1,9 +1,17 @@
 use anyhow::{Context, Result};
 use api_compat::{JobEnvelope, normalize_job};
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
-const VERIFY_READ_ONLY_SQL: &str = "SELECT current_setting('default_transaction_read_only') = 'on'";
+const BEGIN_READ_ONLY_SQL: &str = "BEGIN TRANSACTION READ ONLY";
+const VERIFY_READ_ONLY_SQL: &str = "SELECT \
+    current_setting('transaction_read_only') = 'on' \
+    AND has_table_privilege(current_user, 'jobs', 'SELECT') \
+    AND NOT has_table_privilege(current_user, 'jobs', 'INSERT') \
+    AND NOT has_table_privilege(current_user, 'jobs', 'UPDATE') \
+    AND NOT has_table_privilege(current_user, 'jobs', 'DELETE') \
+    AND NOT has_table_privilege(current_user, 'jobs', 'TRUNCATE') \
+    AND NOT EXISTS (SELECT 1 FROM pg_user WHERE usename = current_user AND usesuper)";
 const OBSERVE_JOB_SQL: &str = "SELECT json_build_object(\
     'id', id, \
     'job_type', job_type, \
@@ -11,51 +19,51 @@ const OBSERVE_JOB_SQL: &str = "SELECT json_build_object(\
     'cmd', cmd_json, \
     'args', args_json, \
     'status', status\
-)::text FROM jobs WHERE job_type = $1 ORDER BY id LIMIT 1";
+)::text FROM jobs \
+WHERE job_type = $1 AND status = 'pending' \
+ORDER BY created_at ASC, id ASC LIMIT 1";
 
-#[derive(Default)]
-pub(crate) struct ObservationAudit {
-    statements: Vec<&'static str>,
-    #[cfg(test)]
-    process_spawn_attempts: usize,
+struct ObserveReadCapability<'a> {
+    connection: &'a mut PgConnection,
 }
 
-impl ObservationAudit {
-    fn record_statement(&mut self, statement: &'static str) {
-        self.statements.push(statement);
-    }
+pub(crate) async fn observe_once(pool: &PgPool) -> Result<String> {
+    let mut connection = pool
+        .acquire()
+        .await
+        .context("observe-mode database connection acquisition failed")?;
+    sqlx::query(BEGIN_READ_ONLY_SQL)
+        .execute(&mut *connection)
+        .await
+        .context("observe-mode read-only transaction start failed")?;
 
-    #[cfg(test)]
-    fn statements(&self) -> &[&'static str] {
-        &self.statements
-    }
-
-    #[cfg(test)]
-    const fn process_spawn_attempts(&self) -> usize {
-        self.process_spawn_attempts
-    }
+    let result = observe_in_transaction(ObserveReadCapability {
+        connection: &mut connection,
+    })
+    .await;
+    let rollback = sqlx::query("ROLLBACK").execute(&mut *connection).await;
+    rollback.context("observe-mode transaction rollback failed")?;
+    result
 }
 
-pub(crate) async fn observe_once(pool: &PgPool, audit: &mut ObservationAudit) -> Result<String> {
-    audit.record_statement(VERIFY_READ_ONLY_SQL);
+async fn observe_in_transaction(capability: ObserveReadCapability<'_>) -> Result<String> {
     let is_read_only: bool = sqlx::query_scalar(VERIFY_READ_ONLY_SQL)
-        .fetch_one(pool)
+        .fetch_one(&mut *capability.connection)
         .await
         .context("observe-mode role verification SELECT failed")?;
     anyhow::ensure!(
         is_read_only,
-        "observe mode requires a PostgreSQL role with default_transaction_read_only=on"
+        "observe mode requires a non-superuser PostgreSQL role with SELECT-only jobs access"
     );
 
-    audit.record_statement(OBSERVE_JOB_SQL);
-    let raw_job: String = sqlx::query_scalar(OBSERVE_JOB_SQL)
-        .bind("synthetic_long_sleep")
-        .fetch_optional(pool)
+    let raw_job: Option<String> = sqlx::query_scalar(OBSERVE_JOB_SQL)
+        .bind("test_long_sleep")
+        .fetch_optional(&mut *capability.connection)
         .await
-        .context("compatibility observation SELECT failed")?
-        .context("no sanitized synthetic compatibility job is available")?;
-    let compatibility = JobEnvelope::from_json_str(&raw_job)
-        .ok()
+        .context("compatibility observation SELECT failed")?;
+    let compatibility = raw_job
+        .as_deref()
+        .and_then(|raw_job| JobEnvelope::from_json_str(raw_job).ok())
         .and_then(|job| normalize_job(&job).ok())
         .and_then(|plan| plan.fingerprint().ok());
     let (result, fingerprint) = match compatibility {
@@ -74,8 +82,7 @@ pub(crate) async fn run(database_url: &str) -> Result<String> {
     let pool = PgPool::connect(database_url)
         .await
         .context("observe-mode database connection failed")?;
-    let mut audit = ObservationAudit::default();
-    observe_once(&pool, &mut audit).await
+    observe_once(&pool).await
 }
 
 #[cfg(test)]
@@ -87,7 +94,7 @@ mod tests {
 
     use sqlx::{PgPool, postgres::PgPoolOptions};
 
-    use super::{ObservationAudit, observe_once};
+    use super::observe_once;
 
     struct PostgresContainer {
         id: String,
@@ -107,6 +114,10 @@ mod tests {
                     "--publish",
                     "127.0.0.1::5432",
                     "postgres:16-alpine",
+                    "-c",
+                    "log_statement=all",
+                    "-c",
+                    "log_line_prefix=%m [%p] %u %a ",
                 ])
                 .stderr(Stdio::inherit())
                 .output()
@@ -161,6 +172,15 @@ mod tests {
             }
             panic!("PostgreSQL did not become ready within 15 seconds");
         }
+
+        fn logs(&self) -> String {
+            let output = Command::new("docker")
+                .args(["logs", &self.id])
+                .output()
+                .expect("docker logs must run");
+            assert!(output.status.success());
+            String::from_utf8(output.stderr).unwrap()
+        }
     }
 
     impl Drop for PostgresContainer {
@@ -187,19 +207,53 @@ mod tests {
                 status text NOT NULL,
                 created_at timestamptz NOT NULL DEFAULT clock_timestamp()
             );
-            INSERT INTO jobs (id, job_type, playbook, cmd_json, args_json, status)
+            INSERT INTO jobs (id, job_type, playbook, cmd_json, args_json, status, created_at)
             VALUES (
                 'synthetic-job-0001',
-                'synthetic_long_sleep',
-                '_test_long_sleep.yml',
-                '["ansible-playbook","_test_long_sleep.yml","-e","sleep_seconds=5"]',
-                '{"sleep_seconds":5}',
-                'pending'
+                'test_long_sleep',
+                '/app/playbooks/_test_long_sleep.yml',
+                '["ansible-playbook","/app/playbooks/_test_long_sleep.yml","-e","duration=5"]',
+                '{"duration":"5"}',
+                'pending',
+                '2026-09-04T12:01:00Z'
+            );
+            INSERT INTO jobs (id, job_type, playbook, cmd_json, args_json, status, created_at)
+            VALUES (
+                'older-running-job',
+                'test_long_sleep',
+                '/app/playbooks/_test_long_sleep.yml',
+                '["ansible-playbook","/app/playbooks/_test_long_sleep.yml","-e","duration=6"]',
+                '{"duration":"6"}',
+                'running',
+                '2026-09-04T12:00:00Z'
+            );
+            INSERT INTO jobs (id, job_type, playbook, cmd_json, args_json, status, created_at)
+            VALUES (
+                'newer-pending-job',
+                'test_long_sleep',
+                '/app/playbooks/_test_long_sleep.yml',
+                '["ansible-playbook","/app/playbooks/_test_long_sleep.yml","-e","duration=7"]',
+                '{"duration":"7"}',
+                'pending',
+                '2026-09-04T12:02:00Z'
             );
             CREATE ROLE observer_login LOGIN PASSWORD 'observe-only';
-            ALTER ROLE observer_login SET default_transaction_read_only = on;
             REVOKE ALL ON jobs FROM observer_login;
             GRANT SELECT ON jobs TO observer_login;
+            DO $$
+            DECLARE function_signature text;
+            BEGIN
+                FOR function_signature IN
+                    SELECT p.oid::regprocedure::text
+                    FROM pg_proc AS p
+                    WHERE p.proname LIKE '%advisory%'
+                LOOP
+                    EXECUTE format(
+                        'REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, observer_login',
+                        function_signature
+                    );
+                END LOOP;
+            END $$;
             "#,
         )
         .execute(&admin)
@@ -211,7 +265,7 @@ mod tests {
 
     #[tokio::test]
     async fn observe_uses_select_only_role_and_audits_zero_mutating_statements() {
-        let (_postgres, admin, observer) = fixture().await;
+        let (postgres, admin, observer) = fixture().await;
         let privileges: (bool, bool, bool, bool) = sqlx::query_as(
             "SELECT has_table_privilege(current_user, 'jobs', 'SELECT'), \
                     has_table_privilege(current_user, 'jobs', 'INSERT'), \
@@ -223,24 +277,26 @@ mod tests {
         .unwrap();
         assert_eq!(privileges, (true, false, false, false));
 
-        let before: String = sqlx::query_scalar("SELECT row_to_json(j)::text FROM jobs AS j")
-            .fetch_one(&admin)
-            .await
-            .unwrap();
+        let before: String = sqlx::query_scalar(
+            "SELECT json_agg(row_to_json(j) ORDER BY created_at, id)::text FROM jobs AS j",
+        )
+        .fetch_one(&admin)
+        .await
+        .unwrap();
         let locks_before: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted",
         )
         .fetch_one(&admin)
         .await
         .unwrap();
-        let mut audit = ObservationAudit::default();
+        let output = observe_once(&observer).await.unwrap();
 
-        let output = observe_once(&observer, &mut audit).await.unwrap();
-
-        let after: String = sqlx::query_scalar("SELECT row_to_json(j)::text FROM jobs AS j")
-            .fetch_one(&admin)
-            .await
-            .unwrap();
+        let after: String = sqlx::query_scalar(
+            "SELECT json_agg(row_to_json(j) ORDER BY created_at, id)::text FROM jobs AS j",
+        )
+        .fetch_one(&admin)
+        .await
+        .unwrap();
         let locks_after: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted",
         )
@@ -249,39 +305,9 @@ mod tests {
         .unwrap();
         assert_eq!(after, before);
         assert_eq!(locks_after, locks_before);
-        assert_eq!(audit.process_spawn_attempts(), 0);
-        assert_eq!(audit.statements().len(), 2);
-        assert!(
-            audit
-                .statements()
-                .iter()
-                .all(|statement| statement.trim_start().starts_with("SELECT "))
-        );
-        for forbidden in [
-            "INSERT",
-            "UPDATE",
-            "DELETE",
-            "CREATE",
-            "ALTER",
-            "DROP",
-            "TRUNCATE",
-            "GRANT",
-            "REVOKE",
-            "pg_advisory",
-            "FOR UPDATE",
-            "CALL ",
-            "COPY ",
-        ] {
-            assert!(
-                audit
-                    .statements()
-                    .iter()
-                    .all(|statement| !statement.to_ascii_uppercase().contains(forbidden))
-            );
-        }
         assert_eq!(
             output,
-            "{\"compatibility\":\"compatible\",\"fingerprint\":\"sha256:e7cfdb9b71c5…\"}"
+            "{\"compatibility\":\"compatible\",\"fingerprint\":\"sha256:31476a1bade2…\"}"
         );
         for forbidden in [
             "synthetic-job-0001",
@@ -292,6 +318,43 @@ mod tests {
             assert!(!output.contains(forbidden));
         }
 
+        let server_statements = postgres
+            .logs()
+            .lines()
+            .filter(|line| line.contains("observer_login task7_observe"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(server_statements.contains("BEGIN TRANSACTION READ ONLY"));
+        assert!(server_statements.contains("transaction_read_only"));
+        assert!(server_statements.contains("status = 'pending'"));
+        assert!(server_statements.contains("ORDER BY created_at ASC, id ASC"));
+        assert!(server_statements.contains("ROLLBACK"));
+        let backend_pids = server_statements
+            .lines()
+            .filter_map(|line| line.split_once('[')?.1.split_once(']').map(|parts| parts.0))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(backend_pids.len(), 1);
+        for line in server_statements.lines() {
+            let statement = line
+                .split_once("statement: ")
+                .map(|parts| parts.1)
+                .or_else(|| {
+                    line.split_once("execute sqlx_s_")
+                        .and_then(|parts| parts.1.split_once(": ").map(|parts| parts.1))
+                })
+                .unwrap_or("")
+                .trim_start();
+            assert!(
+                statement.is_empty()
+                    || statement.starts_with("BEGIN TRANSACTION READ ONLY")
+                    || statement.starts_with("SELECT ")
+                    || statement.starts_with("ROLLBACK"),
+                "unexpected observer statement: {statement}"
+            );
+            assert!(!statement.contains("pg_advisory"));
+            assert!(!statement.contains("FOR UPDATE"));
+        }
+
         let denied_write = sqlx::query("INSERT INTO jobs (id, job_type, playbook, cmd_json, args_json, status) VALUES ('forbidden', 'synthetic_long_sleep', '_test_long_sleep.yml', '[]', '{}', 'pending')")
             .execute(&observer)
             .await;
@@ -299,15 +362,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn observe_rejects_a_connection_that_is_not_default_read_only() {
+    async fn observe_rejects_a_superuser_even_inside_the_read_only_transaction() {
         let (_postgres, admin, _observer) = fixture().await;
-        let mut audit = ObservationAudit::default();
-
-        let result = observe_once(&admin, &mut audit).await;
+        let result = observe_once(&admin).await;
 
         assert!(result.is_err());
-        assert_eq!(audit.statements().len(), 1);
-        assert_eq!(audit.process_spawn_attempts(), 0);
     }
 
     #[tokio::test]
@@ -317,9 +376,7 @@ mod tests {
             .execute(&admin)
             .await
             .unwrap();
-        let mut audit = ObservationAudit::default();
-
-        let output = observe_once(&observer, &mut audit).await.unwrap();
+        let output = observe_once(&observer).await.unwrap();
 
         assert_eq!(
             output,
@@ -327,7 +384,54 @@ mod tests {
         );
         assert!(!output.contains("token"));
         assert!(!output.contains("sensitive-value"));
-        assert_eq!(audit.statements().len(), 2);
-        assert_eq!(audit.process_spawn_attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn observer_role_cannot_execute_any_advisory_lock_function() {
+        let (_postgres, admin, observer) = fixture().await;
+        let executable: Vec<bool> = sqlx::query_scalar(
+            "SELECT has_function_privilege('observer_login', p.oid, 'EXECUTE') \
+             FROM pg_proc AS p \
+             WHERE p.proname LIKE '%advisory%' \
+             ORDER BY p.oid",
+        )
+        .fetch_all(&admin)
+        .await
+        .unwrap();
+        assert!(!executable.is_empty());
+        assert!(executable.into_iter().all(|allowed| !allowed));
+
+        let lock = sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock(7::bigint)")
+            .fetch_one(&observer)
+            .await;
+        assert!(lock.is_err());
+    }
+
+    #[tokio::test]
+    async fn observe_has_no_process_capability_and_leaves_no_child_process() {
+        let (_postgres, _admin, observer) = fixture().await;
+        let before = child_processes();
+
+        let output = observe_once(&observer).await.unwrap();
+
+        assert!(output.contains("\"compatibility\":\"compatible\""));
+        assert_eq!(child_processes(), before);
+    }
+
+    fn child_processes() -> Vec<String> {
+        let output = Command::new("pgrep")
+            .args(["-P", &std::process::id().to_string()])
+            .output()
+            .expect("pgrep must be available for the runtime child-process check");
+        if output.status.success() {
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        } else {
+            assert_eq!(output.status.code(), Some(1));
+            Vec::new()
+        }
     }
 }

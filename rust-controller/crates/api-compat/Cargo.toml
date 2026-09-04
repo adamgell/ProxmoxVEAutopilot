@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64.workspace = true
 controller-domain = { path = "../controller-domain" }
 event-journal = { path = "../event-journal" }
 serde.workspace = true

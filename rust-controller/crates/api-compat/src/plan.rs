@@ -8,18 +8,16 @@ use thiserror::Error;
 
 use crate::{JobEnvelope, JobValidationError};
 
-const JOB_TYPE: &str = "synthetic_long_sleep";
+const JOB_TYPE: &str = "test_long_sleep";
 const EXECUTABLE: &str = "ansible-playbook";
-const PLAYBOOK: &str = "_test_long_sleep.yml";
-const ARGUMENT_KEY: &str = "sleep_seconds";
+const PLAYBOOK: &str = "/app/playbooks/_test_long_sleep.yml";
+const ARGUMENT_KEY: &str = "duration";
 const CONTRACT_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
 enum SanitizedScalar {
     Integer(i64),
-    Boolean(bool),
-    String(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -27,25 +25,23 @@ enum SanitizedScalar {
 pub struct SanitizedValue(SanitizedScalar);
 
 impl SanitizedValue {
-    fn from_json(value: &Value) -> Result<Self, NormalizationError> {
-        match value {
-            Value::Number(number) => number
-                .as_i64()
-                .map(|value| Self(SanitizedScalar::Integer(value)))
-                .ok_or(NormalizationError::UnsafeParameterValue),
-            Value::Bool(value) => Ok(Self(SanitizedScalar::Boolean(*value))),
-            Value::String(value) => Ok(Self(SanitizedScalar::String(value.clone()))),
-            Value::Null | Value::Array(_) | Value::Object(_) => {
-                Err(NormalizationError::UnsafeParameterValue)
-            }
+    fn from_duration(value: &Value) -> Result<Self, NormalizationError> {
+        let raw = value
+            .as_str()
+            .ok_or(NormalizationError::UnsafeParameterValue)?;
+        let parsed = raw
+            .parse::<i64>()
+            .map_err(|_| NormalizationError::UnsafeParameterValue)?;
+        if raw != parsed.to_string() {
+            return Err(NormalizationError::UnsafeParameterValue);
         }
+        Ok(Self(SanitizedScalar::Integer(parsed)))
     }
 
     #[must_use]
     pub const fn as_i64(&self) -> Option<i64> {
         match &self.0 {
             SanitizedScalar::Integer(value) => Some(*value),
-            SanitizedScalar::Boolean(_) | SanitizedScalar::String(_) => None,
         }
     }
 }
@@ -198,21 +194,21 @@ pub fn normalize_job(job: &JobEnvelope) -> Result<NormalizedPlan, NormalizationE
     if extra_flag != "-e" {
         return Err(NormalizationError::UnknownArgument);
     }
-    let Some(command_sleep_seconds) = extra_value.strip_prefix("sleep_seconds=") else {
+    let Some(command_duration) = extra_value.strip_prefix("duration=") else {
         return Err(NormalizationError::UnknownArgument);
     };
 
     if job.args().len() != 1 || !job.args().contains_key(ARGUMENT_KEY) {
         return Err(NormalizationError::UnknownArgument);
     }
-    let sleep_seconds = SanitizedValue::from_json(&job.args()[ARGUMENT_KEY])?;
-    let Some(sleep_seconds_i64) = sleep_seconds.as_i64() else {
+    let duration = SanitizedValue::from_duration(&job.args()[ARGUMENT_KEY])?;
+    let Some(duration_i64) = duration.as_i64() else {
         return Err(NormalizationError::UnsafeParameterValue);
     };
-    if !(0..=20).contains(&sleep_seconds_i64) {
+    if !(0..=20).contains(&duration_i64) {
         return Err(NormalizationError::SleepDurationOutOfRange);
     }
-    if command_sleep_seconds != sleep_seconds_i64.to_string() {
+    if command_duration != duration_i64.to_string() {
         return Err(NormalizationError::ArgumentMismatch);
     }
 
@@ -221,7 +217,7 @@ pub fn normalize_job(job: &JobEnvelope) -> Result<NormalizedPlan, NormalizationE
         operation_kind: OperationKind::SyntheticLongSleep,
         contract_version: CONTRACT_VERSION,
         adapter_identity: format!("ansible:{PLAYBOOK}@{CONTRACT_VERSION}"),
-        parameters: BTreeMap::from([(ARGUMENT_KEY.to_owned(), sleep_seconds)]),
+        parameters: BTreeMap::from([(ARGUMENT_KEY.to_owned(), duration)]),
         required_capabilities: BTreeSet::from(["ansible_local".to_owned()]),
         expected_events: vec!["adapter_started".to_owned(), "adapter_completed".to_owned()],
         postconditions: vec!["synthetic_sleep_completed".to_owned()],
