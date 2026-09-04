@@ -125,6 +125,7 @@ fn is_stale(observed_at: chrono::DateTime<chrono::Utc>, intent: &CloneIntent) ->
 mod tests {
     use std::{
         collections::BTreeSet,
+        ffi::OsString,
         io,
         sync::{Arc, Mutex},
         time::Duration,
@@ -459,19 +460,19 @@ mod tests {
             response: TestResponse,
             accept_timeout: Duration,
         ) -> Self {
+            Self::start_with_limit(response, 1, accept_timeout).await
+        }
+
+        async fn start_with_limit(
+            response: TestResponse,
+            request_limit: usize,
+            accept_timeout: Duration,
+        ) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let requests = Arc::new(Mutex::new(Vec::new()));
             let recorded = Arc::clone(&requests);
             let handle = tokio::spawn(async move {
-                let Ok(Ok((mut stream, _))) =
-                    tokio::time::timeout(accept_timeout, listener.accept()).await
-                else {
-                    return;
-                };
-                let request = read_test_headers(&mut stream).await.unwrap();
-                recorded.lock().unwrap().push(request);
-                tokio::time::sleep(response.delay).await;
                 let reason = match response.status {
                     200 => "OK",
                     302 => "Found",
@@ -486,13 +487,23 @@ mod tests {
                     .iter()
                     .map(|(name, value)| format!("{name}: {value}\r\n"))
                     .collect::<String>();
-                let wire = format!(
-                    "HTTP/1.1 {} {reason}\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    response.status,
-                    response.body.len(),
-                    response.body
-                );
-                let _ = stream.write_all(wire.as_bytes()).await;
+                for _ in 0..request_limit {
+                    let Ok(Ok((mut stream, _))) =
+                        tokio::time::timeout(accept_timeout, listener.accept()).await
+                    else {
+                        return;
+                    };
+                    let request = read_test_headers(&mut stream).await.unwrap();
+                    recorded.lock().unwrap().push(request);
+                    tokio::time::sleep(response.delay).await;
+                    let wire = format!(
+                        "HTTP/1.1 {} {reason}\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response.status,
+                        response.body.len(),
+                        response.body
+                    );
+                    let _ = stream.write_all(wire.as_bytes()).await;
+                }
             });
             Self {
                 base_url: format!("http://{address}"),
@@ -636,6 +647,64 @@ mod tests {
         assert!(destination_requests.is_empty());
     }
 
+    #[test]
+    fn loopback_target_never_uses_proxy_environment() {
+        if std::env::var("PVE_PROXY_ISOLATED_CHILD").as_deref() == Ok("1") {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(proxy_environment_child());
+            return;
+        }
+
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::loopback_target_never_uses_proxy_environment",
+                "--nocapture",
+            ])
+            .env("PVE_PROXY_ISOLATED_CHILD", "1")
+            .status()
+            .unwrap();
+
+        assert!(status.success(), "isolated proxy regression failed");
+    }
+
+    async fn proxy_environment_child() {
+        let proxy = TestServer::start_with_accept_timeout(
+            TestResponse::json(502, ""),
+            Duration::from_millis(250),
+        )
+        .await;
+        let target = TestServer::start_with_accept_timeout(
+            TestResponse::json(200, r#"{"data":{"status":"running"}}"#),
+            Duration::from_millis(250),
+        )
+        .await;
+        let proxy_url = proxy.base_url().to_owned();
+        let environment = ScopedEnvironment::set(&[
+            ("HTTP_PROXY", Some(proxy_url.as_str())),
+            ("http_proxy", Some(proxy_url.as_str())),
+            ("HTTPS_PROXY", Some(proxy_url.as_str())),
+            ("https_proxy", Some(proxy_url.as_str())),
+            ("ALL_PROXY", Some(proxy_url.as_str())),
+            ("all_proxy", Some(proxy_url.as_str())),
+            ("NO_PROXY", None),
+            ("no_proxy", None),
+        ]);
+        let observer = observer_for(target.base_url(), Duration::from_secs(1));
+
+        let result = observer.task_status(&node(), &upid()).await;
+        let proxy_requests = proxy.finish().await;
+        let target_requests = target.finish().await;
+        drop(environment);
+
+        assert_eq!(result.unwrap().state(), super::TaskState::Running);
+        assert!(proxy_requests.is_empty());
+        assert_eq!(target_requests.len(), 1);
+    }
+
     #[tokio::test]
     async fn redirect_to_production_is_rejected_without_a_production_attempt() {
         let server = TestServer::start(TestResponse::json(302, "").with_header(
@@ -674,6 +743,39 @@ mod tests {
                 .contains("host: 127.0.0.1:")
         );
         assert!(!requests[0].contains("192.168.2.4"));
+    }
+
+    #[tokio::test]
+    async fn retryable_protocol_response_has_at_most_one_wire_attempt() {
+        let server = TestServer::start_with_limit(
+            TestResponse::json(503, ""),
+            3,
+            Duration::from_millis(100),
+        )
+        .await;
+        let retrying_builder = reqwest::Client::builder().retry(
+            reqwest::retry::for_host("127.0.0.1")
+                .classify_fn(|request_response| {
+                    if request_response.status() == Some(reqwest::StatusCode::SERVICE_UNAVAILABLE) {
+                        request_response.retryable()
+                    } else {
+                        request_response.success()
+                    }
+                })
+                .no_budget()
+                .max_retries_per_request(2),
+        );
+        let client = crate::observer::build_verified_test_client_from(
+            retrying_builder,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let response = client.get(server.base_url()).send().await.unwrap();
+        let requests = server.finish().await;
+
+        assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(requests.len(), 1);
     }
 
     #[tokio::test]
@@ -724,5 +826,47 @@ mod tests {
         assert!(
             requests[0].starts_with("POST /api2/json/nodes/pve-test/qemu/101/agent/ping HTTP/1.1")
         );
+    }
+
+    struct ScopedEnvironment(Vec<(String, Option<OsString>)>);
+
+    impl ScopedEnvironment {
+        fn set(values: &[(&str, Option<&str>)]) -> Self {
+            let previous = values
+                .iter()
+                .map(|(name, _)| ((*name).to_owned(), std::env::var_os(name)))
+                .collect();
+            for (name, value) in values {
+                match value {
+                    Some(value) => {
+                        // SAFETY: This helper is used only by an exact, current-thread test in a
+                        // dedicated child process, so no other thread can read this environment.
+                        unsafe { std::env::set_var(name, value) };
+                    }
+                    None => {
+                        // SAFETY: See the set_var safety argument above.
+                        unsafe { std::env::remove_var(name) };
+                    }
+                }
+            }
+            Self(previous)
+        }
+    }
+
+    impl Drop for ScopedEnvironment {
+        fn drop(&mut self) {
+            for (name, value) in &self.0 {
+                match value {
+                    Some(value) => {
+                        // SAFETY: Drop runs in the same isolated current-thread test process.
+                        unsafe { std::env::set_var(name, value) };
+                    }
+                    None => {
+                        // SAFETY: Drop runs in the same isolated current-thread test process.
+                        unsafe { std::env::remove_var(name) };
+                    }
+                }
+            }
+        }
     }
 }

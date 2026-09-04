@@ -13,7 +13,7 @@ No Proxmox mutation trait or arbitrary command surface exists. No production end
 - `PveEvidence` is timestamped and source-identified and preserves the full `TaskState` in both the evidence record and task fact. The compatibility `task_complete` boolean remains, but `Running` and `CompleteFailure` are no longer observationally collapsed. UPID success remains independent from the intended VM UUID/MAC postcondition.
 - Evidence health maps unauthorized, timed-out, unavailable, stale, and contradictory observations onto the existing closed `ObservationHealth` domain enum without changing execution state.
 - `FakePve` queues per-method typed responses and records typed requests in deterministic order. Queue exhaustion returns `NotFound` rather than inventing a response.
-- `ReqwestPveObserver` uses the workspace's `reqwest` dependency with `default-features = false` and `rustls-tls`. Its public API does not accept a caller-supplied client or an insecure-certificate option. Redirect following is disabled. Non-loopback URLs require HTTPS.
+- `ReqwestPveObserver` uses the workspace's `reqwest` dependency with `default-features = false` and `rustls-tls`. Its public API does not accept a caller-supplied client or an insecure-certificate option. System/environment proxies, redirect following, and automatic retries are disabled. Non-loopback URLs require HTTPS.
 - Without explicit observe-plus-read permission, only normalized literal loopback targets are accepted. Literal `192.168.2.4`, its IPv4-mapped IPv6 form, and every hostname/non-loopback address are rejected before the private verified-client builder is called. With the explicit permission, a validated configured HTTPS target may be constructed. A request audit proves zero attempted HTTP requests on denial.
 
 ## TDD evidence
@@ -68,6 +68,12 @@ The redirect test was added before changing the reqwest client. Its RED run foll
 
 All loopback test responders now retain their task handles, read through the HTTP header terminator with a 16 KiB bound, join on normal completion, abort on bounded cleanup failure/drop, and return deterministic captured-request lists. No test resolves a hostname or contacts a non-loopback target.
 
+### Review round-two repair RED/GREEN
+
+The proxy-environment regression was added before disabling system proxies. It runs in an exact child copy of the current test binary, sets upper- and lower-case `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` to one loopback recorder, clears both `NO_PROXY` forms, and targets a separate loopback recorder. Its RED run failed with `TransportUnavailable` because the proxy recorder received the request. After applying `ClientBuilder::no_proxy()`, the child passed with zero proxy requests and exactly one target request. Environment mutation is confined to a current-thread child process, previous values are restored by an RAII guard, and the parent process environment is never changed.
+
+The retry regression was added before the hardened builder path existed and produced the intended compile RED. It seeds a reqwest builder with a policy that classifies a local 503 response as retryable for two additional attempts. The production builder now overrides all retry behavior with `reqwest::retry::never()`. The GREEN run records exactly one wire request and returns the original local 503 response. The seedable builder wrapper is compiled only for tests; the production observer remains crate-owned and accepts no client or builder from callers.
+
 ## Virtual-workspace integration-test harness
 
 Cargo ignores `rust-controller/tests/*.rs` as integration targets because the root manifest is a virtual workspace. The requested canonical file remains at `rust-controller/tests/network_deny.rs`. A minimal member-crate harness at `rust-controller/crates/pve-port/tests/network_deny.rs` contains only:
@@ -96,6 +102,8 @@ cargo test --offline --locked --manifest-path rust-controller/Cargo.toml --test 
 - every non-loopback target denied before client construction and with zero audited requests unless observe-plus-read permission is explicit;
 - literal production IPv4, IPv4-mapped IPv6, hostname alias, native IPv6 loopback, and IPv4-mapped IPv6 loopback policy cases;
 - redirect suppression with a zero-request second hop and a literal redirect-to-production response handled locally;
+- proxy-environment suppression with separate loopback proxy and target recorders;
+- explicit never-retry behavior under a locally retry-classified 503 response, with one wire attempt;
 - documented QGA POST method and exact typed endpoint path;
 - sanitized completed and failed task-status fixture decoding.
 
@@ -109,13 +117,13 @@ Fresh final commands completed successfully:
 
 ```text
 cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p pve-port
-# 20 unit + 5 network-deny integration tests passed
+# 22 unit + 5 network-deny integration tests passed
 
 cargo test --offline --locked --manifest-path rust-controller/Cargo.toml --test network_deny
 # 5 passed
 
 cargo test --offline --locked --manifest-path rust-controller/Cargo.toml --workspace --all-features --no-fail-fast
-# 109 unit, integration, and doc tests passed; 0 failed
+# 111 unit, integration, and doc tests passed; 0 failed
 
 cargo clippy --offline --locked --manifest-path rust-controller/Cargo.toml --workspace --all-targets --all-features -- -D warnings
 # passed with warnings denied
@@ -125,7 +133,7 @@ git diff --check
 # both passed
 ```
 
-The resolved feature tree contains `reqwest` -> `hyper-rustls` -> `rustls` with WebPKI roots and no native-TLS or invalid-certificate feature. A scoped source audit found no mutation trait, process execution, arbitrary command, SSH, Ansible, native-TLS, or invalid-certificate escape hatch in Task 6 files.
+The resolved feature tree contains `reqwest` -> `hyper-rustls` -> `rustls` with WebPKI roots and no native-TLS or invalid-certificate feature. A scoped production-source audit found no mutation trait, process execution, arbitrary command, SSH, Ansible, native-TLS, or invalid-certificate escape hatch. The proxy regression's parent test uses `std::process::Command` only to re-execute the exact current test binary with an isolated environment; it cannot select an arbitrary executable or command payload.
 
 ## Remaining concern
 

@@ -163,12 +163,29 @@ struct RustlsClientBuilder;
 
 impl VerifiedClientBuilder for RustlsClientBuilder {
     fn build(self, timeout: Duration) -> Result<Client, PveObserverBuildError> {
-        Client::builder()
-            .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| PveObserverBuildError::HttpClient)
+        build_verified_client_from(Client::builder(), timeout)
     }
+}
+
+fn build_verified_client_from(
+    builder: reqwest::ClientBuilder,
+    timeout: Duration,
+) -> Result<Client, PveObserverBuildError> {
+    builder
+        .timeout(timeout)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .build()
+        .map_err(|_| PveObserverBuildError::HttpClient)
+}
+
+#[cfg(test)]
+pub(crate) fn build_verified_test_client_from(
+    builder: reqwest::ClientBuilder,
+    timeout: Duration,
+) -> Result<Client, PveObserverBuildError> {
+    build_verified_client_from(builder, timeout)
 }
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
