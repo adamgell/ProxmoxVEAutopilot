@@ -5,7 +5,7 @@ use std::{
 
 use chrono::Utc;
 use controller_domain::{
-    CommandEnvelope, EventId, ExecutionState, OperationId, RunId, SemanticOperationKey,
+    AttemptId, CommandEnvelope, EventId, ExecutionState, OperationId, RunId, SemanticOperationKey,
     WorkflowKind,
 };
 use event_journal::{EventKind, JournalEvent, payload_digest};
@@ -477,11 +477,12 @@ async fn schema_enforces_journal_outbox_projection_authority_and_lease_invariant
         chrono::DateTime<chrono::Utc>,
     ) = sqlx::query_as(
         "INSERT INTO rust_controller.worker_leases \
-         (operation_id, executor_kind, generation, worker_id, lease_token) \
-         VALUES ($1::uuid, 'rust', 1, 'worker-one', 'lease-token-one') \
+         (operation_id, attempt_id, executor_kind, generation, worker_id, lease_token) \
+         VALUES ($1::uuid, $2::uuid, 'rust', 1, 'worker-one', 'lease-token-one') \
          RETURNING acquired_at, lease_expires_at, deadline_at",
     )
     .bind(operation_id)
+    .bind(attempt_id)
     .fetch_one(&pool)
     .await
     .expect("valid database-timed lease must insert");
@@ -627,15 +628,15 @@ async fn two_connections_allow_one_append_winner_and_report_revision_conflict_fo
     let left_event = journal_event(
         operation_id,
         1,
-        "state:left-running",
-        EventKind::ExecutionStateChanged(ExecutionState::Running),
+        "state:left-leased",
+        EventKind::ExecutionStateChanged(ExecutionState::Leased),
         serde_json::json!({"writer": "left"}),
     );
     let right_event = journal_event(
         operation_id,
         1,
-        "state:right-running",
-        EventKind::ExecutionStateChanged(ExecutionState::Running),
+        "state:right-leased",
+        EventKind::ExecutionStateChanged(ExecutionState::Leased),
         serde_json::json!({"writer": "right"}),
     );
 
@@ -683,7 +684,7 @@ async fn two_connections_allow_one_append_winner_and_report_revision_conflict_fo
         (event_count, outbox_count, projection.revision()),
         (1, 1, 1)
     );
-    assert_eq!(projection.state(), ExecutionState::Running);
+    assert_eq!(projection.state(), ExecutionState::Leased);
 }
 
 #[tokio::test]
@@ -765,9 +766,9 @@ async fn outbox_insert_failure_rolls_back_event_projection_and_revision() {
     let event = journal_event(
         operation_id,
         1,
-        "state:running",
-        EventKind::ExecutionStateChanged(ExecutionState::Running),
-        serde_json::json!({"state": "running"}),
+        "state:leased",
+        EventKind::ExecutionStateChanged(ExecutionState::Leased),
+        serde_json::json!({"state": "leased"}),
     );
 
     assert!(matches!(
@@ -802,22 +803,30 @@ async fn rebuild_projection_from_empty_store_matches_transactional_projection() 
     let store = PgStore::new(pool.clone());
     store.migrate().await.unwrap();
     let operation_id = create_operation(&store, "projection-rebuild").await;
-    let running = journal_event(
+    let leased = journal_event(
         operation_id,
         1,
+        "state:leased",
+        EventKind::ExecutionStateChanged(ExecutionState::Leased),
+        serde_json::json!({"state": "leased"}),
+    );
+    store.append_event(0, &leased).await.unwrap();
+    let running = journal_event(
+        operation_id,
+        2,
         "state:running",
         EventKind::ExecutionStateChanged(ExecutionState::Running),
         serde_json::json!({"state": "running"}),
     );
-    store.append_event(0, &running).await.unwrap();
+    store.append_event(1, &running).await.unwrap();
     let evidence = journal_event(
         operation_id,
-        2,
+        3,
         "evidence:heartbeat",
         EventKind::EvidenceRecorded,
         serde_json::json!({"heartbeat": "synthetic"}),
     );
-    store.append_event(1, &evidence).await.unwrap();
+    store.append_event(2, &evidence).await.unwrap();
     let expected = store.load_operation(operation_id).await.unwrap().unwrap();
 
     sqlx::query("DELETE FROM rust_controller.operation_projection WHERE operation_id = $1")
@@ -830,7 +839,7 @@ async fn rebuild_projection_from_empty_store_matches_transactional_projection() 
 
     assert_eq!(rebuilt, expected);
     assert_eq!(rebuilt.state(), ExecutionState::Running);
-    assert_eq!(rebuilt.revision(), 2);
+    assert_eq!(rebuilt.revision(), 3);
 }
 
 #[tokio::test]
@@ -867,4 +876,594 @@ async fn dequeue_outbox_claims_with_database_time_and_rejects_invalid_limits() {
         store.dequeue_outbox(0).await,
         Err(StoreError::InvalidOutboxLimit { limit: 0 })
     ));
+}
+
+#[tokio::test]
+async fn invalid_execution_state_jump_is_rejected_before_any_journal_write() {
+    // Break caught: persisting the target state directly lets pending work skip
+    // its lease and commit running state without a valid domain transition.
+    let postgres = PostgresContainer::start().await;
+    let pool = postgres.wait_for_pool().await;
+    let store = PgStore::new(pool.clone());
+    store.migrate().await.unwrap();
+    let operation_id = create_operation(&store, "invalid-state-jump").await;
+    let invalid = journal_event(
+        operation_id,
+        1,
+        "state:running-without-lease",
+        EventKind::ExecutionStateChanged(ExecutionState::Running),
+        serde_json::json!({"state": "running"}),
+    );
+
+    assert!(store.append_event(0, &invalid).await.is_err());
+
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM rust_controller.journal_events), \
+                (SELECT count(*) FROM rust_controller.outbox)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let operation: (String, i64) = sqlx::query_as(
+        "SELECT state, revision FROM rust_controller.operations WHERE operation_id = $1",
+    )
+    .bind(operation_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(counts, (0, 0));
+    assert_eq!(operation, ("pending".to_owned(), 0));
+}
+
+#[tokio::test]
+async fn worker_lease_requires_attempt_owned_by_the_same_operation() {
+    // Break caught: an operation-only lease can be replayed against another
+    // attempt and cannot prove which acquisition owns the execution capability.
+    let postgres = PostgresContainer::start().await;
+    let pool = postgres.wait_for_pool().await;
+    let store = PgStore::new(pool.clone());
+    store.migrate().await.unwrap();
+    let operation_id = create_operation(&store, "lease-owner").await;
+    let other_operation_id = create_operation(&store, "lease-other").await;
+    let attempt_id = AttemptId::new();
+    sqlx::query(
+        "INSERT INTO rust_controller.attempts \
+         (attempt_id, operation_id, attempt_number, state) \
+         VALUES ($1, $2, 1, 'leased')",
+    )
+    .bind(attempt_id.as_uuid())
+    .bind(operation_id.as_uuid())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO rust_controller.worker_leases \
+         (operation_id, attempt_id, executor_kind, generation, worker_id, lease_token) \
+         VALUES ($1, $2, 'rust', 1, 'worker-one', 'lease-one')",
+    )
+    .bind(operation_id.as_uuid())
+    .bind(attempt_id.as_uuid())
+    .execute(&pool)
+    .await
+    .expect("the owning operation and attempt must be accepted");
+
+    let wrong_owner = sqlx::query(
+        "INSERT INTO rust_controller.worker_leases \
+         (operation_id, attempt_id, executor_kind, generation, worker_id, lease_token) \
+         VALUES ($1, $2, 'rust', 1, 'worker-two', 'lease-two')",
+    )
+    .bind(other_operation_id.as_uuid())
+    .bind(attempt_id.as_uuid())
+    .execute(&pool)
+    .await;
+    assert!(wrong_owner.is_err());
+}
+
+#[tokio::test]
+async fn expired_outbox_claim_is_reclaimed_by_a_second_connection_after_consumer_crash() {
+    // Break caught: filtering forever on claimed_at IS NULL strands a durable
+    // message after its consumer crashes between dequeue and acknowledgement.
+    let postgres = PostgresContainer::start().await;
+    let dsn = postgres.dsn();
+    let setup_pool = postgres.wait_for_pool().await;
+    let setup_store = PgStore::new(setup_pool.clone());
+    setup_store.migrate().await.unwrap();
+    let operation_id = create_operation(&setup_store, "outbox-crash").await;
+    let event = journal_event(
+        operation_id,
+        1,
+        "evidence:crash-recovery",
+        EventKind::EvidenceRecorded,
+        serde_json::json!({"source": "synthetic"}),
+    );
+    setup_store.append_event(0, &event).await.unwrap();
+
+    let first_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&dsn)
+        .await
+        .unwrap();
+    let second_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&dsn)
+        .await
+        .unwrap();
+    let first = PgStore::new(first_pool);
+    let second = PgStore::new(second_pool);
+    let first_claim = first.dequeue_outbox(1).await.unwrap().remove(0);
+    sqlx::query(
+        "UPDATE rust_controller.outbox \
+         SET claimed_at = clock_timestamp() - interval '31 seconds', \
+             claim_expires_at = clock_timestamp() - interval '1 second', \
+             created_at = clock_timestamp() - interval '1 minute'",
+    )
+    .execute(&setup_pool)
+    .await
+    .unwrap();
+
+    let reclaimed = second.dequeue_outbox(1).await.unwrap();
+    assert_eq!(reclaimed.len(), 1);
+    assert_eq!(reclaimed[0].event_id(), event.event_id());
+    assert_ne!(reclaimed[0].claim_token(), first_claim.claim_token());
+    assert!(
+        !first
+            .ack_outbox(first_claim.outbox_id(), first_claim.claim_token())
+            .await
+            .unwrap()
+    );
+    assert!(
+        second
+            .ack_outbox(reclaimed[0].outbox_id(), reclaimed[0].claim_token())
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn terminal_execution_state_cannot_regress_and_emits_no_followup_event() {
+    // Break caught: persistence must not bypass the domain terminal fence and
+    // append a later state target after the operation is satisfied.
+    let postgres = PostgresContainer::start().await;
+    let pool = postgres.wait_for_pool().await;
+    let store = PgStore::new(pool.clone());
+    store.migrate().await.unwrap();
+    let operation_id = create_operation(&store, "terminal-regression").await;
+    let satisfied = journal_event(
+        operation_id,
+        1,
+        "state:satisfied",
+        EventKind::ExecutionStateChanged(ExecutionState::Satisfied),
+        serde_json::json!({"state": "satisfied"}),
+    );
+    store.append_event(0, &satisfied).await.unwrap();
+    let regression = journal_event(
+        operation_id,
+        2,
+        "state:leased-after-satisfied",
+        EventKind::ExecutionStateChanged(ExecutionState::Leased),
+        serde_json::json!({"state": "leased"}),
+    );
+
+    assert!(store.append_event(1, &regression).await.is_err());
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM rust_controller.journal_events), \
+                (SELECT count(*) FROM rust_controller.outbox)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let operation: (String, i64) = sqlx::query_as(
+        "SELECT state, revision FROM rust_controller.operations WHERE operation_id = $1",
+    )
+    .bind(operation_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(counts, (1, 1));
+    assert_eq!(operation, ("satisfied".to_owned(), 1));
+}
+
+#[tokio::test]
+async fn append_command_never_recreates_a_missing_progressed_projection_as_pending() {
+    // Break caught: a second idempotency key for an existing semantic operation
+    // must not replace a missing progressed projection with pending revision zero.
+    let postgres = PostgresContainer::start().await;
+    let pool = postgres.wait_for_pool().await;
+    let store = PgStore::new(pool.clone());
+    store.migrate().await.unwrap();
+    let semantic_key = SemanticOperationKey::new(
+        WorkflowKind::SyntheticLongSleep,
+        RunId::new(),
+        "synthetic:projection-gap",
+        1,
+    )
+    .unwrap();
+    let first_command = CommandEnvelope::new(
+        "command:projection-first",
+        semantic_key.clone(),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    .unwrap();
+    let operation_id = OperationId::new();
+    store
+        .append_command(operation_id, &first_command)
+        .await
+        .unwrap();
+    let leased = journal_event(
+        operation_id,
+        1,
+        "state:leased",
+        EventKind::ExecutionStateChanged(ExecutionState::Leased),
+        serde_json::json!({"state": "leased"}),
+    );
+    store.append_event(0, &leased).await.unwrap();
+    sqlx::query("DELETE FROM rust_controller.operation_projection WHERE operation_id = $1")
+        .bind(operation_id.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let second_command = CommandEnvelope::new(
+        "command:projection-second",
+        semantic_key,
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
+    .unwrap();
+    assert_eq!(
+        store
+            .append_command(OperationId::new(), &second_command)
+            .await
+            .unwrap(),
+        CommandAppend::Appended(operation_id)
+    );
+
+    if let Some(projection) = store.load_operation(operation_id).await.unwrap() {
+        assert_eq!(projection.state(), ExecutionState::Leased);
+        assert_eq!(projection.revision(), 1);
+    }
+    let authoritative: (String, i64) = sqlx::query_as(
+        "SELECT state, revision FROM rust_controller.operations WHERE operation_id = $1",
+    )
+    .bind(operation_id.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(authoritative, ("leased".to_owned(), 1));
+}
+
+#[tokio::test]
+async fn two_connections_classify_same_and_different_command_digests_without_extra_rows() {
+    // Break caught: sequential duplicate tests miss unique-key races that can
+    // leak a database error or create two semantic operations.
+    let postgres = PostgresContainer::start().await;
+    let dsn = postgres.dsn();
+    let setup_pool = postgres.wait_for_pool().await;
+    PgStore::new(setup_pool.clone()).migrate().await.unwrap();
+
+    for (case, right_digest) in [
+        (
+            "same",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+        (
+            "different",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ),
+    ] {
+        let semantic_key = SemanticOperationKey::new(
+            WorkflowKind::SyntheticLongSleep,
+            RunId::new(),
+            format!("synthetic:command-race-{case}"),
+            1,
+        )
+        .unwrap();
+        let left_command = CommandEnvelope::new(
+            format!("command:race-{case}"),
+            semantic_key.clone(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let right_command =
+            CommandEnvelope::new(format!("command:race-{case}"), semantic_key, right_digest)
+                .unwrap();
+        let left_operation_id = OperationId::new();
+        let right_operation_id = OperationId::new();
+        let left = PgStore::new(
+            PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&dsn)
+                .await
+                .unwrap(),
+        );
+        let right = PgStore::new(
+            PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&dsn)
+                .await
+                .unwrap(),
+        );
+
+        let (left_result, right_result) = tokio::join!(
+            left.append_command(left_operation_id, &left_command),
+            right.append_command(right_operation_id, &right_command)
+        );
+        let results = [left_result, right_result];
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Ok(CommandAppend::Appended(_))))
+                .count(),
+            1
+        );
+        if case == "same" {
+            assert_eq!(
+                results
+                    .iter()
+                    .filter(|result| matches!(result, Ok(CommandAppend::AlreadyPresent(_))))
+                    .count(),
+                1
+            );
+        } else {
+            assert_eq!(
+                results
+                    .iter()
+                    .filter(|result| matches!(
+                        result,
+                        Err(StoreError::CommandDigestConflict { .. })
+                    ))
+                    .count(),
+                1
+            );
+        }
+    }
+
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM rust_controller.commands), \
+                (SELECT count(*) FROM rust_controller.operations)",
+    )
+    .fetch_one(&setup_pool)
+    .await
+    .unwrap();
+    assert_eq!(counts, (2, 2));
+}
+
+#[tokio::test]
+async fn two_connections_classify_same_and_different_event_digests_without_extra_rows() {
+    // Break caught: sequential semantic-event tests miss races between the
+    // operation lock and duplicate/digest-conflict classification.
+    let postgres = PostgresContainer::start().await;
+    let dsn = postgres.dsn();
+    let setup_pool = postgres.wait_for_pool().await;
+    let setup_store = PgStore::new(setup_pool.clone());
+    setup_store.migrate().await.unwrap();
+
+    for (case, right_payload) in [
+        ("same", serde_json::json!({"claim": "same"})),
+        ("different", serde_json::json!({"claim": "right"})),
+    ] {
+        let operation_id = create_operation(&setup_store, &format!("event-race-{case}")).await;
+        let left_payload = if case == "same" {
+            right_payload.clone()
+        } else {
+            serde_json::json!({"claim": "left"})
+        };
+        let left_event = journal_event(
+            operation_id,
+            1,
+            "state:leased",
+            EventKind::ExecutionStateChanged(ExecutionState::Leased),
+            left_payload,
+        );
+        let right_event = journal_event(
+            operation_id,
+            1,
+            "state:leased",
+            EventKind::ExecutionStateChanged(ExecutionState::Leased),
+            right_payload,
+        );
+        let left = PgStore::new(
+            PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&dsn)
+                .await
+                .unwrap(),
+        );
+        let right = PgStore::new(
+            PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&dsn)
+                .await
+                .unwrap(),
+        );
+
+        let (left_result, right_result) = tokio::join!(
+            left.append_event(0, &left_event),
+            right.append_event(0, &right_event)
+        );
+        let results = [left_result, right_result];
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Ok(EventAppend::Appended(_))))
+                .count(),
+            1
+        );
+        if case == "same" {
+            assert_eq!(
+                results
+                    .iter()
+                    .filter(|result| matches!(result, Ok(EventAppend::AlreadyPresent(_))))
+                    .count(),
+                1
+            );
+        } else {
+            assert_eq!(
+                results
+                    .iter()
+                    .filter(|result| matches!(result, Err(StoreError::EventDigestConflict { .. })))
+                    .count(),
+                1
+            );
+        }
+    }
+
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM rust_controller.journal_events), \
+                (SELECT count(*) FROM rust_controller.outbox)",
+    )
+    .fetch_one(&setup_pool)
+    .await
+    .unwrap();
+    assert_eq!(counts, (2, 2));
+}
+
+#[tokio::test]
+async fn migration_creates_partial_outbox_claim_index_aligned_with_dequeue() {
+    // Break caught: dequeue scans all delivered rows when the partial index does
+    // not cover ordering, availability, and claim-expiry eligibility.
+    let postgres = PostgresContainer::start().await;
+    let pool = postgres.wait_for_pool().await;
+    let store = PgStore::new(pool.clone());
+    store.migrate().await.unwrap();
+
+    let index_definition: Option<String> = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes \
+         WHERE schemaname = 'rust_controller' \
+           AND indexname = 'idx_outbox_delivery_eligible'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    let index_definition = index_definition.expect("eligible outbox index must exist");
+    assert!(index_definition.contains("(outbox_id, available_at, claim_expires_at)"));
+    assert!(index_definition.contains("WHERE (delivered_at IS NULL)"));
+}
+
+#[tokio::test]
+async fn acknowledge_outbox_requires_the_current_unexpired_claim_token() {
+    // Break caught: acknowledgement by row ID alone lets an expired consumer
+    // mark a message delivered after another consumer has reclaimed it.
+    let postgres = PostgresContainer::start().await;
+    let pool = postgres.wait_for_pool().await;
+    let store = PgStore::new(pool.clone());
+    store.migrate().await.unwrap();
+    let operation_id = create_operation(&store, "outbox-ack").await;
+    let event = journal_event(
+        operation_id,
+        1,
+        "evidence:ack",
+        EventKind::EvidenceRecorded,
+        serde_json::json!({"ack": "synthetic"}),
+    );
+    store.append_event(0, &event).await.unwrap();
+    let claim = store.dequeue_outbox(1).await.unwrap().remove(0);
+
+    assert!(
+        !store
+            .ack_outbox(claim.outbox_id(), uuid::Uuid::now_v7())
+            .await
+            .unwrap()
+    );
+    let before: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .ack_outbox(claim.outbox_id(), claim.claim_token())
+            .await
+            .unwrap()
+    );
+    let delivered_at: chrono::DateTime<Utc> =
+        sqlx::query_scalar("SELECT delivered_at FROM rust_controller.outbox WHERE outbox_id = $1")
+            .bind(claim.outbox_id())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let after: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(delivered_at >= before && delivered_at <= after);
+    assert!(store.dequeue_outbox(1).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn release_outbox_requires_the_current_claim_and_makes_the_row_available_again() {
+    // Break caught: a consumer cannot safely abandon work when release lacks an
+    // acquisition token or leaves the row unavailable until process restart.
+    let postgres = PostgresContainer::start().await;
+    let pool = postgres.wait_for_pool().await;
+    let store = PgStore::new(pool.clone());
+    store.migrate().await.unwrap();
+    let operation_id = create_operation(&store, "outbox-release").await;
+    let event = journal_event(
+        operation_id,
+        1,
+        "evidence:release",
+        EventKind::EvidenceRecorded,
+        serde_json::json!({"release": "synthetic"}),
+    );
+    store.append_event(0, &event).await.unwrap();
+    let first_claim = store.dequeue_outbox(1).await.unwrap().remove(0);
+
+    assert!(
+        !store
+            .release_outbox(first_claim.outbox_id(), uuid::Uuid::now_v7())
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .release_outbox(first_claim.outbox_id(), first_claim.claim_token())
+            .await
+            .unwrap()
+    );
+    let second_claim = store.dequeue_outbox(1).await.unwrap().remove(0);
+    assert_eq!(second_claim.event_id(), event.event_id());
+    assert_ne!(second_claim.claim_token(), first_claim.claim_token());
+}
+
+#[tokio::test]
+async fn outbox_claim_persists_database_clock_expiry() {
+    // Break caught: deriving expiry later from application policy makes an
+    // existing durable claim change meaning across process versions/restarts.
+    let postgres = PostgresContainer::start().await;
+    let pool = postgres.wait_for_pool().await;
+    let store = PgStore::new(pool.clone());
+    store.migrate().await.unwrap();
+    let operation_id = create_operation(&store, "outbox-expiry").await;
+    let event = journal_event(
+        operation_id,
+        1,
+        "evidence:expiry",
+        EventKind::EvidenceRecorded,
+        serde_json::json!({"expiry": "synthetic"}),
+    );
+    store.append_event(0, &event).await.unwrap();
+    let before: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let claim = store.dequeue_outbox(1).await.unwrap().remove(0);
+
+    let claimed_at = *claim.claimed_at();
+    let claim_expires_at = *claim.claim_expires_at();
+    let after: chrono::DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let persisted_expiry: chrono::DateTime<Utc> = sqlx::query_scalar(
+        "SELECT claim_expires_at FROM rust_controller.outbox WHERE outbox_id = $1",
+    )
+    .bind(claim.outbox_id())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let ttl = claim_expires_at - claimed_at;
+    assert!(claimed_at >= before && claimed_at <= after);
+    assert_eq!(persisted_expiry, claim_expires_at);
+    assert!(ttl >= chrono::Duration::seconds(29));
+    assert!(ttl <= chrono::Duration::seconds(31));
 }

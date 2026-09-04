@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS rust_controller.outbox (
     payload jsonb NOT NULL,
     available_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     claimed_at timestamptz,
+    claim_expires_at timestamptz,
+    claim_token uuid,
     delivered_at timestamptz,
     attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -91,9 +93,16 @@ CREATE TABLE IF NOT EXISTS rust_controller.outbox (
     FOREIGN KEY (event_id, operation_id)
         REFERENCES rust_controller.journal_events(event_id, operation_id),
     CHECK (delivered_at IS NULL OR claimed_at IS NOT NULL),
+    CHECK ((claimed_at IS NULL) = (claim_token IS NULL)),
+    CHECK ((claimed_at IS NULL) = (claim_expires_at IS NULL)),
     CHECK (claimed_at IS NULL OR claimed_at >= created_at),
+    CHECK (claim_expires_at IS NULL OR claim_expires_at > claimed_at),
     CHECK (delivered_at IS NULL OR delivered_at >= claimed_at)
 );
+
+CREATE INDEX IF NOT EXISTS idx_outbox_delivery_eligible
+    ON rust_controller.outbox (outbox_id, available_at, claim_expires_at)
+    WHERE delivered_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS rust_controller.operation_projection (
     operation_id uuid PRIMARY KEY REFERENCES rust_controller.operations(operation_id),
@@ -121,6 +130,7 @@ CREATE TABLE IF NOT EXISTS rust_controller.orchestration_authority (
 
 CREATE TABLE IF NOT EXISTS rust_controller.worker_leases (
     operation_id uuid PRIMARY KEY REFERENCES rust_controller.operations(operation_id),
+    attempt_id uuid NOT NULL,
     executor_kind text NOT NULL CHECK (executor_kind IN ('python', 'rust')),
     generation bigint NOT NULL CHECK (generation > 0),
     worker_id text NOT NULL CHECK (btrim(worker_id) <> ''),
@@ -131,5 +141,7 @@ CREATE TABLE IF NOT EXISTS rust_controller.worker_leases (
     deadline_at timestamptz NOT NULL DEFAULT (clock_timestamp() + interval '5 minutes'),
     CHECK (heartbeat_at >= acquired_at),
     CHECK (lease_expires_at > acquired_at),
-    CHECK (deadline_at >= lease_expires_at)
+    CHECK (deadline_at >= lease_expires_at),
+    FOREIGN KEY (attempt_id, operation_id)
+        REFERENCES rust_controller.attempts(attempt_id, operation_id)
 );

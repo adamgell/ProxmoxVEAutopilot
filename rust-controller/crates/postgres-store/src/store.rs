@@ -2,9 +2,23 @@ use sqlx::PgPool;
 use thiserror::Error;
 
 use chrono::{DateTime, Utc};
-use controller_domain::{CommandEnvelope, EventId, ExecutionState, OperationId, WorkflowKind};
+use controller_domain::{
+    CommandEnvelope, DomainSignal, EventId, ExecutionState, OperationId, TransitionError,
+    WorkflowKind, decide_transition,
+};
 use event_journal::JournalEvent;
 use uuid::Uuid;
+
+type ClaimedOutboxRow = (
+    i64,
+    Uuid,
+    Uuid,
+    String,
+    serde_json::Value,
+    DateTime<Utc>,
+    DateTime<Utc>,
+    Uuid,
+);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommandAppend {
@@ -50,6 +64,8 @@ pub struct OutboxMessage {
     topic: String,
     payload: serde_json::Value,
     claimed_at: DateTime<Utc>,
+    claim_expires_at: DateTime<Utc>,
+    claim_token: Uuid,
 }
 
 impl OutboxMessage {
@@ -81,6 +97,16 @@ impl OutboxMessage {
     #[must_use]
     pub const fn claimed_at(&self) -> &DateTime<Utc> {
         &self.claimed_at
+    }
+
+    #[must_use]
+    pub const fn claim_expires_at(&self) -> &DateTime<Utc> {
+        &self.claim_expires_at
+    }
+
+    #[must_use]
+    pub const fn claim_token(&self) -> Uuid {
+        self.claim_token
     }
 }
 
@@ -157,20 +183,23 @@ impl PgStore {
         .fetch_optional(&mut *transaction)
         .await?;
 
-        let persisted_id = if let Some(inserted) = inserted_operation_id {
-            inserted
+        let (persisted_id, inserted_operation) = if let Some(inserted) = inserted_operation_id {
+            (inserted, true)
         } else {
-            sqlx::query_scalar(
-                "SELECT operation_id FROM rust_controller.operations \
-                 WHERE workflow_kind = $1 AND run_id = $2 AND operation_key = $3 \
-                   AND contract_version = $4",
+            (
+                sqlx::query_scalar(
+                    "SELECT operation_id FROM rust_controller.operations \
+                     WHERE workflow_kind = $1 AND run_id = $2 AND operation_key = $3 \
+                       AND contract_version = $4",
+                )
+                .bind(workflow_kind_name(semantic.workflow_kind()))
+                .bind(semantic.run_id().as_uuid())
+                .bind(semantic.operation_key())
+                .bind(contract_version)
+                .fetch_one(&mut *transaction)
+                .await?,
+                false,
             )
-            .bind(workflow_kind_name(semantic.workflow_kind()))
-            .bind(semantic.run_id().as_uuid())
-            .bind(semantic.operation_key())
-            .bind(contract_version)
-            .fetch_one(&mut *transaction)
-            .await?
         };
 
         sqlx::query(
@@ -182,13 +211,15 @@ impl PgStore {
         .bind(command.payload_digest())
         .execute(&mut *transaction)
         .await?;
-        sqlx::query(
-            "INSERT INTO rust_controller.operation_projection (operation_id, state, revision) \
-             VALUES ($1, 'pending', 0) ON CONFLICT (operation_id) DO NOTHING",
-        )
-        .bind(persisted_id)
-        .execute(&mut *transaction)
-        .await?;
+        if inserted_operation {
+            sqlx::query(
+                "INSERT INTO rust_controller.operation_projection (operation_id, state, revision) \
+                 VALUES ($1, 'pending', 0)",
+            )
+            .bind(persisted_id)
+            .execute(&mut *transaction)
+            .await?;
+        }
 
         transaction.commit().await?;
         Ok(CommandAppend::Appended(decode_operation_id(persisted_id)?))
@@ -249,7 +280,10 @@ impl PgStore {
 
         let current_state = decode_execution_state(&current_state_name)?;
         let (event_kind, event_state) = event_kind_parts(event.kind());
-        let next_state = event_state.unwrap_or(current_state);
+        let next_state = event_state
+            .map(|target| validate_state_transition(current_state, target))
+            .transpose()?
+            .unwrap_or(current_state);
         let outbox_payload = serde_json::to_value(event)?;
 
         sqlx::query(
@@ -410,27 +444,43 @@ impl PgStore {
         if !(1..=1000).contains(&limit) {
             return Err(StoreError::InvalidOutboxLimit { limit });
         }
-        let rows: Vec<(i64, Uuid, Uuid, String, serde_json::Value, DateTime<Utc>)> =
-            sqlx::query_as(
-                "WITH selected AS ( \
+        let claim_token = Uuid::now_v7();
+        let rows: Vec<ClaimedOutboxRow> = sqlx::query_as(
+            "WITH selected AS ( \
                      SELECT outbox_id FROM rust_controller.outbox \
-                     WHERE delivered_at IS NULL AND claimed_at IS NULL \
+                     WHERE delivered_at IS NULL \
+                       AND (claim_expires_at IS NULL OR \
+                            claim_expires_at <= clock_timestamp()) \
                        AND available_at <= clock_timestamp() \
                      ORDER BY outbox_id FOR UPDATE SKIP LOCKED LIMIT $1 \
                  ) \
                  UPDATE rust_controller.outbox AS outbox \
-                 SET claimed_at = clock_timestamp(), attempt_count = outbox.attempt_count + 1 \
+                 SET claimed_at = clock_timestamp(), \
+                     claim_expires_at = clock_timestamp() + interval '30 seconds', \
+                     claim_token = $2, \
+                     attempt_count = outbox.attempt_count + 1 \
                  FROM selected WHERE outbox.outbox_id = selected.outbox_id \
                  RETURNING outbox.outbox_id, outbox.event_id, outbox.operation_id, \
-                           outbox.topic, outbox.payload, outbox.claimed_at",
-            )
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?;
+                           outbox.topic, outbox.payload, outbox.claimed_at, \
+                           outbox.claim_expires_at, outbox.claim_token",
+        )
+        .bind(limit)
+        .bind(claim_token)
+        .fetch_all(&self.pool)
+        .await?;
 
         rows.into_iter()
             .map(
-                |(outbox_id, event_id, operation_id, topic, payload, claimed_at)| {
+                |(
+                    outbox_id,
+                    event_id,
+                    operation_id,
+                    topic,
+                    payload,
+                    claimed_at,
+                    claim_expires_at,
+                    claim_token,
+                )| {
                     Ok(OutboxMessage {
                         outbox_id,
                         event_id: decode_event_id(event_id)?,
@@ -438,10 +488,53 @@ impl PgStore {
                         topic,
                         payload,
                         claimed_at,
+                        claim_expires_at,
+                        claim_token,
                     })
                 },
             )
             .collect()
+    }
+
+    pub async fn ack_outbox(&self, outbox_id: i64, claim_token: Uuid) -> Result<bool, StoreError> {
+        if outbox_id <= 0 || claim_token.is_nil() {
+            return Ok(false);
+        }
+        let acknowledged: Option<i64> = sqlx::query_scalar(
+            "UPDATE rust_controller.outbox \
+             SET delivered_at = clock_timestamp() \
+             WHERE outbox_id = $1 AND claim_token = $2 AND delivered_at IS NULL \
+               AND claim_expires_at > clock_timestamp() \
+             RETURNING outbox_id",
+        )
+        .bind(outbox_id)
+        .bind(claim_token)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(acknowledged.is_some())
+    }
+
+    pub async fn release_outbox(
+        &self,
+        outbox_id: i64,
+        claim_token: Uuid,
+    ) -> Result<bool, StoreError> {
+        if outbox_id <= 0 || claim_token.is_nil() {
+            return Ok(false);
+        }
+        let released: Option<i64> = sqlx::query_scalar(
+            "UPDATE rust_controller.outbox \
+             SET claimed_at = NULL, claim_expires_at = NULL, claim_token = NULL, \
+                 available_at = clock_timestamp() \
+             WHERE outbox_id = $1 AND claim_token = $2 AND delivered_at IS NULL \
+               AND claim_expires_at > clock_timestamp() \
+             RETURNING outbox_id",
+        )
+        .bind(outbox_id)
+        .bind(claim_token)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(released.is_some())
     }
 }
 
@@ -457,6 +550,13 @@ pub enum StoreError {
     InvalidExpectedRevision { expected_revision: i64 },
     #[error("event aggregate revision mismatch: expected {expected}, actual {actual}")]
     EventRevisionMismatch { expected: i64, actual: i64 },
+    #[error("event state target {target:?} does not match domain transition result {actual:?}")]
+    StateTargetMismatch {
+        target: ExecutionState,
+        actual: ExecutionState,
+    },
+    #[error(transparent)]
+    InvalidStateTransition(#[from] TransitionError),
     #[error("operation {0:?} does not exist")]
     OperationNotFound(OperationId),
     #[error("journal revision gap: expected {expected}, actual {actual}")]
@@ -532,6 +632,37 @@ fn event_kind_parts(kind: event_journal::EventKind) -> (&'static str, Option<Exe
         event_journal::EventKind::EvidenceRecorded => ("evidence_recorded", None),
         event_journal::EventKind::DecisionRecorded => ("decision_recorded", None),
     }
+}
+
+fn validate_state_transition(
+    current: ExecutionState,
+    target: ExecutionState,
+) -> Result<ExecutionState, StoreError> {
+    let signal = match target {
+        ExecutionState::Leased => DomainSignal::Claimed,
+        ExecutionState::Running => DomainSignal::Started,
+        ExecutionState::Waiting => DomainSignal::WaitRequested,
+        ExecutionState::Cancelling => DomainSignal::CancellationRequested,
+        ExecutionState::Satisfied => DomainSignal::Satisfied,
+        ExecutionState::Failed => DomainSignal::Failed,
+        ExecutionState::Blocked => DomainSignal::Blocked,
+        ExecutionState::Unknown => DomainSignal::DeadlineElapsed,
+        ExecutionState::Conflicted => DomainSignal::ConflictDetected,
+        ExecutionState::Pending => {
+            return Err(StoreError::StateTargetMismatch {
+                target,
+                actual: current,
+            });
+        }
+    };
+    let transition = decide_transition(current, signal)?;
+    if transition.next != target {
+        return Err(StoreError::StateTargetMismatch {
+            target,
+            actual: transition.next,
+        });
+    }
+    Ok(transition.next)
 }
 
 const fn execution_state_name(state: ExecutionState) -> &'static str {
