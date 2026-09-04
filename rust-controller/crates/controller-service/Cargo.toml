@@ -6,3 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+api-compat = { path = "../api-compat" }
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true

@@ -24,6 +24,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "api-compat"
+version = "0.1.0"
+dependencies = [
+ "controller-domain",
+ "event-journal",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -185,6 +198,10 @@ name = "controller-service"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "api-compat",
+ "serde_json",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

@@ -1,0 +1,12 @@
+{
+  "fixtures": [
+    {
+      "name": "jobs/synthetic-long-sleep.json",
+      "baseline_version": "v2026.09.2",
+      "baseline_git_sha": "c8ab4b2",
+      "contract_version": 1,
+      "sanitizer_version": 1,
+      "sha256": "9deb5ed55d334a8cd7f9c21d81e11c4de095ba3ca42700bc6c467aa592408b06"
+    }
+  ]
+}
