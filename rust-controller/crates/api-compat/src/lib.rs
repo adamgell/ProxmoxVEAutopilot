@@ -239,6 +239,48 @@ mod tests {
     }
 
     #[test]
+    fn sanitizer_scans_delimited_base64_and_rejects_ambiguous_candidates() {
+        let cases = [
+            "b64_QmVhcmVyIHNlbnNpdGl2ZS12YWx1ZQ==",
+            "x_MTkyLjE2OC4yLjQ=",
+            "base64:MjAwMTpkYjg6OjE=",
+            "prefix_UW1WaGNtVnlJSE5sYm5OcGRHbDJaUT09",
+            "b64_////",
+            "b64_AAAAA",
+            "base64:QmVhcmVy*",
+        ];
+
+        for value in cases {
+            let unsafe_json = BASELINE_JOB.replace(
+                "\"duration\":\"5\"",
+                &format!("\"duration\":\"5\",\"note\":\"{value}\""),
+            );
+            assert!(
+                JobEnvelope::from_json_str(&unsafe_json).is_err(),
+                "accepted {value}"
+            );
+        }
+
+        assert!(JobEnvelope::from_json_str(BASELINE_JOB).is_ok());
+    }
+
+    #[test]
+    fn sanitizer_rejects_nested_short_identity_aliases() {
+        for key in ["oid", "tid", "principal_id"] {
+            let unsafe_json = BASELINE_JOB.replace(
+                "\"duration\":\"5\"",
+                &format!(
+                    "\"duration\":\"5\",\"nested\":[{{\"{key}\":\"550e8400-e29b-41d4-a716-446655440000\"}}]"
+                ),
+            );
+            assert!(
+                JobEnvelope::from_json_str(&unsafe_json).is_err(),
+                "accepted {key}"
+            );
+        }
+    }
+
+    #[test]
     fn sanitizer_bounds_string_length_and_container_depth() {
         let oversized = BASELINE_JOB.replace(
             "\"duration\":\"5\"",

@@ -32,9 +32,12 @@ and drop-guard cleanup. Cargo resolution and verification were offline and locke
   scalar types, and mismatches fail before a plan exists.
 - Sanitization is bounded to 16 KiB, depth 8, 32 container members, 1,024-byte
   ASCII strings, and three recursive decode rounds. It recursively scans nested
-  maps/arrays and bounded percent/Base64 decodings. It rejects control, non-ASCII,
-  confusable and zero-width text; secret-shaped keys/values; broad tenant,
-  directory, application, client, service-principal, and object identity keys;
+  maps/arrays, bounded percent/Base64 decodings, and bounded Base64 candidates
+  following `_`, `:`, and other safe delimiters. Plausible marked/delimited
+  candidates fail closed when malformed or non-UTF8, while valid decodings are
+  scanned recursively. It rejects control, non-ASCII, confusable and zero-width
+  text; secret-shaped keys/values; broad tenant, directory, application, client,
+  service-principal, object identity, `oid`, `tid`, and `principal_id` keys;
   and textual, mapped, percent-encoded, decimal, or hexadecimal non-loopback IPs.
 - `NormalizedPlan`, `SanitizedValue`, and `PlanFingerprint` retain private
   construction. Fingerprints use `event-journal::payload_digest`, the repository's
@@ -50,10 +53,11 @@ and drop-guard cleanup. Cargo resolution and verification were offline and locke
   `jobs`, and absence of job-table write privileges on that same connection. It
   queries only `test_long_sleep` rows with `status='pending'`, ordered by
   `created_at ASC, id ASC`, then rolls back.
-- Disposable PostgreSQL runs with `log_statement=all`. Tests inspect the server's
-  observer-role/application logs, prove BEGIN/verification SELECT/job SELECT/
-  ROLLBACK share one backend PID, and reject any other observer statement,
-  `FOR UPDATE`, or advisory-lock call. All advisory functions are explicitly
+- Disposable PostgreSQL runs with `log_statement=all`. Tests take a log boundary
+  after setup, parse generic `statement:` and `execute <name>:` records plus the
+  SQLx parameter detail, and require the exact ordered BEGIN/verification SELECT/
+  pending-job SELECT/ROLLBACK sequence on one backend PID. Unknown records, extra
+  SQL, `FOR UPDATE`, and advisory-lock calls fail closed. All advisory functions are
   revoked from `PUBLIC` and the observer role; catalog privilege checks and an
   attempted `pg_try_advisory_lock` both prove denial.
 - Observe production code has only a borrowed `PgConnection` capability and no
@@ -96,19 +100,34 @@ These round-one cycles extend the original RED/GREEN coverage for duplicate
 keys, secret/identity/IP rejection, private construction, canonical hashing,
 manifest self-consistency, and redacted rejection output.
 
+## Round-two TDD evidence
+
+- The supplied `b64_...` secret, `x_...` IPv4, and `base64:...` IPv6 probes were
+  added first. RED accepted the prefixed Base64 secret. GREEN scans bounded
+  delimiter candidates, recurses through a double-encoded secret, and rejects
+  explicitly marked malformed and non-UTF8 candidates without changing the
+  legitimate baseline job ID, path, duration, fixture, or fingerprint.
+- Nested `oid`, `tid`, and `principal_id` UUID tests were added first. RED
+  accepted `oid`; GREEN added the short identity aliases to recursive key checks.
+- A generic prepared-execute/unknown-record/extra-SELECT parser probe was added
+  before the parser existed and failed to compile. GREEN introduced a fail-closed
+  parser. The live PostgreSQL test then passed using the isolated post-setup log
+  slice, SQLx's actual execute and parameter-detail records, exact step order,
+  and a single backend PID.
+
 ## Final verification
 
 Fresh commands completed successfully:
 
 ```text
 cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p api-compat
-# 13 unit tests + 2 compile-fail doc tests passed; 0 failed
+# 15 unit tests + 2 compile-fail doc tests passed; 0 failed
 
 cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service observe -- --test-threads=1
-# 8 observe-filtered tests passed; 0 failed
+# 9 observe-filtered tests passed; 0 failed
 
 cargo test --offline --locked --manifest-path rust-controller/Cargo.toml --workspace --all-features --no-fail-fast -- --test-threads=1
-# 128 runtime tests + 6 compile-fail doc tests passed; 0 failed
+# 131 runtime tests + 6 compile-fail doc tests passed; 0 failed
 
 cargo clippy --offline --locked --manifest-path rust-controller/Cargo.toml --workspace --all-targets --all-features -- -D warnings
 # passed with warnings denied

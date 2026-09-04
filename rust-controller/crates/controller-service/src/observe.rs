@@ -86,6 +86,116 @@ pub(crate) async fn run(database_url: &str) -> Result<String> {
 }
 
 #[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ObserverStep {
+    BeginReadOnly,
+    VerifyReadOnly,
+    ReadPendingJob,
+    Rollback,
+}
+
+#[cfg(test)]
+#[derive(Debug, Eq, PartialEq)]
+struct ObserverTrace {
+    backend_pid: String,
+    steps: Vec<ObserverStep>,
+}
+
+#[cfg(test)]
+fn parse_observer_trace(logs: &str) -> std::result::Result<ObserverTrace, String> {
+    const IDENTITY: &str = "observer_login task7_observe";
+    let expected_steps = [
+        ObserverStep::BeginReadOnly,
+        ObserverStep::VerifyReadOnly,
+        ObserverStep::ReadPendingJob,
+        ObserverStep::Rollback,
+    ];
+    let mut statements: Vec<(String, ObserverStep)> = Vec::new();
+    let mut parameter_detail = false;
+
+    for line in logs.lines().filter(|line| line.contains(IDENTITY)) {
+        let (prefix, record) = line
+            .split_once(&format!("] {IDENTITY} "))
+            .ok_or_else(|| format!("unrecognized observer log prefix: {line}"))?;
+        let backend_pid = prefix
+            .rsplit_once('[')
+            .map(|parts| parts.1)
+            .filter(|pid| !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()))
+            .ok_or_else(|| format!("invalid observer backend PID: {line}"))?;
+        let record = record.trim_start();
+
+        if let Some(detail) = record.strip_prefix("DETAIL:") {
+            let detail = detail.trim_start();
+            if statements.last().map(|entry| entry.1) != Some(ObserverStep::ReadPendingJob)
+                || detail != "parameters: $1 = 'test_long_sleep'"
+                || statements.last().map(|entry| entry.0.as_str()) != Some(backend_pid)
+            {
+                return Err(format!("unexpected observer detail record: {line}"));
+            }
+            parameter_detail = true;
+            continue;
+        }
+
+        let payload = record
+            .strip_prefix("LOG:")
+            .map(str::trim_start)
+            .ok_or_else(|| format!("unrecognized observer log record: {line}"))?;
+        let sql = if let Some(sql) = payload.strip_prefix("statement:") {
+            sql.trim_start()
+        } else if let Some(execute) = payload.strip_prefix("execute ") {
+            let (name, sql) = execute
+                .split_once(": ")
+                .ok_or_else(|| format!("malformed prepared execute record: {line}"))?;
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            {
+                return Err(format!("invalid prepared statement name: {line}"));
+            }
+            sql
+        } else {
+            return Err(format!("unknown observer LOG payload: {line}"));
+        };
+
+        let normalized = normalize_logged_sql(sql);
+        let step = if normalized == normalize_logged_sql(BEGIN_READ_ONLY_SQL) {
+            ObserverStep::BeginReadOnly
+        } else if normalized == normalize_logged_sql(VERIFY_READ_ONLY_SQL) {
+            ObserverStep::VerifyReadOnly
+        } else if normalized == normalize_logged_sql(OBSERVE_JOB_SQL) {
+            ObserverStep::ReadPendingJob
+        } else if normalized == "ROLLBACK" {
+            ObserverStep::Rollback
+        } else {
+            return Err(format!("unexpected observer SQL: {normalized}"));
+        };
+        statements.push((backend_pid.to_owned(), step));
+    }
+
+    let steps = statements.iter().map(|entry| entry.1).collect::<Vec<_>>();
+    if steps != expected_steps || !parameter_detail {
+        return Err(format!(
+            "observer trace did not match the exact transaction sequence: {steps:?}"
+        ));
+    }
+    let backend_pid = statements
+        .first()
+        .map(|entry| entry.0.clone())
+        .ok_or_else(|| "observer trace contained no statements".to_owned())?;
+    if statements.iter().any(|entry| entry.0 != backend_pid) {
+        return Err("observer trace used more than one backend PID".to_owned());
+    }
+
+    Ok(ObserverTrace { backend_pid, steps })
+}
+
+#[cfg(test)]
+fn normalize_logged_sql(sql: &str) -> String {
+    sql.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
 mod tests {
     use std::{
         process::{Command, Stdio},
@@ -94,7 +204,10 @@ mod tests {
 
     use sqlx::{PgPool, postgres::PgPoolOptions};
 
-    use super::observe_once;
+    use super::{
+        BEGIN_READ_ONLY_SQL, OBSERVE_JOB_SQL, ObserverStep, VERIFY_READ_ONLY_SQL, observe_once,
+        parse_observer_trace,
+    };
 
     struct PostgresContainer {
         id: String,
@@ -289,6 +402,7 @@ mod tests {
         .fetch_one(&admin)
         .await
         .unwrap();
+        let log_offset = postgres.logs().len();
         let output = observe_once(&observer).await.unwrap();
 
         let after: String = sqlx::query_scalar(
@@ -318,47 +432,52 @@ mod tests {
             assert!(!output.contains(forbidden));
         }
 
-        let server_statements = postgres
-            .logs()
-            .lines()
-            .filter(|line| line.contains("observer_login task7_observe"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(server_statements.contains("BEGIN TRANSACTION READ ONLY"));
-        assert!(server_statements.contains("transaction_read_only"));
-        assert!(server_statements.contains("status = 'pending'"));
-        assert!(server_statements.contains("ORDER BY created_at ASC, id ASC"));
-        assert!(server_statements.contains("ROLLBACK"));
-        let backend_pids = server_statements
-            .lines()
-            .filter_map(|line| line.split_once('[')?.1.split_once(']').map(|parts| parts.0))
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(backend_pids.len(), 1);
-        for line in server_statements.lines() {
-            let statement = line
-                .split_once("statement: ")
-                .map(|parts| parts.1)
-                .or_else(|| {
-                    line.split_once("execute sqlx_s_")
-                        .and_then(|parts| parts.1.split_once(": ").map(|parts| parts.1))
-                })
-                .unwrap_or("")
-                .trim_start();
-            assert!(
-                statement.is_empty()
-                    || statement.starts_with("BEGIN TRANSACTION READ ONLY")
-                    || statement.starts_with("SELECT ")
-                    || statement.starts_with("ROLLBACK"),
-                "unexpected observer statement: {statement}"
-            );
-            assert!(!statement.contains("pg_advisory"));
-            assert!(!statement.contains("FOR UPDATE"));
-        }
+        let logs = postgres.logs();
+        let trace = parse_observer_trace(&logs[log_offset..]).unwrap();
+        assert!(!trace.backend_pid.is_empty());
+        assert_eq!(
+            trace.steps,
+            [
+                ObserverStep::BeginReadOnly,
+                ObserverStep::VerifyReadOnly,
+                ObserverStep::ReadPendingJob,
+                ObserverStep::Rollback,
+            ]
+        );
 
         let denied_write = sqlx::query("INSERT INTO jobs (id, job_type, playbook, cmd_json, args_json, status) VALUES ('forbidden', 'synthetic_long_sleep', '_test_long_sleep.yml', '[]', '{}', 'pending')")
             .execute(&observer)
             .await;
         assert!(denied_write.is_err());
+    }
+
+    #[test]
+    fn server_log_parser_handles_generic_execute_names_and_fails_closed() {
+        let trace = [
+            format!(
+                "2026-09-04 [42] observer_login task7_observe LOG: execute prepared_a: {BEGIN_READ_ONLY_SQL}"
+            ),
+            format!(
+                "2026-09-04 [42] observer_login task7_observe LOG: execute any_name_2: {VERIFY_READ_ONLY_SQL}"
+            ),
+            format!(
+                "2026-09-04 [42] observer_login task7_observe LOG: execute q3: {OBSERVE_JOB_SQL}"
+            ),
+            "2026-09-04 [42] observer_login task7_observe DETAIL: parameters: $1 = 'test_long_sleep'".to_owned(),
+            "2026-09-04 [42] observer_login task7_observe LOG: statement: ROLLBACK".to_owned(),
+        ]
+        .join("\n");
+        assert!(parse_observer_trace(&trace).is_ok());
+
+        let unknown = format!(
+            "{trace}\n2026-09-04 [42] observer_login task7_observe NOTICE: unrecognized record"
+        );
+        assert!(parse_observer_trace(&unknown).is_err());
+
+        let extra_select = format!(
+            "2026-09-04 [42] observer_login task7_observe LOG: statement: SELECT 1\n{trace}"
+        );
+        assert!(parse_observer_trace(&extra_select).is_err());
     }
 
     #[tokio::test]

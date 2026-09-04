@@ -17,6 +17,7 @@ const MAX_DEPTH: usize = 8;
 const MAX_CONTAINER_ITEMS: usize = 32;
 const MAX_STRING_BYTES: usize = 1024;
 const MAX_DECODE_ROUNDS: usize = 3;
+const MIN_DELIMITED_BASE64_BYTES: usize = 12;
 
 /// A legacy job can only enter through duplicate-aware raw JSON parsing.
 /// Already-collapsed `serde_json::Value` input is deliberately unsupported.
@@ -313,6 +314,7 @@ fn validate_key(key: &str) -> Result<(), JobValidationError> {
             ]
             .iter()
             .any(|pattern| normalized.contains(pattern)))
+        || matches!(normalized.as_str(), "oid" | "tid" | "principalid")
     {
         return Err(JobValidationError::UnsafeKey);
     }
@@ -351,13 +353,7 @@ fn validate_decoded(value: &str, round: usize) -> Result<(), JobValidationError>
         validate_ascii(&decoded)?;
         validate_decoded(&decoded, round + 1)?;
     }
-    if looks_like_base64(value)
-        && let Some(decoded) = decode_base64(value)
-        && let Ok(decoded) = String::from_utf8(decoded)
-    {
-        validate_ascii(&decoded)?;
-        validate_decoded(&decoded, round + 1)?;
-    }
+    validate_base64_candidates(value, round)?;
     Ok(())
 }
 
@@ -386,6 +382,70 @@ fn looks_like_base64(value: &str) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'-' | b'_' | b'=')
         })
+}
+
+fn validate_base64_candidates(value: &str, round: usize) -> Result<(), JobValidationError> {
+    for marker in ["b64_", "base64:", "x_"] {
+        let mut remainder = value;
+        while let Some(index) = remainder.find(marker) {
+            let tail = &remainder[index + marker.len()..];
+            let candidate = base64_prefix(tail);
+            if candidate.is_empty() {
+                return Err(JobValidationError::UnsafeEncoding);
+            }
+            validate_base64_candidate(candidate, round)?;
+            remainder = &tail[candidate.len()..];
+        }
+    }
+
+    for (index, character) in value.char_indices() {
+        if is_base64_delimiter(character) {
+            let candidate = base64_delimited_prefix(&value[index + character.len_utf8()..]);
+            if candidate.len() >= MIN_DELIMITED_BASE64_BYTES {
+                validate_base64_candidate(candidate, round)?;
+            }
+        }
+    }
+
+    if looks_like_base64(value)
+        && let Some(decoded) = decode_base64(value)
+        && let Ok(decoded) = String::from_utf8(decoded)
+    {
+        validate_ascii(&decoded)?;
+        validate_decoded(&decoded, round + 1)?;
+    }
+    Ok(())
+}
+
+fn base64_prefix(value: &str) -> &str {
+    value
+        .find(|character: char| !is_base64_byte(character))
+        .map_or(value, |index| &value[..index])
+}
+
+fn base64_delimited_prefix(value: &str) -> &str {
+    value
+        .find(|character| is_base64_delimiter(character) || !is_base64_byte(character))
+        .map_or(value, |index| &value[..index])
+}
+
+fn is_base64_byte(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '+' | '/' | '-' | '_' | '=')
+}
+
+fn is_base64_delimiter(character: char) -> bool {
+    character.is_ascii_whitespace()
+        || matches!(character, '_' | ':' | '.' | '/' | ',' | ';' | '|' | '-')
+}
+
+fn validate_base64_candidate(candidate: &str, round: usize) -> Result<(), JobValidationError> {
+    if candidate.len() > MAX_STRING_BYTES {
+        return Err(JobValidationError::InvalidCharacters);
+    }
+    let decoded = decode_base64(candidate).ok_or(JobValidationError::UnsafeEncoding)?;
+    let decoded = String::from_utf8(decoded).map_err(|_| JobValidationError::UnsafeEncoding)?;
+    validate_ascii(&decoded)?;
+    validate_decoded(&decoded, round + 1)
 }
 
 fn decode_base64(value: &str) -> Option<Vec<u8>> {
