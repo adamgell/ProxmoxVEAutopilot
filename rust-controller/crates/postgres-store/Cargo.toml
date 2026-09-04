@@ -1,0 +1,21 @@
+[package]
+name = "postgres-store"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[[test]]
+name = "postgres"
+path = "tests/postgres.rs"
+
+[dependencies]
+chrono.workspace = true
+controller-domain = { path = "../controller-domain" }
+event-journal = { path = "../event-journal" }
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
