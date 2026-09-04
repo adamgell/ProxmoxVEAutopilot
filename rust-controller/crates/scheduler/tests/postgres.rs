@@ -600,10 +600,26 @@ async fn missing_authority_fences_every_existing_lease_operation() {
         .unwrap()
         .unwrap();
     fixture.expire(operation_id).await;
+    // Simulate catastrophic administrator corruption while retaining the
+    // fail-closed scheduler proof; normal SQL deletion is tested as forbidden.
+    sqlx::query(
+        "ALTER TABLE rust_controller.orchestration_authority \
+         DISABLE TRIGGER trg_orchestration_authority_no_delete",
+    )
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
     sqlx::query("DELETE FROM rust_controller.orchestration_authority")
         .execute(&fixture.pool)
         .await
         .unwrap();
+    sqlx::query(
+        "ALTER TABLE rust_controller.orchestration_authority \
+         ENABLE TRIGGER trg_orchestration_authority_no_delete",
+    )
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
 
     assert!(matches!(
         scheduler.heartbeat(&grant).await,
@@ -962,6 +978,134 @@ async fn authority_generation_cannot_aba_back_to_an_old_grant() {
             actual: 7
         })
     ));
+}
+
+#[tokio::test]
+async fn authority_cannot_be_deleted_and_rebootstrapped_to_reauthorize_an_old_grant() {
+    // Break caught: update-only monotonicity can be bypassed by deleting the
+    // singleton and inserting the old executor/generation again.
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 7).await;
+    fixture
+        .create_operation("authority-delete-aba", WorkflowKind::SyntheticLongSleep)
+        .await;
+    let old = fixture.scheduler("worker-a", ExecutorKind::Rust, 7);
+    let grant = old
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    old.start(&grant).await.unwrap();
+    old.transition_authority(ExecutorKind::Python, "test:delete-aba-cutover")
+        .await
+        .unwrap();
+
+    let deletion =
+        sqlx::query("DELETE FROM rust_controller.orchestration_authority WHERE singleton_key = 1")
+            .execute(&fixture.pool)
+            .await;
+    let rebootstrap = sqlx::query(
+        "INSERT INTO rust_controller.orchestration_authority \
+         (singleton_key, executor_kind, generation, change_reference) \
+         VALUES (1, 'rust', 7, 'test:delete-aba-rebootstrap')",
+    )
+    .execute(&fixture.pool)
+    .await;
+
+    let heartbeat = old.heartbeat(&grant).await;
+    let finalization = old.finalize(&grant, ExecutionState::Satisfied).await;
+    assert!(matches!(
+        heartbeat,
+        Err(SchedulerError::StaleAuthority {
+            expected: 8,
+            actual: 7
+        })
+    ));
+    assert!(matches!(
+        finalization,
+        Err(SchedulerError::StaleAuthority {
+            expected: 8,
+            actual: 7
+        })
+    ));
+    assert!(deletion.is_err());
+    assert!(rebootstrap.is_err());
+}
+
+#[tokio::test]
+async fn concurrent_authority_transitions_serialize_with_one_domain_stale_loser() {
+    // Break caught: two shared-lock readers can both try to upgrade the same
+    // authority row and make PostgreSQL choose a raw deadlock loser.
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 7).await;
+    let dsn = fixture._postgres.dsn();
+    let left = Scheduler::new(
+        PgStore::new(
+            PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&dsn)
+                .await
+                .unwrap(),
+        ),
+        ExecutorKind::Rust,
+        7,
+        "authority-left",
+    )
+    .unwrap();
+    let right = Scheduler::new(
+        PgStore::new(
+            PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&dsn)
+                .await
+                .unwrap(),
+        ),
+        ExecutorKind::Rust,
+        7,
+        "authority-right",
+    )
+    .unwrap();
+
+    let mut shared_blocker = fixture.pool.begin().await.unwrap();
+    sqlx::query(
+        "SELECT singleton_key FROM rust_controller.orchestration_authority \
+         WHERE singleton_key = 1 FOR SHARE",
+    )
+    .execute(&mut *shared_blocker)
+    .await
+    .unwrap();
+    let left_task = tokio::spawn(async move {
+        left.transition_authority(ExecutorKind::Python, "test:concurrent-left")
+            .await
+    });
+    let right_task = tokio::spawn(async move {
+        right
+            .transition_authority(ExecutorKind::Python, "test:concurrent-right")
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    shared_blocker.commit().await.unwrap();
+
+    let (left_result, right_result) = tokio::time::timeout(Duration::from_secs(5), async {
+        (left_task.await.unwrap(), right_task.await.unwrap())
+    })
+    .await
+    .expect("authority transitions must serialize without deadlock timeout");
+    let results = [left_result, right_result];
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(
+                result,
+                Err(SchedulerError::StaleAuthority {
+                    expected: 8,
+                    actual: 7
+                })
+            ))
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]

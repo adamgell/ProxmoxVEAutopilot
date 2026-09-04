@@ -2,16 +2,17 @@
 
 ## Scope and authority
 
-Implemented Task 5 and its round-one review corrections only in the isolated
+Implemented Task 5 and its two review corrections only in the isolated
 `codex/rust-controller-design` worktree, based on `b3048ce`. The original Task
 5 implementation is `5aca6e2`; the review correction is the subsequent
-`fix: close scheduler fencing gaps` commit.
+`fix: close scheduler fencing gaps` commit, followed by
+`fix: make scheduler authority monotonic`.
 
 Repository MCP preflight was healthy, but the September 4 Rust-controller plan
 and spec were not indexed there. The checked-out Task 5 brief, full plan,
 approved authority/scheduler/lease spec sections, progress ledger, Task 4
-report/review, round-one Task 5 review, and existing domain/journal/store APIs
-were therefore the implementation authority.
+report/review, both Task 5 reviews, and existing domain/journal/store APIs were
+therefore the implementation authority.
 
 No production, PVE, controller, network, Compose deployment, Ansible, Windows,
 Graph, Entra, or tenant action was performed. PostgreSQL tests used only the
@@ -60,6 +61,25 @@ Review corrections followed focused test-first cycles:
 All mutations were restored before final verification. The restored focused
 ABA, overflow, migration-upgrade, and public-pool compile-fail tests passed.
 
+## Round-two review RED evidence
+
+Two focused tests reproduced both remaining authority defects before the fix:
+
+- `authority_cannot_be_deleted_and_rebootstrapped_to_reauthorize_an_old_grant`
+  deleted the Python generation-8 singleton, reinserted Rust generation 7, and
+  then observed the old running grant heartbeat successfully instead of
+  receiving `StaleAuthority` from both heartbeat and finalization.
+- `concurrent_authority_transitions_serialize_with_one_domain_stale_loser`
+  held a compatible shared blocker until two generation-7 transitions had both
+  reached the update boundary. PostgreSQL chose a raw deadlock loser, so the
+  test observed zero controlled `StaleAuthority` results instead of exactly one.
+
+After the database removal fence and initial exclusive transition lock were
+implemented, both tests passed. The original missing-authority test remains: it
+now simulates catastrophic superuser corruption by temporarily disabling the
+delete trigger, and proves every scheduler operation still fails closed if the
+singleton is administratively removed outside normal database rules.
+
 ## Final behavior
 
 The scheduler/store boundary now provides:
@@ -78,8 +98,13 @@ The scheduler/store boundary now provides:
   authority-fenced and atomically removes the lease;
 - a database-enforced generation transition that advances exactly once and a
   typed transition API whose SQL uses `generation = generation + 1`; generation
-  `7 -> 8 -> 9` cannot be rewritten to 7, so the old scheduler and grant remain
+  `7 -> 8 -> 9` cannot be rewritten to 7, and the initialized singleton cannot
+  be deleted or truncated and reinserted, so an old scheduler and grant remain
   stale;
+- authority transition acquires `FOR UPDATE` initially. Concurrent transitions
+  serialize; after the winner commits, the waiter rereads generation 8 under
+  lock and returns the controlled `StaleAuthority { expected: 8, actual: 7 }`
+  domain error instead of attempting a shared-to-exclusive lock upgrade;
 - bounded 32-row reaping serialized by a transaction-scoped advisory lock. The
   candidate query locks operation rows with `FOR UPDATE ... SKIP LOCKED` before
   lease/attempt rows, preserving authority-to-operation-to-lease lock order and
@@ -102,15 +127,18 @@ transition, and migration behavior was not weakened.
 `0002_scheduler.sql` remains additive. Its UUIDv7 check is `NOT VALID`, so a
 real malformed Task 4 lease row survives upgrade while all new inserts and
 updates are checked and the constraint remains unvalidated. It also installs
-the monotonic authority trigger and scheduler indexes idempotently.
+the monotonic authority update trigger, initialized-singleton delete/truncate
+guards, and scheduler indexes idempotently.
 
 ## Adversarial proof
 
-The final scheduler suite has 20 PostgreSQL tests. In addition to the original
+The final scheduler suite has 22 PostgreSQL tests. In addition to the original
 proof, it covers atomic start durability, direct-finalize prohibition, running
 and waiting continuation, leased cancellation fencing, conservative cancellation
 finalization, database generation ABA rejection, two-connection reaper racing,
-bounded multi-sweep reaping, and controlled cancellation revision overflow.
+bounded multi-sweep reaping, controlled cancellation revision overflow,
+delete/reinsert ABA fencing, and deterministic concurrent authority transition
+serialization.
 
 The PostgreSQL store suite has 21 tests, including the explicit sequence
 `0001_foundation.sql -> malformed legacy Task 4 lease -> 0002_scheduler.sql`.
@@ -123,13 +151,13 @@ Commands and results:
 
 ```text
 cargo test --offline --locked -p scheduler --test postgres -- --test-threads=1
-# 20 passed, 0 failed
+# 22 passed, 0 failed
 
 cargo test --offline --locked -p postgres-store --test postgres -- --test-threads=1
 # 21 passed, 0 failed
 
 cargo test --offline --locked --workspace -- --test-threads=1
-# 78 runtime tests + 4 compile-fail doc tests passed, 0 failed
+# 80 runtime tests + 4 compile-fail doc tests passed, 0 failed
 
 cargo clippy --offline --locked --workspace --all-targets -- -D warnings
 # passed
@@ -144,8 +172,11 @@ container. No live deployment or infrastructure acceptance claim is made.
 
 ## Concerns and gates
 
-No blocking Task 5 concern remains. The first authority row is still an
-explicit bootstrap concern; once present, database and typed transition rules
-prevent generation reuse. Production authority cutover, disposition of active
-work, adapter mutation, deployment, and PVE validation remain later approved
-tasks and were not attempted here.
+No blocking Task 5 concern remains. A legitimate first authority insert remains
+allowed as the explicit bootstrap boundary. Once that singleton exists,
+ordinary SQL cannot delete or truncate it, and every authority update must
+advance the generation exactly once. Even catastrophic superuser trigger
+disablement/removal leaves the scheduler fail-closed on a missing singleton.
+Production bootstrap/cutover, disposition of active work, adapter mutation,
+deployment, and PVE validation remain later approved tasks and were not
+attempted here.

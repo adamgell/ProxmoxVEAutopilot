@@ -205,7 +205,7 @@ impl Scheduler {
             return Err(SchedulerError::InvalidChangeReference);
         }
         let mut transaction = self.store.pool().begin().await?;
-        self.lock_authority(&mut transaction).await?;
+        self.lock_authority_for_update(&mut transaction).await?;
         let row: Option<(String, i64)> = sqlx::query_as(
             "UPDATE rust_controller.orchestration_authority \
              SET executor_kind = $1, generation = generation + 1, \
@@ -583,6 +583,33 @@ impl Scheduler {
             "SELECT executor_kind, generation \
              FROM rust_controller.orchestration_authority \
              WHERE singleton_key = 1 FOR SHARE",
+        )
+        .fetch_optional(&mut **transaction)
+        .await?;
+        let snapshot = decode_authority(row)?;
+        if snapshot.generation() != self.generation {
+            return Err(SchedulerError::StaleAuthority {
+                expected: snapshot.generation(),
+                actual: self.generation,
+            });
+        }
+        if snapshot.executor_kind() != self.executor_kind {
+            return Err(SchedulerError::StaleExecutor {
+                expected: snapshot.executor_kind(),
+                actual: self.executor_kind,
+            });
+        }
+        Ok(snapshot)
+    }
+
+    async fn lock_authority_for_update(
+        &self,
+        transaction: &mut Transaction<'_, Postgres>,
+    ) -> Result<AuthoritySnapshot, SchedulerError> {
+        let row: Option<(String, i64)> = sqlx::query_as(
+            "SELECT executor_kind, generation \
+             FROM rust_controller.orchestration_authority \
+             WHERE singleton_key = 1 FOR UPDATE",
         )
         .fetch_optional(&mut **transaction)
         .await?;
