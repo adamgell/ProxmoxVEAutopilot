@@ -1493,3 +1493,125 @@ async fn outbox_claim_persists_database_clock_expiry() {
     assert!(ttl >= chrono::Duration::seconds(29));
     assert!(ttl <= chrono::Duration::seconds(31));
 }
+
+#[tokio::test]
+async fn scheduler_migration_preserves_legacy_token_and_enforces_new_rows_and_updates() {
+    // Proof gap closed: the Task 5 migration must apply after a real Task 4
+    // schema containing a malformed lease, retain that row under NOT VALID,
+    // and still reject newly inserted or modified malformed capabilities.
+    let postgres = PostgresContainer::start().await;
+    let pool = postgres.wait_for_pool().await;
+    sqlx::raw_sql(include_str!("../migrations/0001_foundation.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let operation_id = "018f0f7e-7b7a-7cc0-8c1e-000000000071";
+    let attempt_id = "018f0f7e-7b7a-7cc0-8c1e-000000000072";
+    sqlx::query(
+        "INSERT INTO rust_controller.operations \
+         (operation_id, workflow_kind, run_id, operation_key, contract_version, state, revision) \
+         VALUES ($1::uuid, 'synthetic_long_sleep', \
+                 '550e8400-e29b-41d4-a716-446655440000'::uuid, \
+                 'legacy-lease', 1, 'leased', 0)",
+    )
+    .bind(operation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO rust_controller.attempts \
+         (attempt_id, operation_id, attempt_number, state) \
+         VALUES ($1::uuid, $2::uuid, 1, 'leased')",
+    )
+    .bind(attempt_id)
+    .bind(operation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO rust_controller.worker_leases \
+         (operation_id, attempt_id, executor_kind, generation, worker_id, lease_token) \
+         VALUES ($1::uuid, $2::uuid, 'rust', 7, 'legacy-worker', 'legacy-malformed')",
+    )
+    .bind(operation_id)
+    .bind(attempt_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::raw_sql(include_str!("../migrations/0002_scheduler.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let legacy_token: String = sqlx::query_scalar(
+        "SELECT lease_token FROM rust_controller.worker_leases WHERE operation_id = $1::uuid",
+    )
+    .bind(operation_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let validated: bool = sqlx::query_scalar(
+        "SELECT convalidated FROM pg_constraint \
+         WHERE conname = 'worker_leases_lease_token_uuid_v7' \
+           AND conrelid = 'rust_controller.worker_leases'::regclass",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(legacy_token, "legacy-malformed");
+    assert!(!validated);
+
+    let new_operation_id = "018f0f7e-7b7a-7cc0-8c1e-000000000073";
+    let new_attempt_id = "018f0f7e-7b7a-7cc0-8c1e-000000000074";
+    sqlx::query(
+        "INSERT INTO rust_controller.operations \
+         (operation_id, workflow_kind, run_id, operation_key, contract_version, state, revision) \
+         VALUES ($1::uuid, 'synthetic_long_sleep', \
+                 '550e8400-e29b-41d4-a716-446655440001'::uuid, \
+                 'new-lease', 1, 'leased', 0)",
+    )
+    .bind(new_operation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO rust_controller.attempts \
+         (attempt_id, operation_id, attempt_number, state) \
+         VALUES ($1::uuid, $2::uuid, 1, 'leased')",
+    )
+    .bind(new_attempt_id)
+    .bind(new_operation_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let invalid_insert = sqlx::query(
+        "INSERT INTO rust_controller.worker_leases \
+         (operation_id, attempt_id, executor_kind, generation, worker_id, lease_token) \
+         VALUES ($1::uuid, $2::uuid, 'rust', 8, 'new-worker', 'new-malformed')",
+    )
+    .bind(new_operation_id)
+    .bind(new_attempt_id)
+    .execute(&pool)
+    .await;
+    assert!(invalid_insert.is_err());
+    sqlx::query(
+        "INSERT INTO rust_controller.worker_leases \
+         (operation_id, attempt_id, executor_kind, generation, worker_id, lease_token) \
+         VALUES ($1::uuid, $2::uuid, 'rust', 8, 'new-worker', \
+                 '018f0f7e-7b7a-7cc0-8c1e-000000000075')",
+    )
+    .bind(new_operation_id)
+    .bind(new_attempt_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let invalid_update = sqlx::query(
+        "UPDATE rust_controller.worker_leases SET lease_token = 'still-malformed' \
+         WHERE operation_id = $1::uuid",
+    )
+    .bind(operation_id)
+    .execute(&pool)
+    .await;
+    assert!(invalid_update.is_err());
+}

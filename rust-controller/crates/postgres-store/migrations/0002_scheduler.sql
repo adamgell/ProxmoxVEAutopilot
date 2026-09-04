@@ -25,3 +25,33 @@ CREATE INDEX IF NOT EXISTS idx_operations_scheduler_pending
 
 CREATE INDEX IF NOT EXISTS idx_worker_leases_expiry
     ON rust_controller.worker_leases (lease_expires_at, operation_id);
+
+CREATE OR REPLACE FUNCTION rust_controller.enforce_authority_generation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.generation <> OLD.generation + 1 THEN
+        RAISE EXCEPTION 'authority generation must advance exactly once from %', OLD.generation
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgrelid = 'rust_controller.orchestration_authority'::regclass
+          AND tgname = 'trg_orchestration_authority_generation'
+          AND NOT tgisinternal
+    ) THEN
+        CREATE TRIGGER trg_orchestration_authority_generation
+            BEFORE UPDATE ON rust_controller.orchestration_authority
+            FOR EACH ROW
+            EXECUTE FUNCTION rust_controller.enforce_authority_generation();
+    END IF;
+END
+$$;

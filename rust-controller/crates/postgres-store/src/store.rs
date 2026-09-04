@@ -127,8 +127,7 @@ impl PgStore {
         Self { pool }
     }
 
-    #[must_use]
-    pub const fn pool(&self) -> &PgPool {
+    pub(crate) const fn pool(&self) -> &PgPool {
         &self.pool
     }
 

@@ -669,6 +669,10 @@ async fn claim_heartbeat_and_finalize_keep_database_timing_and_durable_state_ato
     assert!(!debug.contains(&grant.lease_token().to_string()));
     assert!(debug.contains("<redacted>"));
 
+    assert_eq!(
+        scheduler.start(&grant).await.unwrap(),
+        ExecutionState::Running
+    );
     let renewed = scheduler.heartbeat(&grant).await.unwrap();
     assert!(*renewed.heartbeat_at() >= *grant.heartbeat_at());
     assert!(*renewed.lease_expires_at() >= *grant.lease_expires_at());
@@ -712,13 +716,367 @@ async fn claim_heartbeat_and_finalize_keep_database_timing_and_durable_state_ato
         durable,
         (
             "satisfied".to_owned(),
-            2,
+            4,
             "satisfied".to_owned(),
-            2,
+            4,
             "satisfied".to_owned(),
             0,
-            2,
-            2,
+            4,
+            4,
         )
     );
+}
+
+#[tokio::test]
+async fn start_atomically_records_mutation_boundary_before_execution() {
+    // Break caught: an adapter can mutate while the durable operation is still
+    // safely reapable as an unstarted lease.
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 7).await;
+    let operation_id = fixture
+        .create_operation("atomic-start", WorkflowKind::SyntheticLongSleep)
+        .await;
+    let scheduler = fixture.scheduler("worker-a", ExecutorKind::Rust, 7);
+    let grant = scheduler
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        scheduler.start(&grant).await.unwrap(),
+        ExecutionState::Running
+    );
+    let durable: (String, i64, String, i64, String, i64, i64) = sqlx::query_as(
+        "SELECT o.state, o.revision, p.state, p.revision, a.state, \
+                (SELECT count(*) FROM rust_controller.journal_events \
+                 WHERE operation_id = o.operation_id AND event_kind = 'attempt_started'), \
+                (SELECT count(*) FROM rust_controller.outbox \
+                 WHERE operation_id = o.operation_id) \
+         FROM rust_controller.operations o \
+         JOIN rust_controller.operation_projection p USING (operation_id) \
+         JOIN rust_controller.attempts a USING (operation_id) \
+         WHERE o.operation_id = $1",
+    )
+    .bind(operation_id.as_uuid())
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        durable,
+        (
+            "running".to_owned(),
+            3,
+            "running".to_owned(),
+            3,
+            "running".to_owned(),
+            1,
+            3,
+        )
+    );
+    assert_eq!(
+        scheduler.continuation(&grant).await.unwrap(),
+        ExecutionState::Running
+    );
+}
+
+#[tokio::test]
+async fn waiting_attempt_can_continue_only_with_its_live_capability() {
+    // Break caught: continuation support that only recognizes running work can
+    // strand a mutation after it durably enters a wait/retry boundary.
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 7).await;
+    let operation_id = fixture
+        .create_operation("waiting-continuation", WorkflowKind::SyntheticLongSleep)
+        .await;
+    let scheduler = fixture.scheduler("worker-a", ExecutorKind::Rust, 7);
+    let grant = scheduler
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    scheduler.start(&grant).await.unwrap();
+
+    let payload = serde_json::json!({"state": "waiting"});
+    let waiting = JournalEvent::new(
+        EventId::new(),
+        operation_id,
+        Some(grant.attempt_id()),
+        4,
+        format!("scheduler:waiting:{:?}", grant.attempt_id()),
+        payload_digest(&payload).unwrap(),
+        EventKind::ExecutionStateChanged(ExecutionState::Waiting),
+        payload,
+        Utc::now(),
+    )
+    .unwrap();
+    fixture.store.append_event(3, &waiting).await.unwrap();
+    sqlx::query(
+        "UPDATE rust_controller.attempts SET state = 'waiting' \
+         WHERE attempt_id = $1 AND operation_id = $2",
+    )
+    .bind(grant.attempt_id().as_uuid())
+    .bind(operation_id.as_uuid())
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        scheduler.continuation(&grant).await.unwrap(),
+        ExecutionState::Waiting
+    );
+    assert_eq!(
+        scheduler.heartbeat(&grant).await.unwrap().attempt_id(),
+        grant.attempt_id()
+    );
+}
+
+#[tokio::test]
+async fn leased_work_cannot_finalize_before_atomic_start() {
+    // Break caught: accepting terminal state directly from leased lets a worker
+    // bypass the only durable proof that mutation was authorized to begin.
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 7).await;
+    let operation_id = fixture
+        .create_operation("leased-finalize", WorkflowKind::SyntheticLongSleep)
+        .await;
+    let scheduler = fixture.scheduler("worker-a", ExecutorKind::Rust, 7);
+    let grant = scheduler
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(matches!(
+        scheduler.finalize(&grant, ExecutionState::Satisfied).await,
+        Err(SchedulerError::NotStarted)
+    ));
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM rust_controller.operations WHERE operation_id = $1")
+            .bind(operation_id.as_uuid())
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(state, "leased");
+}
+
+#[tokio::test]
+async fn cancellation_fences_start_heartbeat_continuation_and_terminal_result() {
+    // Break caught: a cancellation flag that does not gate capability checks
+    // permits another mutation or lease renewal after the operator cancels.
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 7).await;
+    let operation_id = fixture
+        .create_operation("cancel-fence", WorkflowKind::SyntheticLongSleep)
+        .await;
+    let scheduler = fixture.scheduler("worker-a", ExecutorKind::Rust, 7);
+    let grant = scheduler
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let heartbeat_before: chrono::DateTime<Utc> = sqlx::query_scalar(
+        "SELECT heartbeat_at FROM rust_controller.worker_leases WHERE operation_id = $1",
+    )
+    .bind(operation_id.as_uuid())
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        scheduler.request_cancel(operation_id).await.unwrap(),
+        ExecutionState::Cancelling
+    );
+    assert!(matches!(
+        scheduler.start(&grant).await,
+        Err(SchedulerError::CancellationRequested)
+    ));
+    assert!(matches!(
+        scheduler.heartbeat(&grant).await,
+        Err(SchedulerError::CancellationRequested)
+    ));
+    assert!(matches!(
+        scheduler.continuation(&grant).await,
+        Err(SchedulerError::CancellationRequested)
+    ));
+    assert!(matches!(
+        scheduler.finalize(&grant, ExecutionState::Satisfied).await,
+        Err(SchedulerError::CancellationRequiresUnknown)
+    ));
+    let heartbeat_after: chrono::DateTime<Utc> = sqlx::query_scalar(
+        "SELECT heartbeat_at FROM rust_controller.worker_leases WHERE operation_id = $1",
+    )
+    .bind(operation_id.as_uuid())
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(heartbeat_after, heartbeat_before);
+    assert_eq!(
+        scheduler
+            .finalize(&grant, ExecutionState::Unknown)
+            .await
+            .unwrap(),
+        ExecutionState::Unknown
+    );
+}
+
+#[tokio::test]
+async fn authority_generation_cannot_aba_back_to_an_old_grant() {
+    // Break caught: a caller-selected authority number can recycle generation
+    // seven and make an old capability appear current again.
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 7).await;
+    fixture
+        .create_operation("authority-aba", WorkflowKind::SyntheticLongSleep)
+        .await;
+    let old = fixture.scheduler("worker-a", ExecutorKind::Rust, 7);
+    let grant = old
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let python = old
+        .transition_authority(ExecutorKind::Python, "test:rust-to-python")
+        .await
+        .unwrap();
+    assert_eq!(python.generation(), 8);
+    let rust = fixture
+        .scheduler("authority-worker", ExecutorKind::Python, 8)
+        .transition_authority(ExecutorKind::Rust, "test:python-to-rust")
+        .await
+        .unwrap();
+    assert_eq!(rust.generation(), 9);
+    let aba = sqlx::query(
+        "UPDATE rust_controller.orchestration_authority \
+         SET generation = 7, changed_at = clock_timestamp(), change_reference = 'test:aba' \
+         WHERE singleton_key = 1",
+    )
+    .execute(&fixture.pool)
+    .await;
+    assert!(aba.is_err());
+    assert!(matches!(
+        old.heartbeat(&grant).await,
+        Err(SchedulerError::StaleAuthority {
+            expected: 9,
+            actual: 7
+        })
+    ));
+}
+
+#[tokio::test]
+async fn concurrent_reapers_serialize_without_double_transition_or_error() {
+    // Break caught: two reapers can select one expired lease before either
+    // locks its operation, causing the loser to fail after the winner deletes it.
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 7).await;
+    let operation_id = fixture
+        .create_operation("reaper-race", WorkflowKind::SyntheticLongSleep)
+        .await;
+    fixture
+        .scheduler("worker-a", ExecutorKind::Rust, 7)
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.expire(operation_id).await;
+    let left = fixture.scheduler("reaper-left", ExecutorKind::Rust, 7);
+    let right = fixture.scheduler("reaper-right", ExecutorKind::Rust, 7);
+
+    let (left_result, right_result) = tokio::join!(left.reap_expired(), right.reap_expired());
+    let summaries = [left_result.unwrap(), right_result.unwrap()];
+    assert_eq!(
+        summaries
+            .iter()
+            .map(|summary| summary.reset_to_pending())
+            .sum::<u64>(),
+        1
+    );
+    let event_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rust_controller.journal_events \
+         WHERE operation_id = $1 AND semantic_key LIKE 'scheduler:lease-expired:%'",
+    )
+    .bind(operation_id.as_uuid())
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(event_count, 1);
+}
+
+#[tokio::test]
+async fn one_reaper_sweep_is_bounded() {
+    // Break caught: an unbounded expiry sweep can hold authority and operation
+    // locks for every stale row in the database.
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 7).await;
+    let scheduler = fixture.scheduler("worker-a", ExecutorKind::Rust, 7);
+    for index in 0..33 {
+        fixture
+            .create_operation(
+                &format!("bounded-reap-{index}"),
+                WorkflowKind::SyntheticLongSleep,
+            )
+            .await;
+        scheduler
+            .claim_next(WorkflowKind::SyntheticLongSleep, 33)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    sqlx::query(
+        "UPDATE rust_controller.worker_leases \
+         SET acquired_at = clock_timestamp() - interval '3 seconds', \
+             heartbeat_at = clock_timestamp() - interval '2 seconds', \
+             lease_expires_at = clock_timestamp() - interval '1 second'",
+    )
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        scheduler.reap_expired().await.unwrap().reset_to_pending(),
+        32
+    );
+    assert_eq!(
+        scheduler.reap_expired().await.unwrap().reset_to_pending(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn cancellation_revision_overflow_is_a_controlled_error() {
+    // Break caught: formatting revision + 1 panics in debug builds at the
+    // persisted bigint boundary instead of rolling back with a typed error.
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 7).await;
+    let operation_id = fixture
+        .create_operation("cancel-overflow", WorkflowKind::SyntheticLongSleep)
+        .await;
+    let scheduler = fixture.scheduler("worker-a", ExecutorKind::Rust, 7);
+    let grant = scheduler
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    scheduler.start(&grant).await.unwrap();
+    sqlx::query("UPDATE rust_controller.operations SET revision = $2 WHERE operation_id = $1")
+        .bind(operation_id.as_uuid())
+        .bind(i64::MAX)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE rust_controller.operation_projection \
+         SET revision = $2 WHERE operation_id = $1",
+    )
+    .bind(operation_id.as_uuid())
+    .bind(i64::MAX)
+    .execute(&fixture.pool)
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        scheduler.request_cancel(operation_id).await,
+        Err(SchedulerError::RevisionOverflow)
+    ));
 }
