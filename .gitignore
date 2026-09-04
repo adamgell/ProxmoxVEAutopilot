@@ -31,3 +31,6 @@ autopilot-agent/artifacts/
 autopilot-proxmox/frontend/node_modules/
 autopilot-proxmox/frontend/dist/
 autopilot-proxmox/frontend/test-results/
+
+# Rust controller build output
+rust-controller/target/
