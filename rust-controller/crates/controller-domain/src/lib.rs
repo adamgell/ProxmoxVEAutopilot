@@ -63,6 +63,65 @@ mod tests {
     }
 
     #[test]
+    fn semantic_operation_key_deserialization_rejects_blank_key_and_zero_version() {
+        let run_id = RunId::new();
+        let blank_key = serde_json::json!({
+            "workflow_kind": "synthetic_long_sleep",
+            "run_id": run_id,
+            "operation_key": " ",
+            "contract_version": 1,
+        });
+        let zero_version = serde_json::json!({
+            "workflow_kind": "synthetic_long_sleep",
+            "run_id": run_id,
+            "operation_key": "run",
+            "contract_version": 0,
+        });
+
+        assert!(serde_json::from_value::<SemanticOperationKey>(blank_key).is_err());
+        assert!(serde_json::from_value::<SemanticOperationKey>(zero_version).is_err());
+    }
+
+    #[test]
+    fn command_envelope_deserialization_rejects_blank_idempotency_key_and_digest() {
+        let semantic_key =
+            SemanticOperationKey::new(WorkflowKind::SyntheticLongSleep, RunId::new(), "run", 1)
+                .unwrap();
+        let blank_idempotency_key = serde_json::json!({
+            "idempotency_key": " ",
+            "semantic_key": semantic_key,
+            "payload_digest": "opaque-digest",
+        });
+        let blank_digest = serde_json::json!({
+            "idempotency_key": "capture-1",
+            "semantic_key": semantic_key,
+            "payload_digest": " ",
+        });
+
+        assert!(serde_json::from_value::<CommandEnvelope>(blank_idempotency_key).is_err());
+        assert!(serde_json::from_value::<CommandEnvelope>(blank_digest).is_err());
+    }
+
+    #[test]
+    fn validated_domain_values_round_trip_through_the_existing_serde_shape() {
+        let envelope = CommandEnvelope::new(
+            "capture-1",
+            SemanticOperationKey::new(WorkflowKind::SyntheticLongSleep, RunId::new(), "run", 1)
+                .unwrap(),
+            "opaque-digest",
+        )
+        .unwrap();
+
+        let encoded = serde_json::to_value(&envelope).unwrap();
+        let decoded = serde_json::from_value::<CommandEnvelope>(encoded).unwrap();
+
+        assert_eq!(decoded, envelope);
+        assert_eq!(decoded.idempotency_key(), "capture-1");
+        assert_eq!(decoded.semantic_key().operation_key(), "run");
+        assert_eq!(decoded.payload_digest(), "opaque-digest");
+    }
+
+    #[test]
     fn state_dimensions_serialize_only_as_their_documented_snake_case_values() {
         let execution = [
             (ExecutionState::Pending, "pending"),
@@ -125,26 +184,24 @@ mod tests {
             "opaque-validated-digest",
         )
         .unwrap();
-        let existing = PersistedCommand {
-            operation_id: OperationId::new(),
-            payload_digest: "opaque-validated-digest".into(),
-        };
+        let existing =
+            PersistedCommand::new(OperationId::new(), "opaque-validated-digest").unwrap();
 
         assert_eq!(
             check_idempotency(Some(&existing), &incoming),
-            IdempotencyDecision::ReturnExisting(existing.operation_id)
+            IdempotencyDecision::ReturnExisting(existing.operation_id())
         );
 
         let conflicting = CommandEnvelope::new(
             "capture-1",
-            incoming.semantic_key.clone(),
+            incoming.semantic_key().clone(),
             "a-different-opaque-digest",
         )
         .unwrap();
         assert_eq!(
             check_idempotency(Some(&existing), &conflicting),
             IdempotencyDecision::Conflict {
-                existing: existing.operation_id
+                existing: existing.operation_id()
             }
         );
     }
@@ -173,6 +230,70 @@ mod tests {
 
     proptest! {
         #[test]
+        fn idempotency_without_an_existing_command_always_accepts(
+            digest in "[a-z0-9]{1,64}"
+        ) {
+            let incoming = CommandEnvelope::new(
+                "capture-1",
+                SemanticOperationKey::new(
+                    WorkflowKind::SyntheticLongSleep,
+                    RunId::new(),
+                    "run",
+                    1,
+                ).unwrap(),
+                digest,
+            ).unwrap();
+
+            prop_assert_eq!(check_idempotency(None, &incoming), IdempotencyDecision::AcceptNew);
+        }
+
+        #[test]
+        fn idempotency_returns_the_stable_operation_for_equal_nonempty_digests(
+            digest in "[a-z0-9]{1,64}"
+        ) {
+            let incoming = CommandEnvelope::new(
+                "capture-1",
+                SemanticOperationKey::new(
+                    WorkflowKind::SyntheticLongSleep,
+                    RunId::new(),
+                    "run",
+                    1,
+                ).unwrap(),
+                &digest,
+            ).unwrap();
+            let existing = PersistedCommand::new(OperationId::new(), digest).unwrap();
+
+            prop_assert_eq!(
+                check_idempotency(Some(&existing), &incoming),
+                IdempotencyDecision::ReturnExisting(existing.operation_id()),
+            );
+        }
+
+        #[test]
+        fn idempotency_conflicts_for_unequal_nonempty_digests(
+            existing_digest in "[a-z0-9]{1,64}",
+            incoming_digest in "[a-z0-9]{1,64}"
+        ) {
+            prop_assume!(existing_digest != incoming_digest);
+            let incoming = CommandEnvelope::new(
+                "capture-1",
+                SemanticOperationKey::new(
+                    WorkflowKind::SyntheticLongSleep,
+                    RunId::new(),
+                    "run",
+                    1,
+                ).unwrap(),
+                incoming_digest,
+            ).unwrap();
+            let existing = PersistedCommand::new(OperationId::new(), existing_digest).unwrap();
+
+            prop_assert_eq!(
+                check_idempotency(Some(&existing), &incoming),
+                IdempotencyDecision::Conflict { existing: existing.operation_id() },
+            );
+        }
+
+        #[test]
         fn deadline_from_running_or_waiting_never_becomes_failed(
             state in prop_oneof![Just(ExecutionState::Running), Just(ExecutionState::Waiting)]
         ) {
@@ -182,7 +303,7 @@ mod tests {
         }
 
         #[test]
-        fn readiness_never_changes_execution_state(
+        fn readiness_history_never_changes_execution_state(
             state in prop_oneof![
                 Just(ExecutionState::Pending), Just(ExecutionState::Leased),
                 Just(ExecutionState::Running), Just(ExecutionState::Waiting),
@@ -190,16 +311,18 @@ mod tests {
                 Just(ExecutionState::Failed), Just(ExecutionState::Blocked),
                 Just(ExecutionState::Unknown), Just(ExecutionState::Conflicted),
             ],
-            milestone in prop_oneof![
+            milestones in proptest::collection::vec(prop_oneof![
                 Just(ReadinessMilestone::VmCreated), Just(ReadinessMilestone::PeRegistered),
                 Just(ReadinessMilestone::OsInstalled), Just(ReadinessMilestone::AgentConnected),
                 Just(ReadinessMilestone::QgaVerified), Just(ReadinessMilestone::VerifiedOobe),
                 Just(ReadinessMilestone::Enrolled), Just(ReadinessMilestone::EspComplete),
                 Just(ReadinessMilestone::UsableEndpoint),
-            ]
+            ], 0..64)
         ) {
             let mut aggregate = OperationAggregate::new(state);
-            aggregate.record_readiness(milestone).unwrap();
+            for milestone in milestones {
+                aggregate.record_readiness(milestone).unwrap();
+            }
             prop_assert_eq!(aggregate.execution_state(), state);
         }
     }

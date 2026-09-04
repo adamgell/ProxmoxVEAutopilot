@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -42,12 +42,22 @@ pub enum WorkflowKind {
     SyntheticLongSleep,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+/// ```compile_fail
+/// use controller_domain::{RunId, SemanticOperationKey, WorkflowKind};
+///
+/// let _ = SemanticOperationKey {
+///     workflow_kind: WorkflowKind::SyntheticLongSleep,
+///     run_id: RunId::new(),
+///     operation_key: String::new(),
+///     contract_version: 0,
+/// };
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize)]
 pub struct SemanticOperationKey {
-    pub workflow_kind: WorkflowKind,
-    pub run_id: RunId,
-    pub operation_key: String,
-    pub contract_version: u16,
+    workflow_kind: WorkflowKind,
+    run_id: RunId,
+    operation_key: String,
+    contract_version: u16,
 }
 
 impl SemanticOperationKey {
@@ -81,6 +91,58 @@ impl SemanticOperationKey {
             return Err(ValidationError::ZeroContractVersion);
         }
         Ok(())
+    }
+
+    #[must_use]
+    pub const fn workflow_kind(&self) -> WorkflowKind {
+        self.workflow_kind
+    }
+
+    #[must_use]
+    pub const fn run_id(&self) -> RunId {
+        self.run_id
+    }
+
+    #[must_use]
+    pub fn operation_key(&self) -> &str {
+        &self.operation_key
+    }
+
+    #[must_use]
+    pub const fn contract_version(&self) -> u16 {
+        self.contract_version
+    }
+}
+
+#[derive(Deserialize)]
+struct SemanticOperationKeyWire {
+    workflow_kind: WorkflowKind,
+    run_id: RunId,
+    operation_key: String,
+    contract_version: u16,
+}
+
+impl TryFrom<SemanticOperationKeyWire> for SemanticOperationKey {
+    type Error = ValidationError;
+
+    fn try_from(value: SemanticOperationKeyWire) -> Result<Self, Self::Error> {
+        Self::new(
+            value.workflow_kind,
+            value.run_id,
+            value.operation_key,
+            value.contract_version,
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for SemanticOperationKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        SemanticOperationKeyWire::deserialize(deserializer)?
+            .try_into()
+            .map_err(de::Error::custom)
     }
 }
 
