@@ -21,6 +21,54 @@ use crate::{
     Volume,
 };
 
+#[async_trait]
+impl crate::PveVisibilityReadPort for ReqwestPveObserver {
+    async fn cluster_visibility(&self) -> Result<crate::ClusterVisibility, PveReadError> {
+        let mut url = self
+            .base_url
+            .endpoint(&["api2", "json", "cluster", "resources"]);
+        url.query_pairs_mut().append_pair("type", "vm");
+        self.request_audit.record_request();
+        let mut request = self.client.get(url);
+        if let Some(token) = &self.token {
+            request = request.header(reqwest::header::AUTHORIZATION, token.header());
+        }
+        let response = request.send().await.map_err(map_reqwest_error)?;
+        match response.status() {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                return Err(PveReadError::Unauthorized);
+            }
+            StatusCode::NOT_FOUND => return Err(PveReadError::NotFound),
+            StatusCode::CONFLICT => return Err(PveReadError::Conflict),
+            status if !status.is_success() => return Err(PveReadError::TransportUnavailable),
+            _ => {}
+        }
+        let body = bounded_visibility_body(response).await?;
+        let observed_at = Utc::now();
+        let envelope: PveEnvelope<serde_json::Value> =
+            serde_json::from_slice(&body).map_err(|_| PveReadError::InvalidResponse)?;
+        crate::ClusterVisibility::from_wire(envelope.data, observed_at)
+    }
+}
+
+async fn bounded_visibility_body(mut response: reqwest::Response) -> Result<Vec<u8>, PveReadError> {
+    const MAX_BYTES: usize = 1_048_576;
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_BYTES as u64)
+    {
+        return Err(PveReadError::InvalidResponse);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(map_reqwest_error)? {
+        if chunk.len() > MAX_BYTES - body.len() {
+            return Err(PveReadError::InvalidResponse);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PveAccessMode {
     Observe,
@@ -94,6 +142,31 @@ impl PveObserverConfig {
     }
 }
 
+/// Once narrowed to visibility, the service cannot call QGA or mutations.
+/// ```compile_fail,E0599
+/// use pve_port::{PveVisibilityReadPort, PveReadPort, NodeName, Vmid};
+/// async fn no_qga(port: &dyn PveVisibilityReadPort, node: &NodeName, vmid: Vmid) {
+///     port.qga_ping(node, vmid).await;
+/// }
+/// ```
+/// ```compile_fail,E0599
+/// use pve_port::{PveVisibilityReadPort, PveMutationPort, CloneRequest};
+/// async fn no_clone(port: &dyn PveVisibilityReadPort, request: &CloneRequest) {
+///     port.clone_vm(request).await;
+/// }
+/// ```
+/// ```compile_fail,E0599
+/// use pve_port::{PveVisibilityReadPort, PveMutationPort, ConfigureRequest};
+/// async fn no_configure(port: &dyn PveVisibilityReadPort, request: &ConfigureRequest) {
+///     port.configure_vm(request).await;
+/// }
+/// ```
+/// ```compile_fail,E0599
+/// use pve_port::{PveVisibilityReadPort, PveMutationPort, StartRequest};
+/// async fn no_start(port: &dyn PveVisibilityReadPort, request: &StartRequest) {
+///     port.start_vm(request).await;
+/// }
+/// ```
 #[derive(Clone)]
 pub struct ReqwestPveObserver {
     token: Option<PveApiToken>,

@@ -137,20 +137,12 @@ pub(crate) struct ValidatedObservationConfig {
 }
 
 impl ValidatedObservationConfig {
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "GET capability construction is added in Task 3")
-    )]
     pub(crate) fn base_url(&self) -> &PveBaseUrl {
         &self.base_url
     }
     pub(crate) fn token_file(&self) -> &Path {
         &self.token_file
     }
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "GET capability construction is added in Task 3")
-    )]
     pub(crate) fn allow_production_reads(&self) -> bool {
         self.allow_production_reads
     }
@@ -210,7 +202,17 @@ fn observation_config_from(
 
 #[cfg(test)]
 pub(crate) fn observation_test_config(path: &Path) -> ValidatedObservationConfig {
-    observation_config_from(&ControllerConfig::local_observe(), |name| match name {
+    observation_test_config_at(path, "http://127.0.0.1:5000")
+}
+
+#[cfg(test)]
+pub(crate) fn observation_test_config_at(
+    path: &Path,
+    base_url: &str,
+) -> ValidatedObservationConfig {
+    let mut config = ControllerConfig::local_observe();
+    config.pve_base_url = base_url.to_owned();
+    observation_config_from(&config, |name| match name {
         "RUST_CONTROLLER_PVE_TRANSPORT" => Some("http-observe".into()),
         "RUST_CONTROLLER_PVE_TOKEN_FILE" => Some(path.as_os_str().to_owned()),
         _ => None,

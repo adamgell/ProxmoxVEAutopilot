@@ -2,6 +2,7 @@ mod config;
 mod health;
 mod observe;
 mod pve_credentials;
+mod pve_observation;
 mod runtime;
 
 // Keep dependency errors out of startup diagnostics. This private category pins
