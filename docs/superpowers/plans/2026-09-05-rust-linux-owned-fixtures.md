@@ -124,7 +124,7 @@ fn database_identity_is_generated_and_bounded() {
     let nonce = "a".repeat(32);
     assert_eq!(database_name("native_test", &nonce).unwrap(),
         format!("lf_native_test_{nonce}"));
-    assert_eq!(database_name("osdeploy_registration_test", &nonce).unwrap().len(), 61);
+    assert_eq!(database_name("osdeploy_registration_test", &nonce).unwrap().len(), 62);
     assert!(database_name("postgres", &nonce).is_err());
     assert!(database_name("native_test", "../foreign").is_err());
 }
