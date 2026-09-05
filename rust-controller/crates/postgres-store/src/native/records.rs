@@ -74,19 +74,7 @@ pub(crate) async fn load(
     } else {
         None
     };
-    let evidence_id:Option<Uuid>=sqlx::query_scalar("SELECT event_id FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='evidence_recorded' ORDER BY aggregate_revision DESC LIMIT 1").bind(operation.as_uuid()).fetch_optional(&mut **tx).await?;
-    // Generic observations may be untyped. They remain journal evidence, but
-    // cannot become a native decision input without validated decoding.
-    let evidence = if let Some(e) = evidence_id {
-        let event = id(e)?;
-        match load_evidence(tx, operation, event).await {
-            Ok((_, facts)) => Some((event, facts)),
-            Err(NativeStoreError::Validation) => None,
-            Err(e) => return Err(e),
-        }
-    } else {
-        None
-    };
+    let evidence = latest_typed_evidence(tx, operation, row.try_get("revision")?).await?;
     let decision = load_decision(tx, operation, &hash).await?;
     Ok(NativeOperationSnapshot {
         operation_id: operation,
@@ -109,6 +97,45 @@ pub(crate) async fn load(
         cancelled: row.try_get("cancelled")?,
     })
 }
+
+async fn latest_typed_evidence(
+    tx: &mut Transaction<'_, Postgres>,
+    operation: OperationId,
+    aggregate_revision: i64,
+) -> Result<Option<(EventId, NativeEvidence)>, NativeStoreError> {
+    let mut before_revision: Option<i64> = None;
+    loop {
+        // Shape filtering only avoids ordinary generic observations; it grants
+        // no authority. Every candidate still passes the complete decoder.
+        // Keyset pages bound memory without hiding valid older typed facts.
+        let candidates: Vec<(Uuid, i64)> = sqlx::query_as(
+            "SELECT event_id, aggregate_revision FROM rust_controller.journal_events \
+             WHERE operation_id = $1 AND event_kind = 'evidence_recorded' \
+               AND aggregate_revision <= $2 \
+               AND ($3::bigint IS NULL OR aggregate_revision < $3) \
+               AND payload ? 'binding' AND payload ? 'plan' \
+             ORDER BY aggregate_revision DESC LIMIT 32",
+        )
+        .bind(operation.as_uuid())
+        .bind(aggregate_revision)
+        .bind(before_revision)
+        .fetch_all(&mut **tx)
+        .await?;
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        for (event, revision) in candidates {
+            before_revision = Some(revision);
+            let event = id(event)?;
+            match load_evidence(tx, operation, event).await {
+                Ok((_, facts)) => return Ok(Some((event, facts))),
+                Err(NativeStoreError::Validation) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
 pub(crate) async fn load_dispatch(
     tx: &mut Transaction<'_, Postgres>,
     operation: OperationId,

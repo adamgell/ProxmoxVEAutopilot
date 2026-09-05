@@ -8,6 +8,77 @@ use serde_json::json;
 use support::*;
 
 #[tokio::test]
+async fn snapshot_retains_latest_typed_evidence_after_generic_observations() {
+    let f = Fixture::new().await;
+    let (ids, grant, _, typed_event, typed_revision) = f.ready().await;
+    let original = f.store.load_native_operation(ids.clone_id()).await.unwrap();
+    let typed_facts = original.evidence().unwrap().1.clone();
+    let mut revision = typed_revision;
+    let mut generic_event = None;
+    // The first observation is ordinary generic JSON. Later native-shaped but
+    // invalid observations cross a decoder page without becoming authority.
+    for index in 0..34 {
+        let payload = if index == 0 {
+            json!({"observation":"ordinary generic evidence"})
+        } else {
+            json!({"binding":{},"plan":{},"observation":index})
+        };
+        let event = JournalEvent::new(
+            EventId::new(),
+            ids.clone_id(),
+            Some(grant.attempt_id()),
+            revision + 1,
+            format!("generic-observation-{index}"),
+            payload_digest(&payload).unwrap(),
+            EventKind::EvidenceRecorded,
+            payload,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        f.store.append_event(revision, &event).await.unwrap();
+        revision += 1;
+        generic_event = Some(event.event_id());
+        if index == 0 || index == 33 {
+            let snapshot = f.other.load_native_operation(ids.clone_id()).await.unwrap();
+            assert_eq!(snapshot.revision(), revision);
+            assert_eq!(
+                snapshot.evidence(),
+                Some(&(typed_event, typed_facts.clone()))
+            );
+            assert_eq!(
+                snapshot
+                    .evidence()
+                    .unwrap()
+                    .1
+                    .facts()
+                    .binding
+                    .evidence_fence(),
+                (typed_revision - 1) as u64
+            );
+            assert_eq!(snapshot.state(), ExecutionState::Running);
+        }
+    }
+    let before = f.counts().await;
+    assert_eq!(
+        f.scheduler()
+            .decide_native(&grant, generic_event.unwrap(), revision)
+            .await,
+        Err(NativeStoreError::Validation)
+    );
+    assert_eq!(f.counts().await, before);
+    let newer_facts = preflight(ids.run_id(), &grant, revision);
+    let newer_event = f
+        .store
+        .record_native_evidence(ids.clone_id(), grant.attempt_id(), revision, &newer_facts)
+        .await
+        .unwrap();
+    let snapshot = f.other.load_native_operation(ids.clone_id()).await.unwrap();
+    assert_eq!(snapshot.revision(), revision + 1);
+    assert_eq!(snapshot.evidence(), Some(&(newer_event, newer_facts)));
+    assert_ne!(newer_event, typed_event);
+}
+
+#[tokio::test]
 async fn command_helper_preserves_validation_before_database_access() {
     use controller_domain::{CommandEnvelope, OperationId, SemanticOperationKey};
     let f = Fixture::new().await;
