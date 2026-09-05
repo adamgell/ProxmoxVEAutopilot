@@ -63,6 +63,28 @@ fn safe_pve_name(value: &str) -> bool {
 
 validated_text!(NodeName, safe_pve_name, "invalid PVE node name");
 validated_text!(StorageName, safe_pve_name, "invalid PVE storage name");
+validated_text!(
+    BridgeName,
+    |value: &str| {
+        !value.is_empty()
+            && value.len() <= 15
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+    },
+    "invalid PVE bridge name"
+);
+validated_text!(
+    NativeVmName,
+    |value: &str| {
+        !value.is_empty()
+            && value.len() <= 63
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    },
+    "invalid native VM name"
+);
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Upid {

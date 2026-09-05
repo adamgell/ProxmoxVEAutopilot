@@ -1,19 +1,27 @@
+mod credentials;
 mod fake;
 mod model;
 mod observer;
+mod preflight;
 
 use async_trait::async_trait;
 use chrono::Duration as ChronoDuration;
 use controller_domain::ObservationHealth;
 
+pub use credentials::{InvalidPveApiToken, PveApiToken};
 pub use fake::{FakePve, PveRequest};
 pub use model::{
-    CloneIntent, EvidenceSource, MacAddress, NodeName, PveBaseUrl, PveEvidence, PveFact,
-    PveFactKind, PveReadError, PveValidationError, QgaStatus, StorageName, TaskState, TaskStatus,
-    Upid, VmConfig, VmUuid, Vmid, Volume,
+    BridgeName, CloneIntent, EvidenceSource, MacAddress, NativeVmName, NodeName, PveBaseUrl,
+    PveEvidence, PveFact, PveFactKind, PveReadError, PveValidationError, QgaStatus, StorageName,
+    TaskState, TaskStatus, Upid, VmConfig, VmUuid, Vmid, Volume,
 };
 pub use observer::{
     PveAccessMode, PveObserverBuildError, PveObserverConfig, PveRequestAudit, ReqwestPveObserver,
+};
+pub use preflight::{
+    BootDisk, BridgeInventory, ClusterVm, ClusterVmInventory, NativeVmConfig, NodeStatus,
+    PowerState, PvePreflightReadPort, StorageStatus, UnsupportedConfig, VmPowerStatus,
+    observe_target_absence, observe_target_absence_with_clock,
 };
 
 #[async_trait]

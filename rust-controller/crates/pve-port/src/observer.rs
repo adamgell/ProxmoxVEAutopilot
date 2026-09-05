@@ -15,8 +15,10 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    MacAddress, NodeName, PveBaseUrl, PveReadError, PveReadPort, QgaStatus, StorageName, TaskState,
-    TaskStatus, Upid, VmConfig, VmUuid, Vmid, Volume,
+    BridgeInventory, ClusterVmInventory, MacAddress, NativeVmConfig, NodeName, NodeStatus,
+    PveApiToken, PveBaseUrl, PvePreflightReadPort, PveReadError, PveReadPort, QgaStatus,
+    StorageName, StorageStatus, TaskState, TaskStatus, Upid, VmConfig, VmPowerStatus, VmUuid, Vmid,
+    Volume,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,6 +49,7 @@ impl PveRequestAudit {
 
 #[derive(Clone, Debug)]
 pub struct PveObserverConfig {
+    token: Option<PveApiToken>,
     base_url: PveBaseUrl,
     mode: PveAccessMode,
     allow_production_reads: bool,
@@ -58,6 +61,7 @@ impl PveObserverConfig {
     #[must_use]
     pub fn new(base_url: PveBaseUrl, mode: PveAccessMode, allow_production_reads: bool) -> Self {
         Self {
+            token: None,
             base_url,
             mode,
             allow_production_reads,
@@ -69,6 +73,12 @@ impl PveObserverConfig {
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    #[must_use]
+    pub fn with_api_token(mut self, token: PveApiToken) -> Self {
+        self.token = Some(token);
         self
     }
 
@@ -86,6 +96,7 @@ impl PveObserverConfig {
 
 #[derive(Clone)]
 pub struct ReqwestPveObserver {
+    token: Option<PveApiToken>,
     base_url: PveBaseUrl,
     client: Client,
     request_audit: PveRequestAudit,
@@ -114,6 +125,7 @@ impl ReqwestPveObserver {
         }
         let client = builder.build(config.timeout)?;
         Ok(Self {
+            token: config.token,
             base_url: config.base_url,
             client,
             request_audit: config.request_audit,
@@ -124,20 +136,20 @@ impl ReqwestPveObserver {
     where
         T: for<'de> Deserialize<'de>,
     {
-        self.request_data(Method::GET, path).await
+        self.request_data(Method::GET, self.base_url.endpoint(path))
+            .await
     }
 
-    async fn request_data<T>(&self, method: Method, path: &[&str]) -> Result<T, PveReadError>
+    async fn request_data<T>(&self, method: Method, url: reqwest::Url) -> Result<T, PveReadError>
     where
         T: for<'de> Deserialize<'de>,
     {
         self.request_audit.record_request();
-        let response = self
-            .client
-            .request(method, self.base_url.endpoint(path))
-            .send()
-            .await
-            .map_err(map_reqwest_error)?;
+        let mut request = self.client.request(method, url);
+        if let Some(token) = &self.token {
+            request = request.header(reqwest::header::AUTHORIZATION, token.header());
+        }
+        let response = request.send().await.map_err(map_reqwest_error)?;
         match response.status() {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                 return Err(PveReadError::Unauthorized);
@@ -332,7 +344,7 @@ impl PveReadPort for ReqwestPveObserver {
         let _: serde_json::Value = self
             .request_data(
                 Method::POST,
-                &[
+                self.base_url.endpoint(&[
                     "api2",
                     "json",
                     "nodes",
@@ -341,10 +353,87 @@ impl PveReadPort for ReqwestPveObserver {
                     &vmid_text,
                     "agent",
                     "ping",
-                ],
+                ]),
             )
             .await?;
         Ok(QgaStatus::new(true, Utc::now()))
+    }
+}
+
+#[async_trait]
+impl PvePreflightReadPort for ReqwestPveObserver {
+    async fn node_status(&self, node: &NodeName) -> Result<NodeStatus, PveReadError> {
+        let data = self
+            .get_data(&["api2", "json", "nodes", node.as_str(), "status"])
+            .await?;
+        NodeStatus::from_wire(node.clone(), data, Utc::now())
+    }
+    async fn storage_status(
+        &self,
+        node: &NodeName,
+        storage: &StorageName,
+    ) -> Result<StorageStatus, PveReadError> {
+        let data = self
+            .get_data(&[
+                "api2",
+                "json",
+                "nodes",
+                node.as_str(),
+                "storage",
+                storage.as_str(),
+                "status",
+            ])
+            .await?;
+        StorageStatus::from_wire(node.clone(), storage.clone(), data, Utc::now())
+    }
+    async fn bridges(&self, node: &NodeName) -> Result<BridgeInventory, PveReadError> {
+        let data = self
+            .get_data(&["api2", "json", "nodes", node.as_str(), "network"])
+            .await?;
+        BridgeInventory::from_wire(node.clone(), data, Utc::now())
+    }
+    async fn cluster_vms(&self) -> Result<ClusterVmInventory, PveReadError> {
+        let mut url = self
+            .base_url
+            .endpoint(&["api2", "json", "cluster", "resources"]);
+        url.query_pairs_mut().append_pair("type", "vm");
+        let data = self.request_data(Method::GET, url).await?;
+        ClusterVmInventory::from_wire(data, Utc::now())
+    }
+    async fn native_vm_config(
+        &self,
+        node: &NodeName,
+        vmid: Vmid,
+    ) -> Result<NativeVmConfig, PveReadError> {
+        let vmid_text = vmid.to_string();
+        let data = self
+            .get_data(&[
+                "api2",
+                "json",
+                "nodes",
+                node.as_str(),
+                "qemu",
+                &vmid_text,
+                "config",
+            ])
+            .await?;
+        NativeVmConfig::from_wire(node.clone(), vmid, data, Utc::now())
+    }
+    async fn vm_status(&self, node: &NodeName, vmid: Vmid) -> Result<VmPowerStatus, PveReadError> {
+        let vmid_text = vmid.to_string();
+        let data = self
+            .get_data(&[
+                "api2",
+                "json",
+                "nodes",
+                node.as_str(),
+                "qemu",
+                &vmid_text,
+                "status",
+                "current",
+            ])
+            .await?;
+        VmPowerStatus::from_wire(node.clone(), vmid, data, Utc::now())
     }
 }
 
