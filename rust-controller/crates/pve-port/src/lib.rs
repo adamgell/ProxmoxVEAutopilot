@@ -5,6 +5,7 @@ mod native;
 mod native_fake;
 mod observer;
 mod preflight;
+mod visibility;
 
 use async_trait::async_trait;
 use chrono::Duration as ChronoDuration;
@@ -36,6 +37,9 @@ pub use preflight::{
     BootDisk, BridgeInventory, ClusterVm, ClusterVmInventory, NativeVmConfig, NodeStatus,
     PowerState, PvePreflightReadPort, StorageStatus, UnsupportedConfig, VmPowerStatus,
     observe_target_absence, observe_target_absence_with_clock,
+};
+pub use visibility::{
+    ClusterVisibility, GuestKind, PveVisibilityReadPort, VisibleGuest, VisiblePower,
 };
 
 #[async_trait]
