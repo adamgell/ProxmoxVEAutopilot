@@ -1,5 +1,6 @@
 mod credentials;
 mod fake;
+mod infrastructure_visibility;
 mod model;
 mod native;
 mod native_fake;
@@ -13,6 +14,10 @@ use controller_domain::ObservationHealth;
 
 pub use credentials::{InvalidPveApiToken, PveApiToken};
 pub use fake::{FakePve, PveRequest};
+pub use infrastructure_visibility::{
+    InterfaceKind, NetworkVisibility, NodeVisibility, PveInfrastructureVisibilityReadPort,
+    VisibleInterface,
+};
 pub use model::{
     BridgeName, CloneIntent, EvidenceSource, MacAddress, NativeVmName, NodeName, PveBaseUrl,
     PveEvidence, PveFact, PveFactKind, PveReadError, PveValidationError, QgaStatus, StorageName,
