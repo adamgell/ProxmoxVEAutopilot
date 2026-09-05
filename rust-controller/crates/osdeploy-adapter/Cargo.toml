@@ -7,9 +7,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
+artifact-index = { path = "../artifact-index" }
+event-journal = { path = "../event-journal" }
 pve-port = { path = "../pve-port" }
 serde.workspace = true
-thiserror.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true

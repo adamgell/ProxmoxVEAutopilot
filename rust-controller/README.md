@@ -130,7 +130,7 @@ cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p arti
 The test image includes this pure suite. Actual Linux execution and exact artifact
 acceptance require the separate committed-source artifact gate.
 
-## OSDeploy stage and input values
+## OSDeploy stages and immutable deployment contract
 
 The pure `osdeploy-adapter` contract fixes sixteen OSDeploy stage keys, their work
 kinds and their dependencies. It describes separate PE and disk starts and a
@@ -155,14 +155,42 @@ renewal cannot reset. Serialized values have no clocks, readiness flags or
 unchecked deserialization; later reload must reconstruct through constructors
 and verify the complete canonical deployment digest.
 
-This slice does not yet supply the complete deployment snapshot, durable stage
-evaluation, callback binding, transport mutations, service execution, restart
-proof or production readiness. It leaves existing native operation keys and
-Python wire schemas unchanged. Run its pure contract and compile-fail tests with:
+`OsDeployPlanV1` binds the validated VM/resource plan, names, declared artifact
+with image-index provenance, disk capacity, policy, template configuration hash,
+two distinct ISO references, three payload declarations, serials, OS labels and
+two opaque profile references into one immutable snapshot. The VM plan's caller-
+pinned free-storage minimum remains independent of disk capacity. Admission
+requires at least 4096 MiB memory, matching PVE names and an apply index that fits
+a signed 32-bit guest consumer. A larger source index remains valid metadata when
+a supported output index determines application.
+
+Native settings are fixed to amd64/base, SeaBIOS, no Secure Boot, host CPU, no
+ballooning, a VirtIO QGA channel, scsi0 and ide2/ide3 media. The template-device
+policy requires later rejection of extra devices; it is not proof that a
+template is clean. Media references use a narrow native-v1 ISO syntax, including
+rejection of consecutive dots in filenames. Serials and OS labels are bounded
+declarations with no generic OEM, command, URL or secret-value fields.
+
+Template hashes and optional payload hashes normalize to lowercase. A missing
+payload hash is explicitly `unverified`; a present hash is `declared`. The complete
+snapshot remains `declared_only`, and references do not prove object existence,
+publication or content integrity. Its canonical fingerprint includes every input,
+fixed field, derived name and nested provenance. Private constructor-only outputs
+cannot be deserialized directly. Run/command identities, reservations and complete
+digest verification during reload belong to later store integration.
+
+This contract does not yet supply durable stage evaluation, callback binding,
+transport mutations, service execution, restart proof or production readiness.
+It leaves existing native operation keys and Python wire schemas unchanged.
+Run its pure contract and compile-fail tests with:
 
 ```bash
 cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p osdeploy-adapter
 ```
+
+The test image includes this pure suite without changing existing service
+filters. Actual Linux execution and an exact-source service candidate remain
+separate acceptance gates.
 
 ## Local proof
 

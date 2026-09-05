@@ -1,16 +1,44 @@
 //! Pure OSDeploy stage and validated input contract.
 
 mod input_values;
+mod plan;
 mod stages;
 
 pub use input_values::{
     DeploymentNames, DiskCapacity, PhasePolicy, PhasePolicyInput, normalize_legacy_windows_name,
 };
+pub use plan::{OsDeployPlanInput, OsDeployPlanV1, PayloadDeclaration, PayloadDeclarationInput};
 pub use stages::{OsDeployStage, StageDependency, StageKind};
 
 /// Fixed errors never retain rejected input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ContractError {
+    #[error("payload reference must be non-nil")]
+    InvalidPayloadReference,
+    #[error("payload SHA-256 must contain exactly 64 ASCII hexadecimal characters")]
+    InvalidPayloadSha256,
+    #[error("template configuration SHA-256 must contain exactly 64 ASCII hexadecimal characters")]
+    InvalidTemplateConfigSha256,
+    #[error("OSDeploy VM memory must be at least 4096 MiB")]
+    InsufficientVmMemory,
+    #[error("deployment PVE name must match the VM plan name")]
+    VmNameMismatch,
+    #[error("apply image index must fit a positive signed 32-bit integer")]
+    InvalidApplyImageIndex,
+    #[error("profile references must be non-nil")]
+    InvalidProfileReference,
+    #[error("media reference must match the native ISO volume policy")]
+    InvalidMediaVolid,
+    #[error("deployment and driver media references must be different")]
+    DuplicateMediaVolid,
+    #[error("serial must match the bounded native ASCII token policy")]
+    InvalidSerial,
+    #[error("OS label must match the bounded native ASCII label policy")]
+    InvalidOsLabel,
+    #[error("OS language must match the bounded native ASCII language policy")]
+    InvalidOsLanguage,
+    #[error("deployment fingerprint could not be computed")]
+    FingerprintFailed,
     #[error("requested disk capacity must be at least 80 GiB")]
     InvalidRequestedDiskCapacity,
     #[error("template disk capacity must be positive")]

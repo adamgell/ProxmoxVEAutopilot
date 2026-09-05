@@ -1138,10 +1138,13 @@ dependencies = [
 name = "osdeploy-adapter"
 version = "0.1.0"
 dependencies = [
+ "artifact-index",
+ "event-journal",
  "pve-port",
  "serde",
  "serde_json",
  "thiserror",
+ "uuid",
 ]
 
 [[package]]
