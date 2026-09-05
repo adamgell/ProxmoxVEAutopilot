@@ -673,6 +673,10 @@ The local Python/YAML sources establish compatibility intent, not independent co
 
 Commit the boundary tests/docs/lockfile as `test(rust): verify fake native controller boundaries`. Report source SHA, dirty-tree state, exact passing/failing gates, measured example result, and the supported platform actually exercised. Do not deploy, publish, modify infrastructure, ask an execution-choice question, or infer approval for a live PVE test from completion of this plan.
 
+## Accepted local result
+
+All six task gates, final integration repairs, independent scoped review and exact-source Linux artifact gate completed on2026-09-05 at executable source `0f4c48bea66514c6d35a209d3a5a335c4d4b3e5a`. See `rust-controller/evidence/native-controller-acceptance.md` for actual counts, artifact hashes and platform/production limitations. Detailed step checkboxes below/above remain the original execution checklist; the plan-scoped SDD ledger records completed execution and repair history. This accepts only the local fake-native capability, not real PVE activation or production replacement.
+
 ## Explicit next slices
 
 This plan leaves the following approved program work visible and separate:
