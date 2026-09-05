@@ -1,0 +1,22 @@
+[package]
+name = "ansible-adapter"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+api-compat = { path = "../api-compat" }
+controller-domain = { path = "../controller-domain" }
+scheduler = { path = "../scheduler" }
+async-trait.workspace = true
+libc = "0.2"
+sha2.workspace = true
+tempfile = "3"
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+postgres-store = { path = "../postgres-store" }
+serde_json.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

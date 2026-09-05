@@ -225,12 +225,50 @@ impl Scheduler {
     }
 
     pub async fn start(&self, grant: &LeaseGrant) -> Result<ExecutionState, SchedulerError> {
+        self.start_checked(grant, None).await
+    }
+
+    /// Atomically bind execution to the persisted command and operation schema.
+    /// A registry-validated plan cannot be substituted under another lease.
+    pub async fn start_bound(
+        &self,
+        grant: &LeaseGrant,
+        kind: WorkflowKind,
+        contract_version: u16,
+        fingerprint: &str,
+    ) -> Result<ExecutionState, SchedulerError> {
+        self.start_checked(grant, Some((kind, contract_version, fingerprint)))
+            .await
+    }
+
+    async fn start_checked(
+        &self,
+        grant: &LeaseGrant,
+        binding: Option<(WorkflowKind, u16, &str)>,
+    ) -> Result<ExecutionState, SchedulerError> {
         let mut transaction = self.store.pool().begin().await?;
         self.lock_authority(&mut transaction).await?;
         self.validate_grant_owner(grant)?;
         let (state, revision) = lock_operation(&mut transaction, grant.operation_id()).await?;
         let persisted = lock_lease(&mut transaction, grant.operation_id()).await?;
         validate_persisted_lease(grant, &persisted)?;
+        if let Some((kind, version, fingerprint)) = binding {
+            let matches: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM rust_controller.operations o \
+                 JOIN rust_controller.commands c USING (operation_id) \
+                 WHERE o.operation_id = $1 AND o.workflow_kind = $2 \
+                 AND o.contract_version = $3 AND c.payload_digest = $4)",
+            )
+            .bind(grant.operation_id().as_uuid())
+            .bind(workflow_kind_name(kind))
+            .bind(i32::from(version))
+            .bind(fingerprint)
+            .fetch_one(&mut *transaction)
+            .await?;
+            if !matches {
+                return Err(SchedulerError::PlanBindingMismatch);
+            }
+        }
         if state == ExecutionState::Cancelling {
             return Err(SchedulerError::CancellationRequested);
         }
@@ -350,9 +388,34 @@ impl Scheduler {
         &self,
         operation_id: OperationId,
     ) -> Result<ExecutionState, SchedulerError> {
+        self.cancel_checked(operation_id, None).await
+    }
+
+    /// Worker cancellation must validate its full lease in the same transaction
+    /// as the state change. Operator cancellation retains its operation API.
+    pub async fn request_cancel_bound(
+        &self,
+        grant: &LeaseGrant,
+    ) -> Result<ExecutionState, SchedulerError> {
+        self.cancel_checked(grant.operation_id(), Some(grant)).await
+    }
+
+    async fn cancel_checked(
+        &self,
+        operation_id: OperationId,
+        grant: Option<&LeaseGrant>,
+    ) -> Result<ExecutionState, SchedulerError> {
         let mut transaction = self.store.pool().begin().await?;
         self.lock_authority(&mut transaction).await?;
         let (state, revision) = lock_operation(&mut transaction, operation_id).await?;
+        if let Some(grant) = grant {
+            self.validate_grant_owner(grant)?;
+            let persisted = lock_lease(&mut transaction, operation_id).await?;
+            validate_persisted_lease(grant, &persisted)?;
+            if !persisted.active {
+                return Err(SchedulerError::LeaseExpired);
+            }
+        }
         if state == ExecutionState::Cancelling {
             transaction.commit().await?;
             return Ok(state);
@@ -654,6 +717,8 @@ impl Scheduler {
 
 #[derive(Debug, Error)]
 pub enum SchedulerError {
+    #[error("plan does not match the persisted operation command and schema")]
+    PlanBindingMismatch,
     #[error("orchestration authority is missing")]
     MissingAuthority,
     #[error("stale authority generation: expected {expected}, actual {actual}")]

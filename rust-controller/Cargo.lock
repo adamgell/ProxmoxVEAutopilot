@@ -18,6 +18,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ansible-adapter"
+version = "0.1.0"
+dependencies = [
+ "api-compat",
+ "async-trait",
+ "controller-domain",
+ "libc",
+ "postgres-store",
+ "scheduler",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
