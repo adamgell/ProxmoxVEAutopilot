@@ -164,7 +164,16 @@ async fn sweeps(
                         )
                         .await?
                     {
-                        let invocation = work.registry.validate(&work.plan)?;
+                        let invocation = match work.registry.validate(&work.plan) {
+                            Ok(invocation) => invocation,
+                            Err(error) => {
+                                record_completion(
+                                    &mut *state.progress.write().await,
+                                    Ok(Err(error)),
+                                );
+                                anyhow::bail!("adapter preparation unavailable");
+                            }
+                        };
                         let runner = AdapterRunner::new(work.scheduler.clone());
                         let cancellation = stop.clone();
                         active = Some(tokio::spawn(runner.run(invocation, grant, cancellation)));
