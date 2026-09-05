@@ -18,9 +18,9 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 | Authenticated cluster observation | Accepted authenticated-observation evidence |
 | Selected node/network visibility contracts | Accepted node-network-visibility evidence |
 | Selected-node service integration | Accepted for c429807443f80b74530cbd10af334e50e97b695b; see selected-node-service-acceptance.md for exact macOS/Linux execution limits |
-| Artifact and OSDeploy input contracts | Artifact identity/byte-match library accepted at 15fadd049ee7a52ea61a2edfe6789a15a6929628 on macOS/Linux; see artifact-contract-acceptance.md. OSDeploy fixed-stage/input phase planned in docs/superpowers/plans/2026-09-05-rust-osdeploy-contract.md; implementation and workflow binding not yet accepted |
+| Artifact and OSDeploy input contracts | Artifact identity/byte-match library accepted at 15fadd049ee7a52ea61a2edfe6789a15a6929628. OSDeploy fixed-stage/input contract accepted at 6ee5bf08eed76b20e17056df9b2d27bbc1581113 on macOS/Linux; see osdeploy-contract-acceptance.md. Durable workflow binding remains pending |
 | Callback compatibility and server-side binding | Pending run/attempt/identity binding, replay, duplicate, conflict and late-result proofs |
-| Native OSDeploy vertical slice | Pending typed media/boot/power/QGA and fake-client end-to-end recovery proofs |
+| Native OSDeploy vertical slice | Next: sibling rich PVE facts/requests/evaluators and shared fake execution in docs/superpowers/plans/2026-09-05-rust-provisioning-port.md. Actual service-driven sixteen-stage workflow and fake-client recovery proof remain pending |
 | Agent/build-host, CloudOSD and legacy WinPE | Pending compatible contracts and workflow proofs |
 | Python/Rust single-writer transition | Pending local dual-executor generation fencing and handoff proofs |
 | Release-candidate assurance | Pending full differential/fault/rebuild/backup-restore/rollback evidence, exact immutable artifacts, remaining contract suites and independent readiness review |
