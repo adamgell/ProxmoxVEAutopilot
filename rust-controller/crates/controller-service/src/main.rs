@@ -1,5 +1,6 @@
 mod config;
 mod health;
+mod infrastructure_observation;
 mod observe;
 mod pve_credentials;
 mod pve_observation;

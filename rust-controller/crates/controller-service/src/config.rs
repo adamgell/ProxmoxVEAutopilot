@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use pve_port::PveBaseUrl;
+use pve_port::{NodeName, PveBaseUrl};
 use sqlx::postgres::PgConnectOptions;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,6 +133,7 @@ pub(crate) struct ValidatedObservationConfig {
     base_url: PveBaseUrl,
     token_file: PathBuf,
     allow_production_reads: bool,
+    node_target: Option<NodeName>,
 }
 
 impl ValidatedObservationConfig {
@@ -144,6 +145,11 @@ impl ValidatedObservationConfig {
     }
     pub(crate) fn allow_production_reads(&self) -> bool {
         self.allow_production_reads
+    }
+    // Staged until the selected-node runtime is connected in Task 2.
+    #[allow(dead_code)]
+    pub(crate) fn node_target(&self) -> Option<&NodeName> {
+        self.node_target.as_ref()
     }
 }
 
@@ -176,7 +182,16 @@ fn observation_config_from(
         Some(value) if value == PveTransport::HttpObserve.as_str() => PveTransport::HttpObserve,
         Some(_) => return Err(ObservationConfigFailure),
     };
+    let node_target = lookup("RUST_CONTROLLER_PVE_OBSERVE_NODE")
+        .map(|value| {
+            let value = value.to_str().ok_or(ObservationConfigFailure)?;
+            NodeName::parse(value).map_err(|_| ObservationConfigFailure)
+        })
+        .transpose()?;
     if transport == PveTransport::Fake {
+        if node_target.is_some() {
+            return Err(ObservationConfigFailure);
+        }
         return Ok(None);
     }
     if config.mode != ControllerMode::Observe {
@@ -192,6 +207,7 @@ fn observation_config_from(
         base_url,
         token_file,
         allow_production_reads: config.allow_production_reads,
+        node_target,
     }))
 }
 
@@ -218,8 +234,96 @@ pub(crate) fn observation_test_config_at(
 }
 
 #[cfg(test)]
+pub(crate) fn observation_test_config_with_node(
+    path: &Path,
+    base_url: &str,
+    node: &str,
+) -> ValidatedObservationConfig {
+    let mut config = ControllerConfig::local_observe();
+    config.pve_base_url = base_url.to_owned();
+    observation_config_from(&config, |name| match name {
+        "RUST_CONTROLLER_PVE_TRANSPORT" => Some("http-observe".into()),
+        "RUST_CONTROLLER_PVE_TOKEN_FILE" => Some(path.as_os_str().to_owned()),
+        "RUST_CONTROLLER_PVE_OBSERVE_NODE" => Some(node.into()),
+        _ => None,
+    })
+    .ok()
+    .flatten()
+    .expect("synthetic selected-node observation config")
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_node_factory_preserves_selection_and_absence() {
+        let path = Path::new("synthetic-unopened-token");
+        let selected = observation_test_config_with_node(path, "http://127.0.0.1:5000", "pve-test");
+        assert_eq!(selected.node_target().unwrap().as_str(), "pve-test");
+        assert!(observation_test_config(path).node_target().is_none());
+    }
+
+    // Break: a selected node under fake must not silently disable observation.
+    #[test]
+    fn selected_node_presence_is_rejected_under_fake() {
+        for transport in [None, Some("fake")] {
+            for node in ["pve-test", "", "bad/node"] {
+                let result =
+                    observation_config_from(
+                        &ControllerConfig::local_observe(),
+                        |name| match name {
+                            "RUST_CONTROLLER_PVE_TRANSPORT" => transport.map(OsString::from),
+                            "RUST_CONTROLLER_PVE_OBSERVE_NODE" => Some(node.into()),
+                            "RUST_CONTROLLER_PVE_TOKEN_FILE" => {
+                                panic!("denied selection reached token")
+                            }
+                            _ => panic!("unexpected lookup"),
+                        },
+                    );
+                assert!(matches!(result, Err(ObservationConfigFailure)));
+            }
+        }
+    }
+
+    // Break: malformed selectors must be denied before even referencing credentials.
+    #[test]
+    fn selected_node_rejects_invalid_values_before_token_reference() {
+        let mut values: Vec<OsString> = [
+            "",
+            " ",
+            "../pve",
+            "pve/test",
+            "pve-test,pve-other",
+            "pve\n",
+            "pve?x",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            values.push(OsString::from_vec(vec![0xff]));
+        }
+        for value in values {
+            for transport in ["fake", "http-observe"] {
+                let result =
+                    observation_config_from(
+                        &ControllerConfig::local_observe(),
+                        |name| match name {
+                            "RUST_CONTROLLER_PVE_TRANSPORT" => Some(transport.into()),
+                            "RUST_CONTROLLER_PVE_OBSERVE_NODE" => Some(value.clone()),
+                            "RUST_CONTROLLER_PVE_TOKEN_FILE" => {
+                                panic!("invalid node reached token")
+                            }
+                            _ => panic!("unexpected lookup"),
+                        },
+                    );
+                assert!(matches!(result, Err(ObservationConfigFailure)));
+            }
+        }
+    }
 
     // Break: accepting a denied selector, mode or target exposes credentials to a loader.
     #[test]
@@ -242,7 +346,10 @@ mod tests {
         ] {
             for transport in ["fake", "http-observe", "real", "unknown"] {
                 for (target, loopback, safe_scheme) in targets {
-                    for allow in [false, true] {
+                    for (allow, node) in [false, true]
+                        .into_iter()
+                        .flat_map(|allow| [None, Some("pve-test")].map(|node| (allow, node)))
+                    {
                         let config = ControllerConfig {
                             mode,
                             pve_base_url: target.into(),
@@ -252,6 +359,7 @@ mod tests {
                         let mut file_references = 0;
                         let selected = observation_config_from(&config, |name| match name {
                             "RUST_CONTROLLER_PVE_TRANSPORT" => Some(transport.into()),
+                            "RUST_CONTROLLER_PVE_OBSERVE_NODE" => node.map(OsString::from),
                             "RUST_CONTROLLER_PVE_TOKEN_FILE" => {
                                 file_references += 1;
                                 Some("synthetic-not-opened.json".into())
@@ -261,7 +369,7 @@ mod tests {
                         let network_allowed =
                             safe_scheme && (loopback || (mode == ControllerMode::Observe && allow));
                         let expected = network_allowed
-                            && (transport == "fake"
+                            && ((transport == "fake" && node.is_none())
                                 || (transport == "http-observe"
                                     && mode == ControllerMode::Observe));
                         assert_eq!(
@@ -279,6 +387,7 @@ mod tests {
                             // Inert loader: records capability reachability, with no file/client I/O.
                             loader_calls += 1;
                             assert_eq!(validated.allow_production_reads(), allow);
+                            assert_eq!(validated.node_target().map(NodeName::as_str), node);
                             assert_eq!(validated.base_url().is_loopback(), loopback);
                             assert_eq!(
                                 validated.token_file(),
@@ -305,8 +414,10 @@ mod tests {
             let result = observation_config_from(&config, |name| {
                 if name == "RUST_CONTROLLER_PVE_TRANSPORT" {
                     Some("http-observe".into())
-                } else {
+                } else if name == "RUST_CONTROLLER_PVE_TOKEN_FILE" {
                     file.clone()
+                } else {
+                    None
                 }
             });
             assert!(matches!(result, Err(ObservationConfigFailure)));
@@ -334,9 +445,11 @@ mod tests {
                     let result = observation_config_from(&config, |name| {
                         if name == "RUST_CONTROLLER_PVE_TRANSPORT" {
                             Some("http-observe".into())
-                        } else {
+                        } else if name == "RUST_CONTROLLER_PVE_TOKEN_FILE" {
                             file_references += 1;
                             Some("synthetic-not-opened.json".into())
+                        } else {
+                            None
                         }
                     });
                     let accepted = mode == ControllerMode::Observe && allow;
