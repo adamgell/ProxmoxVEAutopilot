@@ -15,23 +15,41 @@ struct ManagedChild {
     child: Child,
     stdout: UnixStream,
     captured: Vec<u8>,
+    output_cap: usize,
     reaped: bool,
     cleanup_deadline: Option<Instant>,
 }
 impl ManagedChild {
-    fn spawn(mut command: Command) -> io::Result<Self> {
+    #[cfg(test)]
+    fn spawn_logs(command: Command) -> io::Result<Self> {
+        Self::spawn_captured(command, true, 262_144)
+    }
+    fn spawn(command: Command) -> io::Result<Self> {
+        Self::spawn_captured(command, false, OUTPUT_CAP)
+    }
+    fn spawn_captured(
+        mut command: Command,
+        combine_stderr: bool,
+        output_cap: usize,
+    ) -> io::Result<Self> {
         let (stdout, writer) = UnixStream::pair()?;
         stdout.set_nonblocking(true)?;
+        let stderr = if combine_stderr {
+            Stdio::from(OwnedFd::from(writer.try_clone()?))
+        } else {
+            Stdio::null()
+        };
         let writer: OwnedFd = writer.into();
         let child = command
             .stdin(Stdio::null())
             .stdout(Stdio::from(writer))
-            .stderr(Stdio::null())
+            .stderr(stderr)
             .spawn()?;
         Ok(Self {
             child,
             stdout,
             captured: Vec::new(),
+            output_cap,
             reaped: false,
             cleanup_deadline: None,
         })
@@ -42,7 +60,7 @@ impl ManagedChild {
             match self.stdout.read(&mut buffer) {
                 Ok(0) => return Ok(()),
                 Ok(count) => {
-                    if self.captured.len() + count > OUTPUT_CAP {
+                    if self.captured.len() + count > self.output_cap {
                         return Err(io::Error::other("local_output_limit"));
                     }
                     self.captured.extend_from_slice(&buffer[..count]);
@@ -142,6 +160,16 @@ pub(super) async fn docker(args: &[&str]) -> io::Result<Output> {
     command.args(args);
     ManagedChild::spawn(command)?.output(COMMAND_BOUND).await
 }
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "only the authenticated service fixture audits complete owned logs"
+)]
+pub(super) async fn docker_logs(endpoint: &str, id: &str, bound: Duration) -> io::Result<Output> {
+    let mut command = Command::new("docker");
+    command.args(["--host", endpoint, "logs", id]);
+    ManagedChild::spawn_logs(command)?.output(bound).await
+}
 pub(super) fn docker_cleanup(args: &[&str], deadline: Instant) -> io::Result<Output> {
     if deadline.saturating_duration_since(Instant::now()) <= REAP_GRACE {
         return Err(io::Error::new(
@@ -203,6 +231,44 @@ pub(super) fn assert_child_reaped(pid: u32) {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation() {
+        let mut command = Command::new("/usr/bin/python3");
+        command.args(["-c", "import sys; sys.stdout.write('stdout-canary'); sys.stdout.flush(); sys.stderr.write('stderr-canary')"]);
+        let child = ManagedChild::spawn_logs(command).unwrap();
+        let pid = child.id();
+        let result = child.output(Duration::from_secs(2)).await.unwrap();
+        assert!(result.status.success());
+        assert_eq!(
+            String::from_utf8(result.stdout).unwrap(),
+            "stdout-canarystderr-canary"
+        );
+        assert_reaped(pid);
+
+        let mut command = Command::new("/usr/bin/python3");
+        command.args(["-c", "import sys; sys.stderr.write('x' * 262145)"]);
+        let child = ManagedChild::spawn_logs(command).unwrap();
+        let pid = child.id();
+        assert!(child.output(Duration::from_secs(2)).await.is_err());
+        assert_reaped(pid);
+
+        let mut command = Command::new("/bin/sleep");
+        command.arg("60");
+        let child = ManagedChild::spawn_logs(command).unwrap();
+        let pid = child.id();
+        let start = Instant::now();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(40),
+                child.output(Duration::from_secs(2))
+            )
+            .await
+            .is_err()
+        );
+        assert!(start.elapsed() < Duration::from_millis(600));
+        assert_reaped(pid);
+    }
 
     // Regression: synchronous output collection can ignore the runtime timer.
     #[tokio::test(flavor = "current_thread")]

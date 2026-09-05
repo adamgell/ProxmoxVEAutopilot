@@ -18,7 +18,7 @@ pub(crate) enum ObservationStatus {
     TimedOut,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct ObservationCounts {
     visible_qemu: usize,
     visible_lxc: usize,
@@ -26,16 +26,13 @@ pub(crate) struct ObservationCounts {
     rejected_rows: usize,
 }
 
+#[derive(Clone)]
 pub(crate) struct ObservationResult {
     status: ObservationStatus,
     observed_at: Option<DateTime<Utc>>,
     counts: Option<ObservationCounts>,
 }
 
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "observation health consumers are wired in Task 4")
-)]
 impl ObservationResult {
     pub(crate) fn status(&self) -> ObservationStatus {
         self.status
@@ -68,13 +65,6 @@ pub(crate) struct ObservationSetupFailure;
 pub(crate) struct PveObservation {
     port: Box<dyn PveVisibilityReadPort>,
 }
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "observation startup and sweeps are wired in Task 4"
-    )
-)]
 impl PveObservation {
     pub(crate) fn new(
         config: &ValidatedObservationConfig,
@@ -95,7 +85,7 @@ impl PveObservation {
         })
     }
     #[cfg(test)]
-    fn from_port(port: Box<dyn PveVisibilityReadPort>) -> Self {
+    pub(crate) fn from_port(port: Box<dyn PveVisibilityReadPort>) -> Self {
         Self { port }
     }
     pub(crate) async fn collect_once(&self) -> ObservationResult {

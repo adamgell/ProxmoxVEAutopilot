@@ -4,6 +4,102 @@ use axum::{
     http::Request,
 };
 use tower::ServiceExt;
+
+struct PendingVisibility {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+    active: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl pve_port::PveVisibilityReadPort for PendingVisibility {
+    fn cluster_visibility<'a, 'b>(
+        &'a self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<pve_port::ClusterVisibility, pve_port::PveReadError>,
+                > + Send
+                + 'b,
+        >,
+    >
+    where
+        'a: 'b,
+        Self: 'b,
+    {
+        Box::pin(async move {
+            use std::sync::atomic::Ordering;
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(
+                self.active.fetch_add(1, Ordering::SeqCst),
+                0,
+                "overlapping GET collections"
+            );
+            struct Active(Arc<std::sync::atomic::AtomicUsize>);
+            impl Drop for Active {
+                fn drop(&mut self) {
+                    self.0.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+            let _active = Active(self.active.clone());
+            std::future::pending().await
+        })
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn observation_loop_bounds_cadence_skips_missed_ticks_and_cancels_inflight_read() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let active = Arc::new(AtomicUsize::new(0));
+    let observation = PveObservation::from_port(Box::new(PendingVisibility {
+        calls: calls.clone(),
+        active: active.clone(),
+    }));
+    let (stop, receiver) = watch::channel(false);
+    let worker = tokio::spawn(observation_sweeps(observation, Arc::default(), receiver));
+    tokio::task::yield_now().await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(3)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    tokio::time::advance(Duration::from_secs(20)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert_eq!(active.load(Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(3)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        3,
+        "missed ticks must not burst after timeout"
+    );
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    tokio::time::advance(Duration::from_secs(30)).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+}
+
+#[tokio::test]
+async fn runtime_defensively_denies_observation_in_adapter_before_credential_io() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("nonexistent-credential");
+    let selected = crate::config::observation_test_config(&path);
+    let config = ControllerConfig {
+        mode: ControllerMode::Adapter,
+        database_url: "postgresql://127.0.0.1/unused".into(),
+        pve_base_url: "http://127.0.0.1:1".into(),
+        allow_production_reads: false,
+    };
+    let error = serve(config, Some(selected)).await.unwrap_err();
+    assert_eq!(error.to_string(), "observation requires observe mode");
+}
 mod support {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -23,6 +119,8 @@ async fn response_after(
         store,
         progress: Arc::new(RwLock::new(progress)),
         mode: "adapter",
+        pve_transport: "fake",
+        observation: Arc::default(),
         generation: 1,
         adapter_versions: vec![SYNTHETIC_LONG_SLEEP_V1.adapter_identity],
     };
@@ -82,6 +180,8 @@ async fn sweep_validation_fault_survives_successful_reads_and_stops_later_claims
         store: fixture.store.clone(),
         progress: Arc::new(RwLock::new(Progress::default())),
         mode: "adapter",
+        pve_transport: "fake",
+        observation: Arc::default(),
         generation: 1,
         adapter_versions: vec![SYNTHETIC_LONG_SLEEP_V1.adapter_identity],
     };

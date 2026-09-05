@@ -1,9 +1,10 @@
-# Rust Controller: Foundation and Fake Native Workflow
+# Rust Controller: Authenticated Visibility and Fake Native Workflow
 
 The library now has a durable fake-only native clone/configure/start workflow,
 alongside the PostgreSQL journal, fenced scheduler, compatibility normalizer,
 synthetic Ansible adapter, and persistent HTTP health service. Native mode and
-real transport remain unavailable in the service. Only the sealed in-memory fake
+literal `real` transport remain unavailable in the service. Observe mode can use
+authenticated `http-observe` cluster visibility. Only the sealed in-memory fake
 implements native mutation; the authenticated HTTP observer has read capabilities.
 This is a local proof, not a production controller replacement.
 Synthetic success says nothing about OOBE, enrollment, ESP, or usable-device readiness.
@@ -62,11 +63,12 @@ synthetic contracts. Pinned official public source supports the selected
 [node uptime shape](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Nodes.pm#L501),
 [usable-storage shape](https://github.com/proxmox/pve-storage/blob/7c6a03839920d4939a8ae725a2b0ef91c0cbc6c9/src/PVE/API2/Storage/Status.pm#L348),
 and [`qmclone` source-VMID worker binding](https://github.com/proxmox/qemu-server/blob/6c0127e612f6c576888a13f9bfb30874911b804d/src/PVE/API2/Qemu.pm#L4749).
-This does not verify the installed release. The next read-contract slice must
-address [optional network `active`](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Network.pm#L282),
-mixed QEMU/LXC and RRD-incomplete inventories, and
-[`VM.Audit` visibility filtering](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Cluster.pm#L587).
-Current conservative rejection is retained. Official schema verification or
+This does not verify the installed release. A later node/network slice must
+address [optional network `active`](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Network.pm#L282).
+The separate visibility parser accepts mixed QEMU/LXC and RRD-incomplete inventories.
+Because of [`VM.Audit` visibility filtering](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Cluster.pm#L587),
+visibility coverage always remains `unverified`. Existing native
+preflight rejection remains conservative. Official schema verification or
 sanitized observation within the existing read-only authorization is still needed
 before a future real-PVE artifact. The fake provenance marker has no live wire
 representation; a real clone ownership mechanism remains unimplemented. No raw
@@ -125,6 +127,14 @@ socket is mounted. Exact committed-source checksums, image/binary hashes, test
 counts, logs and cleanup evidence are retained in the native Task 6 handoff report.
 Cargo-deny can emit the known duplicate-dependency baseline warnings; passing
 policy checks do not mean warning-free output.
+
+The authenticated observation Dockerfile also selects service configuration,
+credential, health, GET-loop cadence/cancellation, startup-denial and loopback HTTP
+tests. It deliberately excludes the single service+owned-PostgreSQL HTTP test,
+which needs Docker on its host. That end-to-end test is macOS-local evidence;
+Linux compilation and the existing Compose database proof do not establish Linux
+HTTP-service PostgreSQL end-to-end acceptance. Rebuild and run the final committed
+image after review before making an exact artifact claim.
 
 The image pins the official Rust 1.92 Bookworm AMD64 digest and the Ansible/Python
 database-driver package versions. Debian transitive packages and CI bootstrap
@@ -188,11 +198,60 @@ Required in every mode:
 - RUST_CONTROLLER_AUTHORITY_GENERATION: positive expected generation; never bootstrapped.
 
 RUST_CONTROLLER_LISTEN defaults to 127.0.0.1:9090 and must be loopback.
-RUST_CONTROLLER_PVE_TRANSPORT defaults to fake; any other value fails startup.
-The service constructs only the in-memory fake and performs no PVE network request.
-API-token configuration exists only on the observer library constructor; there is
-no service API-token environment integration or native activation permission.
-Fake transport labels are not device-readiness evidence.
+RUST_CONTROLLER_PVE_TRANSPORT defaults to fake.
+The additional exact value `http-observe` is accepted only in observe mode.
+The literal `real`, unknown selectors, and native mode remain denied. Labels report
+the constructed capability. Fake transport labels are not device-readiness evidence.
+
+`http-observe` requires `RUST_CONTROLLER_PVE_TOKEN_FILE`, a dedicated regular JSON
+file with exactly `token_id` and `secret`, owned by the service's effective user,
+with no group/other permissions (normally mode 0600), and at most 8192 bytes.
+The final symlink, FIFO, directory, duplicate/unknown field and oversized-file
+cases are rejected. The file is opened once after mode and destination validation;
+there is no raw-secret environment fallback or credential reload. Remote observation
+requires the existing explicit read opt-in and HTTPS; literal loopback HTTP serves
+owned fixtures. No redirect, proxy, insecure TLS or additional PVE endpoint is enabled.
+
+The isolated HTTP loop issues one GET of `/api2/json/cluster/resources?type=vm`
+every 5 seconds, skips missed ticks, never overlaps collections and drops an in-flight
+collection on shutdown. Request and whole-collection bounds are 2 and 3 seconds;
+bodies are capped at 1048576 bytes and inventory at 1024 rows. It owns only the
+visibility-read capability and sanitized in-memory progress. The existing database
+compatibility reads continue independently with SELECT-only role checks and rollback.
+
+`pve_observation` reports current classified status, nullable counts/timestamp,
+`coverage: unverified`, monotonic freshness (15 seconds), and a retained last-success
+timestamp. Failed results have null counts/timestamp; an old success cannot make
+the current failure ready. `observation_ready` requires a current fresh complete
+summary and can be true while the database is unhealthy. Rejected rows are degraded.
+This proves visible inventory only, never absence, uniqueness, ownership, complete
+permission coverage, native evidence or execution authority.
+
+For `http-observe`, existing `ready` remains false and `/readyz` returns 503 even
+when `observation_ready` is true. Inspect its JSON using `curl -sS` (without `-f`).
+The evidence label is `visibility_only_coverage_unverified`. Successful GETs cannot
+heal database/outbox failures or latched execution faults. Fake readiness retains
+its existing policy. No health endpoint or execution selector is added.
+
+Run the owned macOS integration proof with:
+
+```bash
+env -u RUST_CONTROLLER_TEST_DATABASE_URL -u DOCKER_HOST cargo test --locked --manifest-path rust-controller/Cargo.toml -p controller-service --test service observation_service::authenticated_service
+```
+
+Its setup and complete test have 30 and 55 second async bounds, plus finite owned
+cleanup grace. The test uses populated native journal/attempt/lease/dispatch/receipt
+and legacy-job sentinels, exact before/after row snapshots, a SELECT-only role with
+advisory-lock access revoked, and complete owned-container SQL logs. Log capture
+verifies container ownership and fails on incomplete collection, a 3 second deadline,
+or a 256 KiB cap; it never trims the trace. Sampled service process trees contain no
+children; the typed HTTP loop additionally has no runner or store capability.
+No production credential, controller, PVE endpoint or tenant is used by this proof.
+
+Node/storage/bridge/artifact observation, real write provenance and retry/reservation
+policy, media/firmware/TPM/QGA, OSDeploy/CloudOSD/agent migration, shared Python fencing,
+restore and approved non-production proof remain later Rust slices. Cutover requires
+separate approval; deferred product tracks follow stable controller contracts.
 
 Adapter additionally requires RUST_CONTROLLER_WORKER_ID,
 RUST_CONTROLLER_SYNTHETIC_CAP (1–32, identical on workers sharing a workflow), and

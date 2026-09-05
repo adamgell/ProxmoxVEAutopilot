@@ -23,6 +23,7 @@ sqlx.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"
 reqwest.workspace = true
 tower = { version = "0.5", features = ["util"] }

@@ -1,7 +1,8 @@
 use crate::{
-    config::{ControllerConfig, ControllerMode},
-    health::{HealthState, OperationalFailure, Progress},
-    observe,
+    config::{ControllerConfig, ControllerMode, ValidatedObservationConfig},
+    health::{HealthState, ObservationProgress, OperationalFailure, Progress},
+    observe, pve_credentials,
+    pve_observation::PveObservation,
 };
 use ansible_adapter::{
     AdapterError, AdapterRegistry, AdapterReport, AdapterRunner, SYNTHETIC_LONG_SLEEP_V1,
@@ -50,11 +51,33 @@ fn record_completion(
     }
 }
 
-pub async fn serve(config: ControllerConfig) -> Result<()> {
+pub async fn serve(
+    config: ControllerConfig,
+    observation_config: Option<ValidatedObservationConfig>,
+) -> Result<()> {
     ensure!(
         config.mode != ControllerMode::Native,
         "native executor unavailable"
     );
+    ensure!(
+        observation_config.is_none() || config.mode == ControllerMode::Observe,
+        "observation requires observe mode"
+    );
+    // Selection and target validation precede credential I/O. The runtime consumes
+    // the validated capability; environment text is never reparsed as transport.
+    let observation = observation_config
+        .as_ref()
+        .map(|selected| {
+            let token = pve_credentials::load_token(selected)?;
+            PveObservation::new(selected, token)
+                .map_err(|_| anyhow::anyhow!("observation setup rejected"))
+        })
+        .transpose()?;
+    let (pve_transport, _fake) = if observation.is_some() {
+        ("http-observe", None)
+    } else {
+        ("fake", Some(pve_port::FakePve::new()))
+    };
     let generation: i64 = env::var("RUST_CONTROLLER_AUTHORITY_GENERATION")?.parse()?;
     ensure!(generation > 0, "authority generation must be positive");
     let listen: SocketAddr = env::var("RUST_CONTROLLER_LISTEN")
@@ -64,13 +87,6 @@ pub async fn serve(config: ControllerConfig) -> Result<()> {
         listen.ip().is_loopback(),
         "health listener must be loopback"
     );
-    // This release has only a constructed in-memory fake transport. There is
-    // no runtime selector capable of activating a real PVE client.
-    ensure!(
-        env::var("RUST_CONTROLLER_PVE_TRANSPORT").unwrap_or_else(|_| "fake".into()) == "fake",
-        "real transport unavailable"
-    );
-    let _pve = pve_port::FakePve::new();
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .acquire_timeout(Duration::from_secs(2))
@@ -109,6 +125,8 @@ pub async fn serve(config: ControllerConfig) -> Result<()> {
         progress: Arc::new(RwLock::new(Progress::default())),
         mode: config.mode.as_str(),
         generation,
+        pve_transport,
+        observation: Arc::default(),
         adapter_versions: if work.is_some() {
             vec![SYNTHETIC_LONG_SLEEP_V1.adapter_identity]
         } else {
@@ -117,6 +135,13 @@ pub async fn serve(config: ControllerConfig) -> Result<()> {
     };
     let listener = tokio::net::TcpListener::bind(listen).await?;
     let (stop, receiver) = watch::channel(false);
+    let observer = observation.map(|observation| {
+        tokio::spawn(observation_sweeps(
+            observation,
+            state.observation.clone(),
+            receiver.clone(),
+        ))
+    });
     let worker = tokio::spawn(sweeps(state.clone(), pool, work, receiver));
     let server = axum::serve(listener, crate::health::router(state))
         .with_graceful_shutdown(async move {
@@ -125,8 +150,30 @@ pub async fn serve(config: ControllerConfig) -> Result<()> {
         })
         .await;
     worker.await?;
+    if let Some(observer) = observer {
+        observer.await?;
+    }
     server?;
     Ok(())
+}
+
+// This loop owns only a GET capability and sanitized in-memory progress. It has
+// no scheduler, store, evidence-ingestion or process-runner capability.
+async fn observation_sweeps(
+    observation: PveObservation,
+    progress: Arc<RwLock<ObservationProgress>>,
+    mut stop: watch::Receiver<bool>,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        if *stop.borrow() {
+            break;
+        }
+        tokio::select! { biased; _ = stop.changed() => break, _ = interval.tick() => {} }
+        let result = tokio::select! { biased; _ = stop.changed() => break, result = observation.collect_once() => result };
+        progress.write().await.record(result);
+    }
 }
 
 async fn sweeps(
@@ -149,6 +196,7 @@ async fn sweeps(
             let result = done.await;
             record_completion(&mut *state.progress.write().await, result);
         }
+        let cancellation = stop.clone();
         let sweep = async {
             if let Some(work) = &work {
                 work.scheduler.reap_expired().await?;
@@ -175,7 +223,7 @@ async fn sweeps(
                             }
                         };
                         let runner = AdapterRunner::new(work.scheduler.clone());
-                        let cancellation = stop.clone();
+                        let cancellation = cancellation.clone();
                         active = Some(tokio::spawn(runner.run(invocation, grant, cancellation)));
                     }
                 }
@@ -186,10 +234,8 @@ async fn sweeps(
             state.store.health_snapshot().await?;
             Ok::<(), anyhow::Error>(())
         };
-        let ok = matches!(
-            tokio::time::timeout(Duration::from_secs(4), sweep).await,
-            Ok(Ok(()))
-        );
+        let outcome = tokio::select! { biased; _ = stop.changed() => break, result = tokio::time::timeout(Duration::from_secs(4), sweep) => result };
+        let ok = matches!(outcome, Ok(Ok(())));
         let mut progress = state.progress.write().await;
         if ok {
             progress.succeeded();

@@ -23,13 +23,6 @@ impl std::fmt::Display for CredentialFailure {
 }
 impl std::error::Error for CredentialFailure {}
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "credential loading is wired only with observation startup in Task 4"
-    )
-)]
 pub(crate) fn load_token(
     config: &ValidatedObservationConfig,
 ) -> Result<PveApiToken, CredentialFailure> {

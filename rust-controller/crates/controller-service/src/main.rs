@@ -38,7 +38,8 @@ async fn start() -> Result<(), StartupFailure> {
         .validate_network_boundary()
         .map_err(|_| StartupFailure::NetworkBoundary)?;
 
-    runtime::serve(config)
+    let observation = config::observation_config(&config).map_err(|_| StartupFailure::Other)?;
+    runtime::serve(config, observation)
         .await
         .map_err(|_| StartupFailure::Other)
 }

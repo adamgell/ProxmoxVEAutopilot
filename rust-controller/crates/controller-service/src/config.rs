@@ -114,7 +114,6 @@ fn required_env(name: &str) -> Result<String> {
     env::var(name).with_context(|| format!("{name} is required"))
 }
 
-// Staged private configuration; Task 4 will consume it at startup.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PveTransport {
     Fake,
@@ -158,10 +157,6 @@ impl std::fmt::Display for ObservationConfigFailure {
 }
 impl std::error::Error for ObservationConfigFailure {}
 
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "observation startup wiring is a later task")
-)]
 pub(crate) fn observation_config(
     config: &ControllerConfig,
 ) -> Result<Option<ValidatedObservationConfig>, ObservationConfigFailure> {

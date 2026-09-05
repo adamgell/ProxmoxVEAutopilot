@@ -1,3 +1,4 @@
+use crate::pve_observation::{ObservationResult, ObservationStatus};
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use chrono::{DateTime, Utc};
 use postgres_store::{PgStore, StoreHealthSnapshot};
@@ -7,6 +8,44 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::RwLock;
+
+#[derive(Default)]
+pub(crate) struct ObservationProgress {
+    result: Option<ObservationResult>,
+    last_success: Option<(Instant, DateTime<Utc>)>,
+}
+impl ObservationProgress {
+    pub(crate) fn record(&mut self, result: ObservationResult) {
+        if result.status() == ObservationStatus::Fresh
+            && result.counts().is_some()
+            && let Some(observed_at) = result.observed_at()
+        {
+            self.last_success = Some((Instant::now(), observed_at));
+        }
+        self.result = Some(result);
+    }
+    fn snapshot(&self, now: Instant) -> Option<ObservationHealth> {
+        let result = self.result.as_ref()?;
+        let fresh = result.status() == ObservationStatus::Fresh
+            && result.counts().is_some()
+            && result.observed_at().is_some()
+            && self.last_success.is_some_and(|(at, _)| {
+                now.saturating_duration_since(at) <= Duration::from_secs(15)
+            });
+        Some(ObservationHealth {
+            result: result.clone(),
+            fresh,
+            last_success: self.last_success.map(|(_, utc)| utc),
+        })
+    }
+}
+#[derive(Serialize)]
+struct ObservationHealth {
+    #[serde(flatten)]
+    result: ObservationResult,
+    fresh: bool,
+    last_success: Option<DateTime<Utc>>,
+}
 
 #[derive(Clone, Default)]
 pub struct Progress {
@@ -39,6 +78,8 @@ pub struct HealthState {
     pub mode: &'static str,
     pub generation: i64,
     pub adapter_versions: Vec<&'static str>,
+    pub pve_transport: &'static str,
+    pub observation: Arc<RwLock<ObservationProgress>>,
 }
 
 #[derive(Serialize)]
@@ -68,6 +109,8 @@ pub struct ReadyResponse {
     unknown: Option<i64>,
     conflicted: Option<i64>,
     ready: bool,
+    pve_observation: Option<ObservationHealth>,
+    observation_ready: bool,
 }
 
 fn evaluate(
@@ -75,7 +118,7 @@ fn evaluate(
     snapshot: Option<&StoreHealthSnapshot>,
     authority: Option<(&'static str, i64)>,
     progress: &Progress,
-    transport: &'static str,
+    observation: &ObservationProgress,
 ) -> ReadyResponse {
     let outbox = snapshot.is_some_and(|s| {
         s.outbox_pending <= 1000 && s.oldest_outbox_age_seconds.is_none_or(|age| age <= 300)
@@ -88,10 +131,12 @@ fn evaluate(
         && progress.operational_failure.is_none()
         && outbox
         && fresh
-        && transport == "fake"
+        && state.pve_transport == "fake"
         && authority.is_some_and(|(executor, generation)| {
             executor == "rust" && generation == state.generation
         });
+    let pve_observation = observation.snapshot(Instant::now());
+    let observation_ready = pve_observation.as_ref().is_some_and(|o| o.fresh);
     ReadyResponse {
         version: env!("CARGO_PKG_VERSION"),
         git_sha: env!("CONTROLLER_GIT_SHA"),
@@ -112,12 +157,18 @@ fn evaluate(
         reconciler_fresh: fresh,
         operational_failure: progress.operational_failure,
         adapter_versions: state.adapter_versions.clone(),
-        pve_transport: transport,
-        pve_evidence: "synthetic_no_device_readiness",
+        pve_transport: state.pve_transport,
+        pve_evidence: if state.pve_transport == "http-observe" {
+            "visibility_only_coverage_unverified"
+        } else {
+            "synthetic_no_device_readiness"
+        },
         blocked: snapshot.map(|s| s.blocked),
         unknown: snapshot.map(|s| s.unknown),
         conflicted: snapshot.map(|s| s.conflicted),
         ready,
+        pve_observation,
+        observation_ready,
     }
 }
 
@@ -138,6 +189,7 @@ async fn readiness(State(state): State<HealthState>) -> (StatusCode, Json<ReadyR
         .ok()
         .and_then(Result::ok);
     let progress = state.progress.read().await;
+    let observation = state.observation.read().await;
     let authority = snapshot
         .as_ref()
         .and_then(|s| s.authority)
@@ -147,7 +199,7 @@ async fn readiness(State(state): State<HealthState>) -> (StatusCode, Json<ReadyR
         snapshot.as_ref(),
         authority,
         &progress,
-        "fake",
+        &observation,
     ))
 }
 fn response(body: ReadyResponse) -> (StatusCode, Json<ReadyResponse>) {
@@ -179,6 +231,8 @@ fn test_router(
         mode: "observe",
         generation: 1,
         adapter_versions: vec![],
+        pve_transport: transport,
+        observation: Arc::default(),
     };
     let progress = Progress {
         last_success: age.map(|age| (Instant::now() - Duration::from_secs(age), Utc::now())),
@@ -203,7 +257,7 @@ fn test_router(
         database.then_some(&snapshot),
         authority.map(|generation| ("rust", generation)),
         &progress,
-        transport,
+        &ObservationProgress::default(),
     );
     let code = if body.ready {
         StatusCode::OK
@@ -224,6 +278,101 @@ mod tests {
         http::Request,
     };
     use tower::ServiceExt;
+
+    struct Visibility(bool);
+    impl pve_port::PveVisibilityReadPort for Visibility {
+        fn cluster_visibility<'a, 'b>(
+            &'a self,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<pve_port::ClusterVisibility, pve_port::PveReadError>,
+                    > + Send
+                    + 'b,
+            >,
+        >
+        where
+            'a: 'b,
+            Self: 'b,
+        {
+            Box::pin(async move {
+                if self.0 {
+                    pve_port::ClusterVisibility::from_wire(serde_json::json!([]), Utc::now())
+                } else {
+                    Err(pve_port::PveReadError::Unauthorized)
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn observation_freshness_expires_monotonically_and_failure_cannot_reuse_last_success() {
+        // Break: wall-clock age, stale success, or failed results granting observation readiness.
+        let mut progress = ObservationProgress::default();
+        assert!(progress.snapshot(Instant::now()).is_none());
+        let success = crate::pve_observation::PveObservation::from_port(Box::new(Visibility(true)))
+            .collect_once()
+            .await;
+        progress.record(success);
+        let (at, timestamp) = progress.last_success.unwrap();
+        assert!(
+            progress
+                .snapshot(at + Duration::from_secs(15))
+                .unwrap()
+                .fresh
+        );
+        assert!(
+            !progress
+                .snapshot(at + Duration::from_millis(15_001))
+                .unwrap()
+                .fresh
+        );
+        let failure =
+            crate::pve_observation::PveObservation::from_port(Box::new(Visibility(false)))
+                .collect_once()
+                .await;
+        progress.record(failure);
+        let failed = progress.snapshot(at).unwrap();
+        assert!(!failed.fresh);
+        assert_eq!(failed.last_success, Some(timestamp));
+        assert!(failed.result.observed_at().is_none());
+        assert!(failed.result.counts().is_none());
+    }
+
+    #[tokio::test]
+    async fn fresh_http_observation_cannot_mask_execution_failure_or_database_failure() {
+        let mut observation = ObservationProgress::default();
+        observation.record(
+            crate::pve_observation::PveObservation::from_port(Box::new(Visibility(true)))
+                .collect_once()
+                .await,
+        );
+        let state = HealthState {
+            store: PgStore::new(
+                sqlx::postgres::PgPoolOptions::new()
+                    .connect_lazy("postgresql://127.0.0.1/unused")
+                    .unwrap(),
+            ),
+            progress: Arc::default(),
+            mode: "observe",
+            generation: 1,
+            adapter_versions: vec![],
+            pve_transport: "http-observe",
+            observation: Arc::default(),
+        };
+        let mut progress = Progress::default();
+        progress.succeeded();
+        progress.operational_failure = Some(OperationalFailure::AdapterProcess);
+        let response = evaluate(&state, None, Some(("rust", 1)), &progress, &observation);
+        assert!(!response.ready);
+        assert!(!response.database);
+        assert!(!response.outbox);
+        assert!(response.observation_ready);
+        assert!(matches!(
+            response.operational_failure,
+            Some(OperationalFailure::AdapterProcess)
+        ));
+    }
 
     #[tokio::test]
     async fn readiness_requires_current_dependencies_and_real_sweep_progress() {

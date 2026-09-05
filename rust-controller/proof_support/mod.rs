@@ -27,6 +27,35 @@ impl Drop for Container {
     }
 }
 impl Container {
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "only the authenticated service fixture audits complete owned logs"
+    )]
+    pub async fn logs(&self) -> Result<String, ()> {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let out = process::docker(&[
+                "--host",
+                &self.endpoint,
+                "inspect",
+                "--format",
+                OWNERSHIP_FORMAT,
+                self.id.as_deref().ok_or(())?,
+            ])
+            .await
+            .map_err(|_| ())?;
+            let id = self.verified_owned_id(&out).ok_or(())?;
+            let output = process::docker_logs(&self.endpoint, &id, Duration::from_secs(3))
+                .await
+                .map_err(|_| ())?;
+            if !output.status.success() {
+                return Err(());
+            }
+            String::from_utf8(output.stdout).map_err(|_| ())
+        })
+        .await
+        .map_err(|_| ())?
+    }
     fn pending(endpoint: String) -> Self {
         Self {
             id: None,

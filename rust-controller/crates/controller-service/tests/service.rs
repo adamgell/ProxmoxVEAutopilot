@@ -127,7 +127,7 @@ fn real_transport_startup_fails_before_local_io_even_with_read_permission() {
 }
 
 #[test]
-fn staged_http_observe_startup_fails_before_local_io() {
+fn http_observe_missing_credentials_fails_before_local_io() {
     for allow in [false, true] {
         denied_startup(
             "observe",
@@ -139,6 +139,9 @@ fn staged_http_observe_startup_fails_before_local_io() {
         );
     }
 }
+
+#[path = "support/observation_service.rs"]
+mod observation_service;
 
 #[test]
 fn remote_pve_and_database_startup_targets_are_denied() {
