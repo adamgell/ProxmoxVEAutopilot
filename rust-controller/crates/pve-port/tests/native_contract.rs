@@ -921,3 +921,38 @@ async fn http_observer_never_imports_fake_provenance_from_response() {
     );
     server.finish().await;
 }
+// Catches fake hooks bypassing the typed read boundary or submitting before release.
+#[tokio::test]
+async fn typed_fault_hooks_preserve_read_errors_and_gate_submission() {
+    let f = fake();
+    f.enqueue_config_read(
+        plan().source_vmid(),
+        FakeConfigRead::Error(PveReadError::Unauthorized),
+    );
+    assert_eq!(
+        f.native_vm_config(plan().node(), plan().source_vmid())
+            .await,
+        Err(PveReadError::Unauthorized)
+    );
+    f.enqueue_config_read(
+        plan().source_vmid(),
+        FakeConfigRead::Snapshot(Box::new(config(9000, true))),
+    );
+    assert!(
+        f.native_vm_config(plan().node(), plan().source_vmid())
+            .await
+            .is_ok()
+    );
+    let gate = f.pause_next_submission();
+    let clone = f.clone();
+    let task = tokio::spawn(async move {
+        clone
+            .clone_vm(&CloneRequest::new(plan(), OperationId::new()))
+            .await
+    });
+    gate.entered().await;
+    assert!(f.recorded_requests().is_empty());
+    gate.release();
+    task.await.unwrap().unwrap();
+    assert_eq!(f.recorded_requests().len(), 1);
+}

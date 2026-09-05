@@ -377,7 +377,12 @@ impl Scheduler {
         .await?;
         let now = db_now(&mut tx).await?;
         let evaluation = evaluate_native_outcome(&context, &evidence, now);
-        if evaluation.decision == NativeDecision::Unknown {
+        // A running original task is observation advice during recovery, not
+        // authorization to restore active Waiting or acquire a new lease.
+        if matches!(
+            evaluation.decision,
+            NativeDecision::Unknown | NativeDecision::Waiting
+        ) {
             tx.commit().await?;
             return Ok(ExecutionState::Unknown);
         }

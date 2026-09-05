@@ -1356,3 +1356,109 @@ async fn late_success_preserves_newer_conflict() {
     );
     assert_eq!(f.counts().await.decisions, 1);
 }
+#[tokio::test]
+async fn historical_ownership_uses_decision_evidence_after_later_typed_facts() {
+    let f = support::Fixture::new().await;
+    let pending = f
+        .store
+        .enqueue_native_vm(controller_domain::RunId::new(), &support::vm())
+        .await
+        .unwrap();
+    assert!(
+        f.store
+            .load_native_clone_ownership(pending.clone_id())
+            .await
+            .is_err()
+    );
+    // The same reservation cannot be reused for another run; use the pending run.
+    let grant = f.start_step(pending.clone_id()).await;
+    let snap = f
+        .store
+        .load_native_operation(pending.clone_id())
+        .await
+        .unwrap();
+    let facts = support::preflight(pending.run_id(), &grant, snap.revision());
+    let event = f
+        .store
+        .record_native_evidence(
+            pending.clone_id(),
+            grant.attempt_id(),
+            snap.revision(),
+            &facts,
+        )
+        .await
+        .unwrap();
+    let request = pve_port::CloneRequest::new(support::vm(), pending.clone_id());
+    let scheduler = f.scheduler();
+    let permit = scheduler
+        .begin_native_dispatch(
+            &grant,
+            snap.revision() + 1,
+            event,
+            &request.request_digest(),
+            request.request_marker(),
+        )
+        .await
+        .unwrap();
+    scheduler
+        .record_native_receipt(
+            &permit,
+            &pve_port::MutationReceipt::Task(support::clone_upid()),
+        )
+        .await
+        .unwrap();
+    let snap = f
+        .store
+        .load_native_operation(pending.clone_id())
+        .await
+        .unwrap();
+    let facts = support::clone_outcome(&snap, &request, pve_port::TaskState::CompleteSuccess);
+    let event = f
+        .store
+        .record_native_evidence(
+            pending.clone_id(),
+            grant.attempt_id(),
+            snap.revision(),
+            &facts,
+        )
+        .await
+        .unwrap();
+    scheduler
+        .decide_native(&grant, event, snap.revision() + 1)
+        .await
+        .unwrap();
+    let original = f
+        .store
+        .load_native_clone_ownership(pending.configure_id())
+        .await
+        .unwrap();
+    let snap = f
+        .store
+        .load_native_operation(pending.clone_id())
+        .await
+        .unwrap();
+    let later = support::clone_outcome(&snap, &request, pve_port::TaskState::Running);
+    f.store
+        .record_native_evidence(
+            pending.clone_id(),
+            grant.attempt_id(),
+            snap.revision(),
+            &later,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store
+            .load_native_clone_ownership(pending.start_id())
+            .await
+            .unwrap(),
+        original
+    );
+    assert_eq!(original.proof(), &facts);
+    assert!(
+        f.store
+            .load_native_clone_ownership(controller_domain::OperationId::new())
+            .await
+            .is_err()
+    );
+}

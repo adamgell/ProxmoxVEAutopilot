@@ -8,6 +8,34 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Closed in-memory rendezvous. It cannot execute callbacks or select a destination.
+#[derive(Default)]
+pub struct FakePause {
+    entered: tokio::sync::Notify,
+    released: tokio::sync::Notify,
+}
+impl FakePause {
+    pub async fn entered(&self) {
+        self.entered.notified().await;
+    }
+    pub fn release(&self) {
+        self.released.notify_one();
+    }
+    async fn wait(&self) {
+        self.entered.notify_one();
+        self.released.notified().await;
+    }
+}
+pub enum FakeConfigRead {
+    Error(PveReadError),
+    Snapshot(Box<NativeVmConfig>),
+    Pause(Arc<FakePause>),
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum FakeControllerCheckpoint {
+    DispatchCommitted,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FakeMutationOutcome {
     Accepted,
@@ -48,6 +76,9 @@ struct FakeVm {
 }
 #[derive(Default)]
 struct State {
+    checkpoints: BTreeMap<FakeControllerCheckpoint, VecDeque<Arc<FakePause>>>,
+    config_reads: BTreeMap<Vmid, VecDeque<FakeConfigRead>>,
+    submissions: VecDeque<Arc<FakePause>>,
     vms: BTreeMap<Vmid, FakeVm>,
     nodes: BTreeMap<NodeName, NodeStatus>,
     storage: BTreeMap<(NodeName, StorageName), StorageStatus>,
@@ -63,6 +94,58 @@ pub struct NativeFakePve {
     state: Arc<Mutex<State>>,
 }
 impl NativeFakePve {
+    pub fn pause_controller_checkpoint(&self, point: FakeControllerCheckpoint) -> Arc<FakePause> {
+        let gate = Arc::new(FakePause::default());
+        self.state
+            .lock()
+            .unwrap()
+            .checkpoints
+            .entry(point)
+            .or_default()
+            .push_back(gate.clone());
+        gate
+    }
+    pub async fn controller_checkpoint(&self, point: FakeControllerCheckpoint) {
+        let gate = self
+            .state
+            .lock()
+            .unwrap()
+            .checkpoints
+            .get_mut(&point)
+            .and_then(VecDeque::pop_front);
+        if let Some(gate) = gate {
+            gate.wait().await;
+        }
+    }
+    pub fn enqueue_config_read(&self, vmid: Vmid, read: FakeConfigRead) {
+        self.state
+            .lock()
+            .unwrap()
+            .config_reads
+            .entry(vmid)
+            .or_default()
+            .push_back(read);
+    }
+    pub fn pause_next_submission(&self) -> Arc<FakePause> {
+        let gate = Arc::new(FakePause::default());
+        self.state
+            .lock()
+            .unwrap()
+            .submissions
+            .push_back(gate.clone());
+        gate
+    }
+    pub fn pause_next_config_read(&self, vmid: Vmid) -> Arc<FakePause> {
+        let gate = Arc::new(FakePause::default());
+        self.enqueue_config_read(vmid, FakeConfigRead::Pause(gate.clone()));
+        gate
+    }
+    async fn submission_pause(&self) {
+        let gate = self.state.lock().unwrap().submissions.pop_front();
+        if let Some(gate) = gate {
+            gate.wait().await;
+        }
+    }
     pub fn new() -> Self {
         Self::default()
     }
@@ -347,12 +430,15 @@ impl crate::native::sealed::FakeMutationCapability for NativeFakePve {}
 #[async_trait]
 impl PveMutationPort for NativeFakePve {
     async fn clone_vm(&self, r: &CloneRequest) -> Result<MutationReceipt, PveWriteError> {
+        self.submission_pause().await;
         self.submit(NativeMutationRequest::Clone(r.clone()))
     }
     async fn configure_vm(&self, r: &ConfigureRequest) -> Result<MutationReceipt, PveWriteError> {
+        self.submission_pause().await;
         self.submit(NativeMutationRequest::Configure(r.clone()))
     }
     async fn start_vm(&self, r: &StartRequest) -> Result<MutationReceipt, PveWriteError> {
+        self.submission_pause().await;
         self.submit(NativeMutationRequest::Start(r.clone()))
     }
 }
@@ -398,6 +484,25 @@ impl PvePreflightReadPort for NativeFakePve {
         node: &NodeName,
         vmid: Vmid,
     ) -> Result<NativeVmConfig, PveReadError> {
+        let scripted = self
+            .state
+            .lock()
+            .unwrap()
+            .config_reads
+            .get_mut(&vmid)
+            .and_then(VecDeque::pop_front);
+        match scripted {
+            Some(FakeConfigRead::Error(error)) => return Err(error),
+            Some(FakeConfigRead::Snapshot(config)) => {
+                return if config.node() == node && config.vmid() == vmid {
+                    Ok(*config)
+                } else {
+                    Err(PveReadError::InvalidResponse)
+                };
+            }
+            Some(FakeConfigRead::Pause(gate)) => gate.wait().await,
+            None => {}
+        }
         let s = self.state.lock().unwrap();
         let c = &lookup(&s, node, vmid)?.config;
         // Reload sanitized facts to refresh time without weakening unsupported/lock facts.

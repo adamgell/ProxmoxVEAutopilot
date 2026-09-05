@@ -1,5 +1,37 @@
 use super::*;
 
+impl PgStore {
+    /// Read the complete proof selected by the persisted satisfied clone decision.
+    /// This read-only snapshot is request-building advice, never a send capability.
+    pub async fn load_native_clone_ownership(
+        &self,
+        operation: OperationId,
+    ) -> Result<NativeCloneOwnership, NativeStoreError> {
+        let mut tx = self.pool().begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        let run = operation_run(&mut tx, operation).await?;
+        let supplied = records::load(&mut tx, operation).await?;
+        if supplied.run_id != run {
+            return Err(NativeStoreError::Validation);
+        }
+        let ids = workflow_ids(&mut tx, run).await?;
+        let clone = records::load(&mut tx, ids.clone_id()).await?;
+        let dispatch = clone
+            .dispatch
+            .as_ref()
+            .ok_or(NativeStoreError::Validation)?;
+        let request = clone_request(clone.plan.vm(), clone.operation_id, dispatch.request_marker)?;
+        if request.request_digest() != dispatch.request_digest {
+            return Err(NativeStoreError::Validation);
+        }
+        let proof = load_ownership(&mut tx, &clone, &request).await?;
+        tx.commit().await?;
+        Ok(proof)
+    }
+}
+
 /// Called only after authority. Every native mutator shares this run lock and
 /// locks all three operations in UUID order before touching an attempt/lease.
 pub(super) async fn locked_workflow(
