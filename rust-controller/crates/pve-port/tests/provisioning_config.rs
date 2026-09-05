@@ -527,6 +527,105 @@ fn persisted_facts_require_objects_even_when_an_array_has_valid_ordered_fields()
 }
 
 #[test]
+fn rich_source_discriminator_requires_strings_from_value() {
+    check_rich_source_discriminator(serde_json::from_value::<ProvisioningVmConfigV1>);
+}
+
+#[test]
+fn rich_source_discriminator_requires_strings_from_str() {
+    check_rich_source_discriminator(|value| {
+        serde_json::from_str(&serde_json::to_string(&value).unwrap())
+    });
+}
+
+fn check_rich_source_discriminator(
+    decode: impl Fn(Value) -> Result<ProvisioningVmConfigV1, serde_json::Error>,
+) {
+    let mut accepted_invalid = Vec::new();
+    for source in ["fake_pve", "pve_api"] {
+        let mut valid = golden_snapshot();
+        valid["source"] = json!(source);
+        let decoded = decode(valid.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), valid);
+
+        let mut invalid = valid;
+        invalid["source"] = json!({source:null});
+        match decode(invalid) {
+            Ok(_) => accepted_invalid.push(source.to_owned()),
+            Err(error) => assert!(
+                error
+                    .to_string()
+                    .starts_with(&PveReadError::InvalidResponse.to_string())
+            ),
+        }
+        // The focused new boundary must not change the legacy enum's decoder.
+        let legacy: NativeEvidenceSource = serde_json::from_value(json!({source:null})).unwrap();
+        assert_eq!(serde_json::to_value(legacy).unwrap(), json!(source));
+    }
+    for source in [
+        Value::Null,
+        json!("secret-value"),
+        json!(""),
+        json!(true),
+        json!(1),
+        json!([]),
+        json!({"secret-value":null}),
+    ] {
+        let mut invalid = golden_snapshot();
+        invalid["source"] = source;
+        let error = decode(invalid).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with(&PveReadError::InvalidResponse.to_string())
+        );
+        assert!(!error.to_string().contains("secret-value"));
+    }
+    let mut missing = golden_snapshot();
+    missing.as_object_mut().unwrap().remove("source");
+    let error = decode(missing).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .starts_with(&PveReadError::InvalidResponse.to_string())
+    );
+    assert!(
+        accepted_invalid.is_empty(),
+        "accepted object sources: {accepted_invalid:?}"
+    );
+}
+
+#[test]
+fn nested_before_state_still_rejects_object_source_discriminators() {
+    let power = VmPowerStatus::from_wire(
+        node(),
+        Vmid::new(900).unwrap(),
+        json!({"vmid":900,"status":"stopped","locked":0}),
+        time(),
+    )
+    .unwrap();
+    for source in ["fake_pve", "pve_api"] {
+        let mut config = golden_snapshot();
+        config["source"] = json!(source);
+        let valid = json!({"config":config,"power":power});
+        let decoded: ProvisioningBeforeStateV1 = serde_json::from_value(valid.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), valid);
+        let decoded: ProvisioningBeforeStateV1 =
+            serde_json::from_str(&serde_json::to_string(&valid).unwrap()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), valid);
+        let mut invalid = valid;
+        invalid["config"]["source"] = json!({source:null});
+        assert!(serde_json::from_value::<ProvisioningBeforeStateV1>(invalid.clone()).is_err());
+        assert!(
+            serde_json::from_str::<ProvisioningBeforeStateV1>(
+                &serde_json::to_string(&invalid).unwrap()
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn media_discriminators_require_strings_standalone_and_in_snapshots() {
     for state in ["absent", "iso", "unsupported"] {
         let mut valid = json!({"state": state});

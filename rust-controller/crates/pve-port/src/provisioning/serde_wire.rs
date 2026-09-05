@@ -128,12 +128,25 @@ impl<'de> Deserialize<'de> for ProvisioningPrimaryDiskV1 {
     }
 }
 
+// The new snapshot requires a string discriminator while the legacy source
+// enum retains its historical derived decoding behavior.
+fn provisioning_source<'de, D: Deserializer<'de>>(d: D) -> Result<NativeEvidenceSource, D::Error> {
+    let source =
+        String::deserialize(d).map_err(|_| de::Error::custom(PveReadError::InvalidResponse))?;
+    match source.as_str() {
+        "pve_api" => Ok(NativeEvidenceSource::PveApi),
+        "fake_pve" => Ok(NativeEvidenceSource::FakePve),
+        _ => Err(de::Error::custom(PveReadError::InvalidResponse)),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigWire {
     contract_version: u16,
     node: NodeName,
     vmid: Vmid,
+    #[serde(deserialize_with = "provisioning_source")]
     source: NativeEvidenceSource,
     digest: String,
     name: NativeVmName,
