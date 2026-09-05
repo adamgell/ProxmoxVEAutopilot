@@ -125,7 +125,8 @@ impl Fixture {
             assert_eq!(snapshot[table].as_array().unwrap().len(), count, "{table}");
         }
     }
-    // Only this test's uniquely owned database is reachable. No library repair API.
+    // Targets this fixture's unique database; bootstrap privileges are cluster-wide.
+    // This is a test corruption helper, not a library repair API.
     pub async fn corrupt_immutable(&self, table: &str, query: &str) {
         let trigger = match table {
             "osdeploy_runs" | "osdeploy_operation_plans" | "osdeploy_agent_reservations" => {

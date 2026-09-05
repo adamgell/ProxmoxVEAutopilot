@@ -1,7 +1,4 @@
-use std::{
-    process::{Command, Stdio},
-    time::Duration,
-};
+use std::time::Duration;
 
 use chrono::Utc;
 use controller_domain::{
@@ -32,79 +29,45 @@ const EXPECTED_TABLES: [&str; 17] = [
     "worker_leases",
 ];
 
+#[path = "../../../proof_support/mod.rs"]
+mod local_postgres;
+const LOCAL_DATABASE_NAME: &str = "rust_controller_test";
+const TEST_MAX_CONNECTIONS: u32 = 4;
 struct PostgresContainer {
-    id: String,
+    _owned: local_postgres::Container,
+    dsn: String,
 }
 
 impl PostgresContainer {
     async fn start() -> Self {
-        let output = Command::new("docker")
-            .args([
-                "run",
-                "--pull=never",
-                "--detach",
-                "--env",
-                "POSTGRES_PASSWORD=postgres",
-                "--env",
-                "POSTGRES_DB=rust_controller_test",
-                "--publish",
-                "127.0.0.1::5432",
-                "postgres:16-alpine",
-            ])
-            .stderr(Stdio::inherit())
-            .output()
-            .expect("docker must be installed for PostgreSQL integration tests");
-        assert!(
-            output.status.success(),
-            "failed to start PostgreSQL container"
-        );
-
-        let id = String::from_utf8(output.stdout)
-            .expect("docker container id must be UTF-8")
-            .trim()
-            .to_owned();
-        let container = Self { id };
-        container.wait_for_pool().await;
-        container
+        tokio::time::timeout(local_postgres::SETUP_BOUND, async {
+            let (owned, dsn) = local_postgres::Container::start().await;
+            let result = Self { _owned: owned, dsn };
+            drop(result.wait_for_pool().await);
+            result
+        })
+        .await
+        .expect("local_fixture_setup_timeout")
     }
-
     fn dsn(&self) -> String {
-        let output = Command::new("docker")
-            .args([
-                "inspect",
-                "--format",
-                "{{(index (index .NetworkSettings.Ports \"5432/tcp\") 0).HostPort}}",
-                &self.id,
-            ])
-            .output()
-            .expect("docker inspect must run");
-        assert!(output.status.success(), "failed to inspect PostgreSQL port");
-        let port = String::from_utf8(output.stdout)
-            .expect("published Docker port must be UTF-8")
-            .trim()
-            .to_owned();
-        format!("postgresql://postgres:postgres@127.0.0.1:{port}/rust_controller_test")
+        self.dsn.clone()
     }
-
     async fn wait_for_pool(&self) -> PgPool {
-        let dsn = self.dsn();
-        for _ in 0..60 {
-            if let Ok(pool) = PgPoolOptions::new().max_connections(4).connect(&dsn).await {
-                return pool;
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if let Ok(pool) = PgPoolOptions::new()
+                    .max_connections(TEST_MAX_CONNECTIONS)
+                    .acquire_timeout(Duration::from_secs(1))
+                    .connect(&self.dsn)
+                    .await
+                {
+                    return pool;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
-        panic!("PostgreSQL did not become ready within 15 seconds");
-    }
-}
-
-impl Drop for PostgresContainer {
-    fn drop(&mut self) {
-        let _ = Command::new("docker")
-            .args(["rm", "--force", &self.id])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        })
+        .await
+        .expect("local_database_timeout")
     }
 }
 

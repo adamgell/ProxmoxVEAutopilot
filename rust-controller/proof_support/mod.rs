@@ -1,4 +1,6 @@
 //! Private owned local PostgreSQL lifecycle, included only by native tests and proof.
+#[cfg(test)]
+mod linux_postgres;
 mod process;
 use controller_domain::RunId;
 #[cfg(test)]
@@ -11,22 +13,69 @@ const OWNERSHIP_LABEL: &str = "io.proxmoxveautopilot.native-proof";
 const IMAGE: &str = "postgres:16-alpine";
 const OWNERSHIP_FORMAT: &str = "{{.Id}}|{{.Name}}|{{index .Config.Labels \"io.proxmoxveautopilot.native-proof\"}}|{{.Config.Image}}";
 
-pub struct Container {
+struct DockerOwned {
     id: Option<String>,
     name: String,
     endpoint: String,
-    cleanup_attempted: bool,
     #[cfg(test)]
     cleanup_script: Option<cleanup_tests::Script>,
 }
+enum Backend {
+    Docker(DockerOwned),
+    #[cfg(all(test, target_os = "linux"))]
+    Linux(linux_postgres::LinuxDatabase),
+}
+pub struct Container {
+    backend: Backend,
+    cleanup_result: Option<Result<(), ()>>,
+}
 impl Drop for Container {
     fn drop(&mut self) {
-        if !self.cleanup_attempted && self.cleanup().is_err() {
+        if self.cleanup_result.is_none() && self.cleanup().is_err() {
             eprintln!("native_fake_cleanup_unconfirmed");
         }
     }
 }
 impl Container {
+    fn pending(endpoint: String) -> Self {
+        Self {
+            backend: Backend::Docker(DockerOwned::pending(endpoint)),
+            cleanup_result: None,
+        }
+    }
+    fn docker_owned(&mut self) -> &mut DockerOwned {
+        match &mut self.backend {
+            Backend::Docker(owned) => owned,
+            #[cfg(all(test, target_os = "linux"))]
+            Backend::Linux(_) => panic!("local_fixture_backend_invalid"),
+        }
+    }
+    pub fn cleanup(&mut self) -> Result<(), ()> {
+        let deadline = Instant::now() + CLEANUP_BOUND;
+        if let Some(result) = self.cleanup_result {
+            return result;
+        }
+        // Record the attempt before entering any fallible or blocking work.
+        self.cleanup_result = Some(Err(()));
+        let result = match &mut self.backend {
+            Backend::Docker(owned) => owned.cleanup(deadline),
+            #[cfg(all(test, target_os = "linux"))]
+            Backend::Linux(owned) => owned.cleanup(deadline),
+        };
+        self.cleanup_result = Some(result);
+        result
+    }
+    #[cfg(test)]
+    #[allow(dead_code, reason = "only authenticated service fixtures request logs")]
+    pub async fn logs(&self) -> Result<String, ()> {
+        match &self.backend {
+            Backend::Docker(owned) => owned.logs().await,
+            #[cfg(target_os = "linux")]
+            Backend::Linux(_) => Err(()),
+        }
+    }
+}
+impl DockerOwned {
     #[cfg(test)]
     #[allow(
         dead_code,
@@ -61,14 +110,11 @@ impl Container {
             id: None,
             name: format!("native-proof-{}", RunId::new().as_uuid()),
             endpoint,
-            cleanup_attempted: false,
             #[cfg(test)]
             cleanup_script: None,
         }
     }
-    pub fn cleanup(&mut self) -> Result<(), ()> {
-        self.cleanup_attempted = true;
-        let deadline = Instant::now() + CLEANUP_BOUND;
+    fn cleanup(&mut self, deadline: Instant) -> Result<(), ()> {
         let output = self.inspect_owned(deadline).map_err(|_| ())?;
         let id = self.verified_owned_id(&output).ok_or(())?;
         let removed = self.remove_owned(&id, deadline).map_err(|_| ())?;
@@ -125,6 +171,43 @@ fn valid_id(id: &str) -> bool {
 }
 impl Container {
     pub async fn start() -> (Self, String) {
+        #[cfg(test)]
+        {
+            let selected = std::env::var_os("PROXMOXVEAUTOPILOT_LINUX_TEST_DB");
+            let selected = selected
+                .as_ref()
+                .map(|s| s.to_str().expect("local_linux_mode_invalid"));
+            let linux = linux_postgres::select_mode(cfg!(target_os = "linux"), selected)
+                .expect("local_linux_mode_invalid");
+            #[cfg(target_os = "linux")]
+            if linux {
+                return tokio::time::timeout(SETUP_BOUND, async {
+                    let receipt = linux_postgres::admit()
+                        .await
+                        .expect("local_linux_admission_refused");
+                    let nonce = RunId::new().as_uuid().simple().to_string();
+                    let database =
+                        linux_postgres::pending(receipt, super::LOCAL_DATABASE_NAME, &nonce)
+                            .expect("local_linux_identity_invalid");
+                    let mut guard = Self {
+                        backend: Backend::Linux(database),
+                        cleanup_result: None,
+                    };
+                    let dsn = match &mut guard.backend {
+                        Backend::Linux(database) => database
+                            .create()
+                            .await
+                            .expect("local_linux_create_unconfirmed"),
+                        Backend::Docker(_) => unreachable!(),
+                    };
+                    (guard, dsn)
+                })
+                .await
+                .expect("local_fixture_setup_timeout");
+            }
+            #[cfg(not(target_os = "linux"))]
+            assert!(!linux, "local_linux_mode_invalid");
+        }
         assert!(
             std::env::var_os("DOCKER_HOST").is_none(),
             "local_docker_override_rejected"
@@ -145,7 +228,8 @@ impl Container {
         assert!(endpoint.starts_with("unix:///"), "local_docker_required");
         // Establish ownership recovery before create: the daemon may create a
         // container even when its response is lost or this future is cancelled.
-        let mut container = Container::pending(endpoint);
+        let mut guard = Container::pending(endpoint);
+        let container = guard.docker_owned();
         let label = format!("{OWNERSHIP_LABEL}={}", container.name);
         let out = process::docker(&[
             "--host",
@@ -202,7 +286,7 @@ impl Container {
             "postgresql://postgres:postgres@127.0.0.1:{port}/{}",
             super::LOCAL_DATABASE_NAME
         );
-        (container, dsn)
+        (guard, dsn)
     }
 }
 
@@ -269,9 +353,9 @@ mod cleanup_tests {
         let removals = Arc::new(Mutex::new(vec![]));
         let pids = Arc::new(Mutex::new(vec![]));
         if matches!(scenario, Scenario::WrongId) {
-            container.id = Some("b".repeat(64));
+            container.docker_owned().id = Some("b".repeat(64));
         }
-        container.cleanup_script = Some(Script {
+        container.docker_owned().cleanup_script = Some(Script {
             scenario,
             removals: removals.clone(),
             pids: pids.clone(),
@@ -281,12 +365,30 @@ mod cleanup_tests {
     #[test]
     fn lost_create_response_recovers_only_verified_owned_id() {
         let (mut container, removals, pids) = container(Scenario::Owned);
-        assert!(container.id.is_none());
+        assert!(container.docker_owned().id.is_none());
         container.cleanup().unwrap();
         drop(container);
         assert_eq!(*removals.lock().unwrap(), vec!["a".repeat(64)]);
         for pid in pids.lock().unwrap().iter() {
             process::assert_child_reaped(*pid);
+        }
+    }
+    #[test]
+    fn explicit_cleanup_and_drop_attempt_owned_removal_only_once() {
+        for scenario in [Scenario::Owned, Scenario::WrongImage] {
+            let (mut container, removals, pids) = container(scenario);
+            let first = container.cleanup();
+            let count = pids.lock().unwrap().len();
+            assert_eq!(container.cleanup(), first);
+            drop(container);
+            assert_eq!(pids.lock().unwrap().len(), count);
+            assert_eq!(
+                removals.lock().unwrap().len(),
+                usize::from(matches!(scenario, Scenario::Owned))
+            );
+            for pid in pids.lock().unwrap().iter() {
+                process::assert_child_reaped(*pid);
+            }
         }
     }
     #[test]
@@ -329,8 +431,8 @@ mod cleanup_tests {
     }
     #[tokio::test(flavor = "current_thread")]
     async fn cancellation_before_create_receipt_recovers_owned_container() {
-        let (container, removals, pids) = container(Scenario::Owned);
-        assert!(container.id.is_none());
+        let (mut container, removals, pids) = container(Scenario::Owned);
+        assert!(container.docker_owned().id.is_none());
         assert!(
             tokio::time::timeout(Duration::from_millis(40), async move {
                 let _owned = container;

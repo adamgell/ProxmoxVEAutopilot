@@ -183,6 +183,149 @@ pub(super) fn docker_cleanup(args: &[&str], deadline: Instant) -> io::Result<Out
 }
 
 #[cfg(test)]
+pub(super) enum LinuxCommand {
+    Admit,
+    Create,
+    Cleanup,
+}
+#[cfg(test)]
+fn linux_command(op: LinuxCommand, request: &str, deadline: Instant) -> io::Result<Command> {
+    let work = deadline
+        .saturating_duration_since(Instant::now())
+        .saturating_sub(REAP_GRACE);
+    let budget_ms = work.as_millis().min(3000);
+    if budget_ms == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "local_cleanup_timeout",
+        ));
+    }
+    let mut value = super::linux_postgres::canonical(request.as_bytes())
+        .map_err(|_| io::Error::other("local_linux_request_invalid"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| io::Error::other("local_linux_request_invalid"))?;
+    if object.contains_key("budget_ms") {
+        return Err(io::Error::other("local_linux_request_invalid"));
+    }
+    object.insert(
+        "budget_ms".into(),
+        serde_json::Value::from(budget_ms as u64),
+    );
+    let op = match op {
+        LinuxCommand::Admit => "admit",
+        LinuxCommand::Create => "create",
+        LinuxCommand::Cleanup => "cleanup",
+    };
+    let mut command = Command::new("/usr/bin/python3");
+    command.env_clear().args([
+        "-I",
+        "-B",
+        "-c",
+        include_str!("linux_postgres.py"),
+        op,
+        &value.to_string(),
+    ]);
+    Ok(command)
+}
+#[cfg(test)]
+pub(super) async fn linux_python(
+    op: LinuxCommand,
+    request: &str,
+    bound: Duration,
+) -> io::Result<Output> {
+    let deadline = Instant::now() + bound.min(COMMAND_BOUND);
+    let command = linux_command(op, request, deadline)?;
+    let mut child = ManagedChild::spawn(command)?;
+    child.cleanup_deadline = Some(deadline);
+    child
+        .output(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .saturating_sub(REAP_GRACE),
+        )
+        .await
+}
+#[cfg(test)]
+pub(super) fn linux_python_cleanup(request: &str, deadline: Instant) -> io::Result<Output> {
+    let command = linux_command(LinuxCommand::Cleanup, request, deadline)?;
+    ManagedChild::spawn(command)?.output_blocking(deadline)
+}
+
+// Closed failure points exist only in owned Linux tests, never protocol argv.
+#[cfg(all(test, target_os = "linux"))]
+pub(super) enum LinuxFault {
+    BeforeCreate,
+    Unmarked,
+    Stamped,
+    Locked,
+}
+#[cfg(all(test, target_os = "linux"))]
+pub(super) struct FaultChild {
+    child: ManagedChild,
+    deadline: Instant,
+    stage: &'static str,
+}
+#[cfg(all(test, target_os = "linux"))]
+pub(super) fn linux_fault(request: &str, fault: LinuxFault) -> io::Result<FaultChild> {
+    let deadline = Instant::now() + COMMAND_BOUND;
+    let stage = match fault {
+        LinuxFault::BeforeCreate => "before_create",
+        LinuxFault::Unmarked => "unmarked",
+        LinuxFault::Stamped => "stamped",
+        LinuxFault::Locked => "locked",
+    };
+    let standard = linux_command(LinuxCommand::Create, request, deadline)?;
+    let encoded = standard
+        .get_args()
+        .last()
+        .ok_or_else(|| io::Error::other("local_linux_request_invalid"))?;
+    // The normal program is imported without invoking its entry point. All its
+    // receipt/instance validation still runs before any selected checkpoint.
+    let source = format!(
+        "__name__ = 'owned_fixture_fault'\n{}\ntry:\n    value = request('create', sys.argv[2])\n    work_deadline = time.monotonic() + value['budget_ms'] / 1000\n    run('create', value, lambda stage: _fault_checkpoint(stage, '{stage}', work_deadline))\nexcept Exception:\n    print('local_linux_fixture_refused', file=sys.stderr)\n    sys.exit(1)\n",
+        include_str!("linux_postgres.py")
+    );
+    let mut command = Command::new("/usr/bin/python3");
+    command.env_clear().args([
+        std::ffi::OsStr::new("-I"),
+        std::ffi::OsStr::new("-B"),
+        std::ffi::OsStr::new("-c"),
+        std::ffi::OsStr::new(&source),
+        std::ffi::OsStr::new("create"),
+        encoded,
+    ]);
+    let mut child = ManagedChild::spawn(command)?;
+    child.cleanup_deadline = Some(deadline);
+    Ok(FaultChild {
+        child,
+        deadline,
+        stage,
+    })
+}
+#[cfg(all(test, target_os = "linux"))]
+impl FaultChild {
+    pub(super) fn id(&self) -> u32 {
+        self.child.id()
+    }
+    pub(super) async fn ready(&mut self) -> io::Result<()> {
+        let expected = format!("{{\"stage\":\"{}\",\"version\":1}}\n", self.stage);
+        loop {
+            if Instant::now() + REAP_GRACE >= self.deadline {
+                return Err(io::Error::other("local_linux_fault_timeout"));
+            }
+            if self.child.poll()?.is_some() {
+                return Err(io::Error::other("local_linux_fault_early_exit"));
+            }
+            if self.child.captured == expected.as_bytes() {
+                return Ok(());
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) enum TestCleanupCommand {
     Inspect(String),
     Missing,
@@ -231,6 +374,50 @@ pub(super) fn assert_child_reaped(pid: u32) {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission() {
+        for op in [
+            LinuxCommand::Admit,
+            LinuxCommand::Create,
+            LinuxCommand::Cleanup,
+        ] {
+            let output = linux_python(op, r#"{"version":2}"#, Duration::from_secs(3))
+                .await
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(output.stdout.is_empty());
+        }
+        assert!(
+            linux_python(
+                LinuxCommand::Admit,
+                r#"{"budget_ms":3000,"version":1}"#,
+                Duration::from_secs(3)
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            linux_python(LinuxCommand::Admit, r#"{"version":1}"#, REAP_GRACE)
+                .await
+                .is_err()
+        );
+        assert!(linux_python_cleanup(r#"{"version":1}"#, Instant::now()).is_err());
+        let command = linux_command(
+            LinuxCommand::Admit,
+            r#"{"version":1}"#,
+            Instant::now() + Duration::from_millis(600),
+        )
+        .unwrap();
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(command.get_program(), "/usr/bin/python3");
+        assert_eq!(args[0], "-I");
+        assert_eq!(args[1], "-B");
+        assert_eq!(args[2], "-c");
+        assert_eq!(args[4], "admit");
+        let request: serde_json::Value = serde_json::from_str(args[5].to_str().unwrap()).unwrap();
+        assert!((1..=400).contains(&request["budget_ms"].as_u64().unwrap()));
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation() {
