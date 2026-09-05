@@ -1,31 +1,19 @@
+#[path = "../../../../proof_support/mod.rs"]
+mod local_postgres;
+const LOCAL_DATABASE_NAME: &str = "native_test";
 use chrono::Utc;
 use controller_domain::{EventId, RunId};
 use postgres_store::{ExecutorKind, LeaseGrant, NativeWorkflowIds, PgStore, Scheduler};
 use pve_port::*;
 use serde_json::json;
 use sqlx::{PgPool, postgres::PgPoolOptions};
-use std::{
-    process::{Command, Stdio},
-    time::Duration,
-};
+use std::time::Duration;
 
-pub struct Container {
-    id: String,
-}
-impl Drop for Container {
-    fn drop(&mut self) {
-        let _ = Command::new("docker")
-            .args(["rm", "--force", &self.id])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-}
 pub struct Fixture {
     pub pool: PgPool,
     pub store: PgStore,
     pub other: PgStore,
-    _container: Container,
+    _container: local_postgres::Container,
 }
 impl Fixture {
     pub async fn satisfied_clone(&self) -> (NativeWorkflowIds, CloneRequest) {
@@ -87,61 +75,33 @@ impl Fixture {
         Self::database(true).await
     }
     async fn database(foundation_only: bool) -> Self {
-        let host = Command::new("docker")
-            .args([
-                "context",
-                "inspect",
-                "--format",
-                "{{.Endpoints.docker.Host}}",
-            ])
-            .output()
-            .unwrap();
-        assert!(host.status.success());
-        assert!(
-            String::from_utf8(host.stdout)
-                .unwrap()
-                .trim()
-                .starts_with("unix:///")
-        );
-        assert!(std::env::var_os("DOCKER_HOST").is_none());
-        let output = Command::new("docker")
-            .args([
-                "run",
-                "--pull=never",
-                "--detach",
-                "--env",
-                "POSTGRES_PASSWORD=postgres",
-                "--env",
-                "POSTGRES_DB=native_test",
-                "--publish",
-                "127.0.0.1::5432",
-                "postgres:16-alpine",
-            ])
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        let container = Container {
-            id: String::from_utf8(output.stdout).unwrap().trim().to_owned(),
-        };
-        assert!(container.id.len() == 64 && container.id.bytes().all(|b| b.is_ascii_hexdigit()));
-        let output=Command::new("docker").args(["inspect","--format","{{(index (index .NetworkSettings.Ports \"5432/tcp\") 0).HostIp}}:{{(index (index .NetworkSettings.Ports \"5432/tcp\") 0).HostPort}}",&container.id]).output().unwrap();
-        assert!(output.status.success());
-        let address = String::from_utf8(output.stdout).unwrap();
-        let (host, port) = address.trim().split_once(':').unwrap();
-        assert_eq!(host, "127.0.0.1");
-        let port: u16 = port.parse().unwrap();
-        let dsn = format!("postgresql://postgres:postgres@127.0.0.1:{port}/native_test");
-        let mut connected = None;
-        for _ in 0..60 {
-            if let Ok(pool) = PgPoolOptions::new().max_connections(6).connect(&dsn).await {
-                connected = Some(pool);
-                break;
+        tokio::time::timeout(
+            local_postgres::SETUP_BOUND,
+            Self::setup_database(foundation_only),
+        )
+        .await
+        .expect("local_fixture_setup_timeout")
+    }
+    async fn setup_database(foundation_only: bool) -> Self {
+        let (container, dsn) = local_postgres::Container::start().await;
+        let pool = tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if let Ok(pool) = PgPoolOptions::new()
+                    .max_connections(6)
+                    .acquire_timeout(Duration::from_secs(1))
+                    .connect(&dsn)
+                    .await
+                {
+                    break pool;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
-        let pool = connected.expect("owned PostgreSQL ready in 15 seconds");
+        })
+        .await
+        .expect("local_database_timeout");
         let other_pool = PgPoolOptions::new()
             .max_connections(3)
+            .acquire_timeout(Duration::from_secs(1))
             .connect(&dsn)
             .await
             .unwrap();

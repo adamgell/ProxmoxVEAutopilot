@@ -826,14 +826,23 @@ async fn typed_fake_reads_report_inventory_storage_power_and_no_guest_readiness(
     fake.set_node_status(node.clone());
     fake.set_storage_status(storage.clone());
     fake.set_bridges(bridges.clone());
-    assert_eq!(fake.node_status(plan.node()).await.unwrap(), node);
+    let observed_node = fake.node_status(plan.node()).await.unwrap();
+    assert_eq!(observed_node.node(), node.node());
+    assert_eq!(observed_node.uptime(), node.uptime());
+    assert!(observed_node.online());
+    let observed_storage = fake
+        .storage_status(plan.node(), plan.storage())
+        .await
+        .unwrap();
+    assert_eq!(observed_storage.node(), storage.node());
+    assert_eq!(observed_storage.storage(), storage.storage());
     assert_eq!(
-        fake.storage_status(plan.node(), plan.storage())
-            .await
-            .unwrap(),
-        storage
+        observed_storage.available_bytes(),
+        storage.available_bytes()
     );
-    assert_eq!(fake.bridges(plan.node()).await.unwrap(), bridges);
+    let observed_bridges = fake.bridges(plan.node()).await.unwrap();
+    assert_eq!(observed_bridges.node(), bridges.node());
+    assert_eq!(observed_bridges.bridges(), bridges.bridges());
     assert!(
         observe_target_absence(&fake, plan.node(), plan.target_vmid())
             .await
@@ -884,6 +893,72 @@ async fn typed_fake_reads_report_inventory_storage_power_and_no_guest_readiness(
             .await
             .unwrap_err(),
         PveReadError::NotFound
+    );
+}
+
+// Catches normal infrastructure reads returning the original, expired seed time.
+#[tokio::test]
+async fn normal_infrastructure_reads_refresh_time_but_explicit_stale_config_does_not() {
+    let p = plan();
+    let fake = fake();
+    let aged = Utc::now() - Duration::seconds(60);
+    fake.set_node_status(
+        NodeStatus::from_wire(p.node().clone(), json!({"uptime":100}), aged).unwrap(),
+    );
+    fake.set_storage_status(
+        StorageStatus::from_wire(
+            p.node().clone(),
+            p.storage().clone(),
+            json!({"active":1,"enabled":1,"avail":17179869184_u64,"content":"images"}),
+            aged,
+        )
+        .unwrap(),
+    );
+    fake.set_bridges(BridgeInventory::from_wire(p.node().clone(),
+        json!([{"type":"bridge","iface":"vmbr0","active":1},{"type":"bridge","iface":"vmbr1","active":0}]), aged).unwrap());
+    let before = Utc::now();
+    let node = fake.node_status(p.node()).await.unwrap();
+    let storage = fake.storage_status(p.node(), p.storage()).await.unwrap();
+    let bridges = fake.bridges(p.node()).await.unwrap();
+    let after = Utc::now();
+    for observed_at in [
+        node.observed_at(),
+        storage.observed_at(),
+        bridges.observed_at(),
+    ] {
+        assert!(
+            observed_at >= before && observed_at <= after,
+            "normal read must observe at read time"
+        );
+    }
+    assert!(node.is_fresh(after) && storage.is_fresh(after) && bridges.is_fresh(after));
+    assert_eq!(node.uptime(), 100);
+    assert_eq!(storage.available_bytes(), 17179869184);
+    assert!(bridges.has_active(p.bridge()));
+    assert_eq!(
+        bridges.bridges().get(&BridgeName::parse("vmbr1").unwrap()),
+        Some(&false)
+    );
+
+    let mut snapshot = serde_json::to_value(config(9000, true)).unwrap();
+    snapshot["observed_at"] = json!(aged);
+    let stale: NativeVmConfig = serde_json::from_value(snapshot).unwrap();
+    fake.enqueue_config_read(
+        p.source_vmid(),
+        FakeConfigRead::Snapshot(Box::new(stale.clone())),
+    );
+    assert_eq!(
+        fake.native_vm_config(p.node(), p.source_vmid())
+            .await
+            .unwrap(),
+        stale
+    );
+    assert!(!stale.is_fresh(Utc::now()));
+    assert!(
+        fake.native_vm_config(p.node(), p.source_vmid())
+            .await
+            .unwrap()
+            .is_fresh(Utc::now())
     );
 }
 

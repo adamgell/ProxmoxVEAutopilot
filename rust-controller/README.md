@@ -34,6 +34,11 @@ container cleanup budget: 33.2 seconds total apart from OS scheduling delays.
 Unconfirmed cleanup fails the proof; a possibly created container can remain when
 ownership cannot be verified within that bound.
 
+The native store and controller test fixtures share this private owned-container
+lifecycle. Each fixture also bounds its complete setup, including database
+readiness, connections, migrations, and authority initialization, to 30 seconds
+of async work plus the same finite cancellation and cleanup grace.
+
 ## Source and verification mapping
 
 All paths below are repository-relative. Test names identify executable local

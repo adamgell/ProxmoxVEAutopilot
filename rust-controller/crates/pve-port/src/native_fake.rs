@@ -445,35 +445,25 @@ impl PveMutationPort for NativeFakePve {
 #[async_trait]
 impl PvePreflightReadPort for NativeFakePve {
     async fn node_status(&self, node: &NodeName) -> Result<NodeStatus, PveReadError> {
-        self.state
-            .lock()
-            .unwrap()
-            .nodes
-            .get(node)
-            .cloned()
-            .ok_or(PveReadError::NotFound)
+        let state = self.state.lock().unwrap();
+        refresh_observation(state.nodes.get(node).ok_or(PveReadError::NotFound)?)
     }
     async fn storage_status(
         &self,
         node: &NodeName,
         storage: &StorageName,
     ) -> Result<StorageStatus, PveReadError> {
-        self.state
-            .lock()
-            .unwrap()
-            .storage
-            .get(&(node.clone(), storage.clone()))
-            .cloned()
-            .ok_or(PveReadError::NotFound)
+        let state = self.state.lock().unwrap();
+        refresh_observation(
+            state
+                .storage
+                .get(&(node.clone(), storage.clone()))
+                .ok_or(PveReadError::NotFound)?,
+        )
     }
     async fn bridges(&self, node: &NodeName) -> Result<BridgeInventory, PveReadError> {
-        self.state
-            .lock()
-            .unwrap()
-            .bridges
-            .get(node)
-            .cloned()
-            .ok_or(PveReadError::NotFound)
+        let state = self.state.lock().unwrap();
+        refresh_observation(state.bridges.get(node).ok_or(PveReadError::NotFound)?)
     }
     async fn cluster_vms(&self) -> Result<ClusterVmInventory, PveReadError> {
         let s = self.state.lock().unwrap();
@@ -505,10 +495,7 @@ impl PvePreflightReadPort for NativeFakePve {
         }
         let s = self.state.lock().unwrap();
         let c = &lookup(&s, node, vmid)?.config;
-        // Reload sanitized facts to refresh time without weakening unsupported/lock facts.
-        let mut value = serde_json::to_value(c).map_err(|_| PveReadError::InvalidResponse)?;
-        value["observed_at"] = json!(Utc::now());
-        serde_json::from_value(value).map_err(|_| PveReadError::InvalidResponse)
+        refresh_observation(c)
     }
     async fn vm_status(&self, node: &NodeName, vmid: Vmid) -> Result<VmPowerStatus, PveReadError> {
         let s = self.state.lock().unwrap();
@@ -520,6 +507,16 @@ impl PvePreflightReadPort for NativeFakePve {
             Utc::now(),
         )
     }
+}
+
+// Normal reads observe current fake state; explicit queued snapshots bypass this
+// helper so stale-evidence fault injection retains its original timestamp.
+fn refresh_observation<T: serde::Serialize + serde::de::DeserializeOwned>(
+    snapshot: &T,
+) -> Result<T, PveReadError> {
+    let mut value = serde_json::to_value(snapshot).map_err(|_| PveReadError::InvalidResponse)?;
+    value["observed_at"] = json!(Utc::now());
+    serde_json::from_value(value).map_err(|_| PveReadError::InvalidResponse)
 }
 #[async_trait]
 impl PveReadPort for NativeFakePve {

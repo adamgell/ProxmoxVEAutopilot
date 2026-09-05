@@ -380,6 +380,65 @@ async fn unknown_clone_with_running_task_retains_facts_without_active_waiting() 
     );
     assert_eq!(f.fake.recorded_requests().len(), 1);
 }
+
+// A recovered clone may outlive the original infrastructure snapshot freshness.
+#[tokio::test]
+async fn recovered_clone_continues_configure_and_start_with_aged_infrastructure() {
+    let f = Fixture::new().await;
+    let ids = f.enqueue().await;
+    f.fake
+        .enqueue_outcome(NativeStep::Clone, FakeMutationOutcome::AcceptedTaskDelayed)
+        .unwrap();
+    let mut first = f.controller("first");
+    assert_eq!(
+        first.run_once(ids.clone_id()).await.unwrap(),
+        NativeProgress::Waiting
+    );
+    expire(&f, ids.clone_id(), true).await;
+    assert_eq!(
+        first.run_once(ids.clone_id()).await.unwrap(),
+        NativeProgress::Decided(ExecutionState::Unknown)
+    );
+    drop(first);
+    // Model the elapsed seed age without sleeping through the freshness horizon.
+    let p = plan();
+    let aged = chrono::Utc::now() - chrono::Duration::seconds(60);
+    f.fake.set_node_status(
+        NodeStatus::from_wire(p.node().clone(), serde_json::json!({"uptime":123}), aged).unwrap(),
+    );
+    f.fake.set_storage_status(
+        StorageStatus::from_wire(
+            p.node().clone(),
+            p.storage().clone(),
+            serde_json::json!({"active":1,"enabled":1,"content":"images","avail":34359738368_u64}),
+            aged,
+        )
+        .unwrap(),
+    );
+    f.fake.set_bridges(
+        BridgeInventory::from_wire(
+            p.node().clone(),
+            serde_json::json!([{"type":"bridge","iface":"vmbr0","active":1}]),
+            aged,
+        )
+        .unwrap(),
+    );
+    f.fake.complete_pending().unwrap();
+    let mut recovered = f.controller("recovered");
+    assert_eq!(
+        recovered.reconcile_once(ids.clone_id()).await.unwrap(),
+        NativeProgress::Decided(ExecutionState::Satisfied)
+    );
+    assert_no_live_work(&f, ids.clone_id()).await;
+    for id in [ids.configure_id(), ids.start_id()] {
+        assert_eq!(
+            recovered.run_once(id).await.unwrap(),
+            NativeProgress::Decided(ExecutionState::Satisfied)
+        );
+    }
+    f.assert_success().await;
+    f.cleanup().unwrap();
+}
 async fn assert_no_live_work(f: &Fixture, id: controller_domain::OperationId) {
     let (leases,attempts,dispatches):(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM rust_controller.worker_leases WHERE operation_id=$1),(SELECT count(*) FROM rust_controller.attempts WHERE operation_id=$1),(SELECT count(*) FROM rust_controller.native_dispatches WHERE operation_id=$1)").bind(id.as_uuid()).fetch_one(&f.pool).await.unwrap();
     assert_eq!((leases, attempts, dispatches), (0, 1, 1));

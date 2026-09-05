@@ -221,7 +221,7 @@ mod tests {
 
     // Cancellation must drop the guard and terminate/reap the actual child.
     #[tokio::test(flavor = "current_thread")]
-    async fn cancellation_drops_and_reaps_child_within_grace() {
+    async fn stalled_setup_child_obeys_current_thread_timeout() {
         let child = ManagedChild::test_sleep();
         let pid = child.id();
         let start = Instant::now();
