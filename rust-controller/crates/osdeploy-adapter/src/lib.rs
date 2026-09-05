@@ -2,7 +2,9 @@
 
 mod input_values;
 mod plan;
+mod provisioning;
 mod stages;
+pub use provisioning::pve_expectations;
 
 pub use input_values::{
     DeploymentNames, DiskCapacity, PhasePolicy, PhasePolicyInput, normalize_legacy_windows_name,
@@ -13,6 +15,10 @@ pub use stages::{OsDeployStage, StageDependency, StageKind};
 /// Fixed errors never retain rejected input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ContractError {
+    #[error("desired PVE disk serial exceeds the 20-byte dispatch limit")]
+    UnsupportedPveDiskSerial,
+    #[error("PVE expectations could not be derived from the deployment plan")]
+    InvalidPveExpectations,
     #[error("payload reference must be non-nil")]
     InvalidPayloadReference,
     #[error("payload SHA-256 must contain exactly 64 ASCII hexadecimal characters")]

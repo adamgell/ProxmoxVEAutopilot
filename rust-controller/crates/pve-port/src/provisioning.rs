@@ -10,6 +10,45 @@ mod requests;
 pub use evaluation::*;
 pub use requests::*;
 
+/// Sealed synthetic provisioning collection and mutation seam.
+///
+/// A read-only observer cannot submit provisioning mutations.
+/// ```compile_fail
+/// use pve_port::{ProvisioningFakePort, ProvisioningMutationRequestV1, ReqwestPveObserver};
+/// async fn mutate(observer: &ReqwestPveObserver, request: &ProvisioningMutationRequestV1) {
+///     observer.submit_provisioning(request).await;
+/// }
+/// ```
+/// A downstream wrapper cannot implement the private mutation capability.
+/// ```compile_fail
+/// struct Wrapper(pve_port::NativeFakePve);
+/// impl pve_port::native::sealed::FakeMutationCapability for Wrapper {}
+/// ```
+#[async_trait::async_trait]
+pub trait ProvisioningFakePort:
+    crate::PvePreflightReadPort + crate::native::sealed::FakeMutationCapability
+{
+    async fn provisioning_vm_config(
+        &self,
+        node: &NodeName,
+        vmid: Vmid,
+    ) -> Result<ProvisioningVmConfigV1, PveReadError>;
+    async fn provisioning_identity(
+        &self,
+        node: &NodeName,
+        vmid: Vmid,
+    ) -> Result<ProvisioningIdentitySnapshotV1, PveReadError>;
+    async fn provisioning_media(
+        &self,
+        node: &NodeName,
+        storage: &StorageName,
+    ) -> Result<ProvisioningMediaInventoryV1, PveReadError>;
+    async fn submit_provisioning(
+        &self,
+        request: &ProvisioningMutationRequestV1,
+    ) -> Result<crate::MutationReceipt, crate::PveWriteError>;
+}
+
 use crate::{
     BridgeName, FakeCloneProvenance, MacAddress, NativeEvidenceSource, NativeVmName, NativeVmPlan,
     NodeName, PveReadError, StorageName, VmUuid, Vmid,

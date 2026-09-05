@@ -1,7 +1,9 @@
 //! Owned in-memory synthetic PVE. No URL, credentials, transport or processes.
 use crate::*;
+mod provisioning;
 use async_trait::async_trait;
 use chrono::Utc;
+pub use provisioning::*;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -71,8 +73,110 @@ impl NativeMutationRequest {
 }
 #[derive(Clone)]
 struct FakeVm {
-    config: NativeVmConfig,
+    config: FakeConfig,
     power: PowerState,
+    incarnation: u64,
+    qga_reachable: bool,
+}
+#[derive(Clone)]
+enum FakeConfig {
+    NativeV1(NativeVmConfig),
+    ProvisioningV1(ProvisioningVmConfigV1),
+}
+impl FakeConfig {
+    fn native(&self) -> Result<&NativeVmConfig, PveReadError> {
+        match self {
+            Self::NativeV1(c) => Ok(c),
+            _ => Err(PveReadError::InvalidResponse),
+        }
+    }
+    fn provisioning(&self) -> Result<&ProvisioningVmConfigV1, PveReadError> {
+        match self {
+            Self::ProvisioningV1(c) => Ok(c),
+            _ => Err(PveReadError::InvalidResponse),
+        }
+    }
+    fn identity(&self) -> Result<ProvisioningIdentitySnapshotV1, PveReadError> {
+        match self {
+            Self::NativeV1(c) => {
+                ProvisioningIdentitySnapshotV1::from_native(c, NativeEvidenceSource::FakePve)
+                    .map_err(|_| PveReadError::InvalidResponse)
+            }
+            Self::ProvisioningV1(c) => Ok(ProvisioningIdentitySnapshotV1::from_provisioning(c)),
+        }
+    }
+    fn node(&self) -> &NodeName {
+        match self {
+            Self::NativeV1(c) => c.node(),
+            Self::ProvisioningV1(c) => c.node(),
+        }
+    }
+    fn vmid(&self) -> Vmid {
+        match self {
+            Self::NativeV1(c) => c.vmid(),
+            Self::ProvisioningV1(c) => c.vmid(),
+        }
+    }
+    fn name(&self) -> &NativeVmName {
+        match self {
+            Self::NativeV1(c) => c.name(),
+            Self::ProvisioningV1(c) => c.name(),
+        }
+    }
+    fn is_template(&self) -> bool {
+        match self {
+            Self::NativeV1(c) => c.is_template(),
+            Self::ProvisioningV1(c) => c.is_template(),
+        }
+    }
+    fn locked(&self) -> bool {
+        match self {
+            Self::NativeV1(c) => c.locked(),
+            Self::ProvisioningV1(c) => c.locked(),
+        }
+    }
+    fn storage(&self) -> &StorageName {
+        match self {
+            Self::NativeV1(c) => c.boot_disk().storage(),
+            Self::ProvisioningV1(c) => c.primary_disk().storage(),
+        }
+    }
+    fn volume(&self) -> &str {
+        match self {
+            Self::NativeV1(c) => c.boot_disk().volume(),
+            Self::ProvisioningV1(c) => c.primary_disk().volume(),
+        }
+    }
+}
+enum PendingMutation {
+    NativeV1 {
+        upid: Upid,
+        request: Box<NativeMutationRequest>,
+    },
+    ProvisioningV1 {
+        upid: Upid,
+        request: Box<ProvisioningMutationRequestV1>,
+        source_incarnation: Option<u64>,
+        target_incarnation: Option<u64>,
+    },
+}
+impl PendingMutation {
+    fn upid(&self) -> &Upid {
+        match self {
+            Self::NativeV1 { upid, .. } | Self::ProvisioningV1 { upid, .. } => upid,
+        }
+    }
+    fn resources(&self) -> Vec<Vmid> {
+        match self {
+            Self::NativeV1 { request, .. } => {
+                provisioning::resources(request.vm(), request.step() == NativeStep::Clone)
+            }
+            Self::ProvisioningV1 { request, .. } => provisioning::resources(
+                request.plan().expected().vm(),
+                request.plan().action() == ProvisioningActionV1::Clone,
+            ),
+        }
+    }
 }
 #[derive(Default)]
 struct State {
@@ -86,8 +190,19 @@ struct State {
     outcomes: BTreeMap<NativeStep, VecDeque<FakeMutationOutcome>>,
     requests: Vec<NativeMutationRequest>,
     tasks: BTreeMap<Upid, TaskState>,
-    pending: VecDeque<(Upid, NativeMutationRequest)>,
+    pending: VecDeque<PendingMutation>,
     sequence: u32,
+    incarnation: u64,
+    provisioning: provisioning::Controls,
+}
+impl State {
+    fn next_incarnation(&mut self) -> Result<u64, PveWriteError> {
+        self.incarnation = self
+            .incarnation
+            .checked_add(1)
+            .ok_or(PveWriteError::Rejected)?;
+        Ok(self.incarnation)
+    }
 }
 #[derive(Clone, Default)]
 pub struct NativeFakePve {
@@ -158,7 +273,16 @@ impl NativeFakePve {
         if s.vms.contains_key(&config.vmid()) {
             return Err(PveWriteError::Conflict);
         }
-        s.vms.insert(config.vmid(), FakeVm { config, power });
+        let incarnation = s.next_incarnation()?;
+        s.vms.insert(
+            config.vmid(),
+            FakeVm {
+                config: FakeConfig::NativeV1(config),
+                power,
+                incarnation,
+                qga_reachable: false,
+            },
+        );
         Ok(())
     }
     /// Explicit fixture change for modeling out-of-band edits. No observed
@@ -172,7 +296,16 @@ impl NativeFakePve {
         if !s.vms.contains_key(&config.vmid()) {
             return Err(PveWriteError::Rejected);
         }
-        s.vms.insert(config.vmid(), FakeVm { config, power });
+        let incarnation = s.next_incarnation()?;
+        s.vms.insert(
+            config.vmid(),
+            FakeVm {
+                config: FakeConfig::NativeV1(config),
+                power,
+                incarnation,
+                qga_reachable: false,
+            },
+        );
         Ok(())
     }
     pub fn set_node_status(&self, status: NodeStatus) {
@@ -226,7 +359,14 @@ impl NativeFakePve {
     /// A conflict records task failure and leaves the occupant unchanged.
     pub fn complete_pending(&self) -> Result<(), PveWriteError> {
         let mut s = self.state.lock().unwrap();
-        let (upid, request) = s.pending.pop_front().ok_or(PveWriteError::Rejected)?;
+        let index = s
+            .pending
+            .iter()
+            .position(|p| matches!(p, PendingMutation::NativeV1 { .. }))
+            .ok_or(PveWriteError::Rejected)?;
+        let Some(PendingMutation::NativeV1 { upid, request }) = s.pending.remove(index) else {
+            return Err(PveWriteError::Rejected);
+        };
         let result = validate(&s, &request).and_then(|()| apply(&mut s, &request));
         s.tasks.insert(
             upid,
@@ -278,7 +418,10 @@ impl NativeFakePve {
             }
             FakeMutationOutcome::AcceptedTaskDelayed => {
                 s.tasks.insert(upid.clone(), TaskState::Running);
-                s.pending.push_back((upid.clone(), request));
+                s.pending.push_back(PendingMutation::NativeV1 {
+                    upid: upid.clone(),
+                    request: Box::new(request),
+                });
             }
             _ => {
                 apply(&mut s, &request)?;
@@ -300,6 +443,13 @@ fn lookup<'a>(s: &'a State, node: &NodeName, vmid: Vmid) -> Result<&'a FakeVm, P
 }
 fn validate(s: &State, request: &NativeMutationRequest) -> Result<(), PveWriteError> {
     let p = request.vm();
+    let resources = provisioning::resources(p, request.step() == NativeStep::Clone);
+    if s.pending.iter().any(|pending| {
+        matches!(pending, PendingMutation::ProvisioningV1 { .. })
+            && pending.resources().iter().any(|id| resources.contains(id))
+    }) {
+        return Err(PveWriteError::Conflict);
+    }
     match request {
         NativeMutationRequest::Clone(_) => {
             if s.vms.contains_key(&p.target_vmid()) {
@@ -307,10 +457,14 @@ fn validate(s: &State, request: &NativeMutationRequest) -> Result<(), PveWriteEr
             }
             let source =
                 lookup(s, p.node(), p.source_vmid()).map_err(|_| PveWriteError::Rejected)?;
+            let config = source
+                .config
+                .native()
+                .map_err(|_| PveWriteError::Rejected)?;
             if source.power != PowerState::Stopped
-                || !source.config.is_template()
-                || source.config.locked()
-                || !source.config.unsupported().is_empty()
+                || !config.is_template()
+                || config.locked()
+                || !config.unsupported().is_empty()
             {
                 return Err(PveWriteError::Rejected);
             }
@@ -318,9 +472,11 @@ fn validate(s: &State, request: &NativeMutationRequest) -> Result<(), PveWriteEr
         NativeMutationRequest::Configure(r) => validate_expected(s, p, r.expected())?,
         NativeMutationRequest::Start(r) => {
             validate_expected(s, p, r.expected())?;
-            let current = &lookup(s, p.node(), p.target_vmid())
+            let current = lookup(s, p.node(), p.target_vmid())
                 .map_err(|_| PveWriteError::Conflict)?
-                .config;
+                .config
+                .native()
+                .map_err(|_| PveWriteError::Conflict)?;
             if !crate::native::final_fields(p, current) {
                 return Err(PveWriteError::Conflict);
             }
@@ -334,7 +490,7 @@ fn validate_expected(
     expected: &NativeVmConfig,
 ) -> Result<(), PveWriteError> {
     let vm = lookup(s, p.node(), p.target_vmid()).map_err(|_| PveWriteError::Conflict)?;
-    let c = &vm.config;
+    let c = vm.config.native().map_err(|_| PveWriteError::Conflict)?;
     // Independently reject changes between request construction and submission.
     if vm.power != PowerState::Stopped
         || c.locked()
@@ -361,9 +517,11 @@ fn apply(s: &mut State, request: &NativeMutationRequest) -> Result<(), PveWriteE
     let p = request.vm();
     match request {
         NativeMutationRequest::Clone(r) => {
-            let source = &lookup(s, p.node(), p.source_vmid())
+            let source = lookup(s, p.node(), p.source_vmid())
                 .map_err(|_| PveWriteError::Rejected)?
-                .config;
+                .config
+                .native()
+                .map_err(|_| PveWriteError::Rejected)?;
             let mut data = wire(source);
             let fresh_uuid = uuid::Uuid::now_v7();
             let bytes = fresh_uuid.as_bytes();
@@ -385,11 +543,14 @@ fn apply(s: &mut State, request: &NativeMutationRequest) -> Result<(), PveWriteE
                 NativeVmConfig::from_wire(p.node().clone(), p.target_vmid(), data, Utc::now())
                     .map_err(|_| PveWriteError::Rejected)?
                     .with_fake_provenance(FakeCloneProvenance::from_request(r));
+            let incarnation = s.next_incarnation()?;
             s.vms.insert(
                 p.target_vmid(),
                 FakeVm {
-                    config,
+                    config: FakeConfig::NativeV1(config),
                     power: PowerState::Stopped,
+                    incarnation,
+                    qga_reachable: false,
                 },
             );
         }
@@ -398,7 +559,8 @@ fn apply(s: &mut State, request: &NativeMutationRequest) -> Result<(), PveWriteE
                 .vms
                 .get_mut(&p.target_vmid())
                 .ok_or(PveWriteError::Conflict)?;
-            let mut data = wire(&vm.config);
+            let current = vm.config.native().map_err(|_| PveWriteError::Conflict)?;
+            let mut data = wire(current);
             for (key, value) in r.form() {
                 if key != "digest" {
                     data[key] = json!(value);
@@ -407,15 +569,15 @@ fn apply(s: &mut State, request: &NativeMutationRequest) -> Result<(), PveWriteE
             data["cores"] = json!(p.cores());
             data["memory"] = json!(p.memory_mib());
             data["digest"] = json!(format!("config-{}", uuid::Uuid::now_v7()));
-            let provenance = vm
-                .config
+            let provenance = current
                 .fake_clone_provenance()
                 .cloned()
                 .ok_or(PveWriteError::Conflict)?;
-            vm.config =
+            vm.config = FakeConfig::NativeV1(
                 NativeVmConfig::from_wire(p.node().clone(), p.target_vmid(), data, Utc::now())
                     .map_err(|_| PveWriteError::Rejected)?
-                    .with_fake_provenance(provenance);
+                    .with_fake_provenance(provenance),
+            );
         }
         NativeMutationRequest::Start(_) => {
             s.vms
@@ -494,7 +656,7 @@ impl PvePreflightReadPort for NativeFakePve {
             None => {}
         }
         let s = self.state.lock().unwrap();
-        let c = &lookup(&s, node, vmid)?.config;
+        let c = lookup(&s, node, vmid)?.config.native()?;
         refresh_observation(c)
     }
     async fn vm_status(&self, node: &NodeName, vmid: Vmid) -> Result<VmPowerStatus, PveReadError> {
@@ -550,20 +712,17 @@ impl PveReadPort for NativeFakePve {
             .unwrap()
             .vms
             .values()
-            .filter(|vm| vm.config.node() == node && vm.config.boot_disk().storage() == storage)
+            .filter(|vm| vm.config.node() == node && vm.config.storage() == storage)
             .map(|vm| {
-                Volume::new(
-                    format!("{}:{}", storage, vm.config.boot_disk().volume()),
-                    Utc::now(),
-                )
-                .map_err(|_| PveReadError::InvalidResponse)
+                Volume::new(format!("{}:{}", storage, vm.config.volume()), Utc::now())
+                    .map_err(|_| PveReadError::InvalidResponse)
             })
             .collect()
     }
     async fn qga_ping(&self, node: &NodeName, vmid: Vmid) -> Result<QgaStatus, PveReadError> {
         let s = self.state.lock().unwrap();
-        lookup(&s, node, vmid)?;
+        let vm = lookup(&s, node, vmid)?;
         // Power and agent configuration do not prove a guest exists or is ready.
-        Ok(QgaStatus::new(false, Utc::now()))
+        Ok(QgaStatus::new(vm.qga_reachable, Utc::now()))
     }
 }

@@ -33,8 +33,10 @@ pub use native::{
     evaluate_native_outcome, evaluate_native_preflight, is_fresh,
 };
 pub use native_fake::{
-    FakeConfigRead, FakeControllerCheckpoint, FakeMutationOutcome, FakePause, NativeFakePve,
-    NativeMutationRequest, UnsupportedFakeOutcome,
+    FakeConfigRead, FakeControllerCheckpoint, FakeMutationOutcome, FakePause,
+    FakeProvisioningConfigReadV1, FakeProvisioningIdentityReadV1, FakeProvisioningMediaReadV1,
+    NativeFakePve, NativeMutationRequest, ProvisioningAcceptanceV1, ProvisioningFaultSelectorV1,
+    ProvisioningSubmissionRecordV1, UnsupportedFakeOutcome,
 };
 pub use observer::{
     PveAccessMode, PveObserverBuildError, PveObserverConfig, PveRequestAudit, ReqwestPveObserver,

@@ -207,6 +207,31 @@ fixed field, derived name and nested provenance. Private constructor-only output
 cannot be deserialized directly. Run/command identities, reservations and complete
 digest verification during reload belong to later store integration.
 
+`osdeploy_adapter::pve_expectations` derives the validated PVE subset solely from
+the accepted deployment plan. It preserves effective retained disk bytes and
+rejects desired disk serials longer than 20 ASCII bytes before returning a subset.
+The broad declaration remains readable; no serial is truncated. The full workflow
+fingerprint remains separate and includes non-PVE artifact, policy and profile
+inputs. Conversion creates no registration, dispatch, operation ID or authority.
+
+`NativeFakePve` implements the sealed `ProvisioningFakePort` in its existing single
+VM namespace and shared task map. Rich and legacy configurations are both visible
+in inventory and neutral identity reads; incompatible configuration reads fail
+closed. Rich clone, growth, PE configuration/start, stop, media removal and disk
+start change actual synthetic state. Configuration preserves disk capacity;
+growth alone changes its size. QGA reachability and ISO catalogs are independent
+fixtures, and missing catalogs never imply media availability.
+
+Provisioning faults select an action and optional operation ID. Each attempted
+submit has an immutable history record with separate acceptance and returned
+result. A lost response keeps its original acceptance; a second submission of the
+same operation is rejected even after an initial rejection. Accepted delayed work
+pins source/target incarnations and rechecks the original complete before-state
+at exact-UPID completion. Explicit fixture replacement or independent power
+changes cannot redirect that work. Legacy pending completion remains legacy-only.
+These are synthetic transport controls, not durable dispatch authorization or
+proof of service recovery, Windows readiness, or installed-PVE compatibility.
+
 This contract does not yet supply durable stage evaluation, callback binding,
 transport mutations, service execution, restart proof or production readiness.
 It leaves existing native operation keys and Python wire schemas unchanged.
