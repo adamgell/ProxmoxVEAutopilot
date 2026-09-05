@@ -527,6 +527,42 @@ fn persisted_facts_require_objects_even_when_an_array_has_valid_ordered_fields()
 }
 
 #[test]
+fn media_discriminators_require_strings_standalone_and_in_snapshots() {
+    for state in ["absent", "iso", "unsupported"] {
+        let mut valid = json!({"state": state});
+        if state == "iso" {
+            valid["volid"] = json!("local:iso/a.iso");
+        }
+        let slot: ProvisioningMediaSlotV1 = serde_json::from_value(valid.clone()).unwrap();
+        assert_eq!(serde_json::to_value(slot).unwrap(), valid);
+
+        let mut invalid = valid.clone();
+        invalid["state"] = json!({state: null});
+        let error = serde_json::from_value::<ProvisioningMediaSlotV1>(invalid.clone()).unwrap_err();
+        assert_eq!(error.to_string(), PveReadError::InvalidResponse.to_string());
+
+        for (field, reason) in [
+            ("deployment_iso", "deployment_media"),
+            ("driver_iso", "driver_media"),
+        ] {
+            let mut snapshot = golden_snapshot();
+            snapshot[field] = valid.clone();
+            if state == "unsupported" {
+                snapshot["unsupported"] = json!([reason]);
+            }
+            let decoded: ProvisioningVmConfigV1 = serde_json::from_value(snapshot.clone()).unwrap();
+            assert_eq!(serde_json::to_value(decoded).unwrap(), snapshot);
+            snapshot[field] = invalid.clone();
+            let error = serde_json::from_value::<ProvisioningVmConfigV1>(snapshot).unwrap_err();
+            assert_eq!(error.to_string(), PveReadError::InvalidResponse.to_string());
+        }
+    }
+    let secret = json!({"state": {"secret-value": null}});
+    let error = serde_json::from_value::<ProvisioningMediaSlotV1>(secret).unwrap_err();
+    assert_eq!(error.to_string(), PveReadError::InvalidResponse.to_string());
+}
+
+#[test]
 fn nested_persisted_fields_reject_duplicates_and_unknowns_without_payloads() {
     for raw in [
         r#"{"storage":"local-lvm","storage":"other","volume":"vm-900-disk-0","capacity_bytes":1,"serial":null}"#,

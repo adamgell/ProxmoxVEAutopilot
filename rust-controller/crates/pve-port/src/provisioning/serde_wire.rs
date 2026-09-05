@@ -78,16 +78,11 @@ where
 impl<'de> Deserialize<'de> for ProvisioningMediaSlotV1 {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
-        #[serde(rename_all = "snake_case")]
-        enum State {
-            Absent,
-            Iso,
-            Unsupported,
-        }
-        #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Wire {
-            state: State,
+            // A derived unit enum also accepts externally tagged objects.
+            // The persisted media discriminator is strictly a JSON string.
+            state: String,
             #[serde(default, deserialize_with = "present_string")]
             volid: Option<String>,
         }
@@ -98,10 +93,10 @@ impl<'de> Deserialize<'de> for ProvisioningMediaSlotV1 {
         }
         let wire =
             object::<D, Wire>(d).map_err(|_| de::Error::custom(PveReadError::InvalidResponse))?;
-        match (wire.state, wire.volid) {
-            (State::Absent, None) => Ok(Self::Absent),
-            (State::Unsupported, None) => Ok(Self::Unsupported),
-            (State::Iso, Some(volid)) if expectations::media_storage(&volid).is_some() => {
+        match (wire.state.as_str(), wire.volid) {
+            ("absent", None) => Ok(Self::Absent),
+            ("unsupported", None) => Ok(Self::Unsupported),
+            ("iso", Some(volid)) if expectations::media_storage(&volid).is_some() => {
                 Ok(Self::Iso { volid })
             }
             _ => Err(de::Error::custom(PveReadError::InvalidResponse)),
