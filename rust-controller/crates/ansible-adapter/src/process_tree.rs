@@ -9,6 +9,33 @@ struct Identity {
     group: i32,
     birth: (u64, u64),
 }
+impl Identity {
+    fn same_process(self, other: Self) -> bool {
+        self.pid == other.pid && self.birth == other.birth
+    }
+}
+
+// Private inspection/signal seam permits deterministic detached-worker races
+// without executing a second playbook or an arbitrary test helper process.
+trait ProcessAccess {
+    fn identity(&self, pid: i32) -> Option<Identity>;
+    fn children(&self, pid: i32) -> Vec<i32>;
+    fn signal(&self, target: i32, signal: i32);
+}
+struct NativeAccess;
+impl ProcessAccess for NativeAccess {
+    fn identity(&self, pid: i32) -> Option<Identity> {
+        identity(pid)
+    }
+    fn children(&self, pid: i32) -> Vec<i32> {
+        children(pid)
+    }
+    fn signal(&self, target: i32, signal: i32) {
+        unsafe {
+            libc::kill(target, signal);
+        }
+    }
+}
 
 pub(crate) struct ProcessTree {
     root: i32,
@@ -24,19 +51,25 @@ impl ProcessTree {
         tree
     }
     pub(crate) fn refresh(&mut self, freeze: bool) {
+        self.refresh_using(freeze, &NativeAccess);
+    }
+    fn refresh_using(&mut self, freeze: bool, access: &impl ProcessAccess) {
         let mut queue: Vec<_> = self
             .known
             .values()
-            .copied()
-            .filter(|id| identity(id.pid) == Some(*id))
+            .filter_map(|known| {
+                access
+                    .identity(known.pid)
+                    .filter(|current| current.same_process(*known))
+            })
             .collect();
-        if let Some(root) = identity(self.root) {
+        if let Some(root) = access.identity(self.root) {
             // Once recorded, a reused root PID can never add another tree.
             if self
                 .known
                 .get(&self.root)
-                .is_none_or(|known| *known == root)
-                && !queue.contains(&root)
+                .is_none_or(|known| known.same_process(root))
+                && !queue.iter().any(|known| known.same_process(root))
             {
                 queue.push(root);
             }
@@ -46,14 +79,14 @@ impl ProcessTree {
             let current = queue[index];
             self.known.insert(current.pid, current);
             if freeze {
-                signal_identity(current, libc::SIGSTOP);
+                signal_identity(current, libc::SIGSTOP, access);
             }
-            for child in children(current.pid) {
+            for child in access.children(current.pid) {
                 if queue.len() >= MAX_PROCESSES {
                     break;
                 }
-                if let Some(id) = identity(child)
-                    && !queue.contains(&id)
+                if let Some(id) = access.identity(child)
+                    && !queue.iter().any(|known| known.same_process(id))
                 {
                     queue.push(id);
                 }
@@ -62,27 +95,38 @@ impl ProcessTree {
         }
     }
     pub(crate) fn signal(&self, signal: i32) {
+        self.signal_using(signal, &NativeAccess);
+    }
+    fn signal_using(&self, signal: i32, access: &impl ProcessAccess) {
         for id in self.known.values() {
-            signal_identity(*id, signal);
+            signal_identity(*id, signal, access);
         }
     }
     pub(crate) fn any_live(&self) -> bool {
-        self.known.values().any(|id| identity(id.pid) == Some(*id))
+        self.any_live_using(&NativeAccess)
+    }
+    fn any_live_using(&self, access: &impl ProcessAccess) -> bool {
+        self.known.values().any(|known| {
+            access
+                .identity(known.pid)
+                .is_some_and(|current| current.same_process(*known))
+        })
     }
 }
 
-fn signal_identity(id: Identity, signal: i32) {
-    if identity(id.pid) != Some(id) {
+fn signal_identity(id: Identity, signal: i32, access: &impl ProcessAccess) {
+    let Some(current) = access
+        .identity(id.pid)
+        .filter(|current| current.same_process(id))
+    else {
         return;
-    }
+    };
     // Group leaders cover their still-existing descendants even if reparented.
     // Individual PID checks cover workers which changed group after discovery.
-    unsafe {
-        if id.group == id.pid {
-            libc::kill(-id.group, signal);
-        }
-        libc::kill(id.pid, signal);
+    if current.group == current.pid {
+        access.signal(-current.group, signal);
     }
+    access.signal(current.pid, signal);
 }
 
 #[cfg(target_os = "macos")]
@@ -167,4 +211,84 @@ fn children(pid: i32) -> Vec<i32> {
         .take(MAX_PROCESSES)
         .filter_map(|pid| pid.parse().ok())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct Snapshot {
+        processes: BTreeMap<i32, Identity>,
+        children: BTreeMap<i32, Vec<i32>>,
+        signals: RefCell<Vec<(i32, i32)>>,
+    }
+    impl ProcessAccess for Snapshot {
+        fn identity(&self, pid: i32) -> Option<Identity> {
+            self.processes.get(&pid).copied()
+        }
+        fn children(&self, pid: i32) -> Vec<i32> {
+            self.children.get(&pid).cloned().unwrap_or_default()
+        }
+        fn signal(&self, target: i32, signal: i32) {
+            self.signals.borrow_mut().push((target, signal));
+        }
+    }
+    fn process(pid: i32, group: i32, birth: u64) -> Identity {
+        Identity {
+            pid,
+            group,
+            birth: (birth, 0),
+        }
+    }
+
+    #[test]
+    fn tracked_worker_changes_group_and_loses_parent_but_remains_owned() {
+        // Break caught: mutable group equality discards a reparented worker,
+        // so its new descendants and detached group survive cleanup.
+        let mut snapshot = Snapshot::default();
+        snapshot.processes.insert(100, process(100, 100, 1));
+        snapshot.processes.insert(101, process(101, 100, 2));
+        snapshot.children.insert(100, vec![101]);
+        let mut tree = ProcessTree {
+            root: 100,
+            known: BTreeMap::new(),
+        };
+        tree.refresh_using(false, &snapshot);
+        assert_eq!(tree.known.len(), 2);
+
+        snapshot.processes.remove(&100);
+        snapshot.children.remove(&100);
+        snapshot.processes.insert(101, process(101, 101, 2));
+        snapshot.processes.insert(102, process(102, 101, 3));
+        snapshot.children.insert(101, vec![102]);
+        assert!(tree.any_live_using(&snapshot));
+        tree.refresh_using(false, &snapshot);
+        assert_eq!(tree.known[&101].group, 101);
+        assert!(tree.known.contains_key(&102));
+        tree.signal_using(libc::SIGKILL, &snapshot);
+        assert_eq!(
+            *snapshot.signals.borrow(),
+            vec![
+                (-101, libc::SIGKILL),
+                (101, libc::SIGKILL),
+                (102, libc::SIGKILL)
+            ]
+        );
+    }
+
+    #[test]
+    fn signaling_uses_current_group_and_rejects_reused_pid() {
+        // Break caught: signaling the cached obsolete group or a recycled PID.
+        let mut snapshot = Snapshot::default();
+        let captured = process(101, 101, 2);
+        snapshot.processes.insert(101, process(101, 200, 2));
+        signal_identity(captured, libc::SIGKILL, &snapshot);
+        assert_eq!(*snapshot.signals.borrow(), vec![(101, libc::SIGKILL)]);
+        snapshot.signals.borrow_mut().clear();
+        snapshot.processes.insert(101, process(101, 101, 9));
+        signal_identity(captured, libc::SIGKILL, &snapshot);
+        assert!(snapshot.signals.borrow().is_empty());
+    }
 }
