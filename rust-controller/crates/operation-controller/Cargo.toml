@@ -1,0 +1,23 @@
+[package]
+name = "operation-controller"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+chrono.workspace = true
+controller-domain = { path = "../controller-domain" }
+event-journal = { path = "../event-journal" }
+postgres-store = { path = "../postgres-store" }
+scheduler = { path = "../scheduler" }
+pve-port = { path = "../pve-port" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+sqlx.workspace = true
+proptest.workspace = true

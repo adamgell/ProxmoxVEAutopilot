@@ -18,8 +18,12 @@ pub use model::{
     TaskState, TaskStatus, Upid, VmConfig, VmUuid, Vmid, Volume,
 };
 pub use native::{
-    CloneRequest, ConfigureRequest, FakeCloneProvenance, InvalidNativePlan, MutationReceipt,
-    NativeOperationPlan, NativeStep, NativeVmPlan, PveMutationPort, PveWriteError, StartRequest,
+    CloneRequest, ConfigureRequest, FakeCloneProvenance, InvalidNativeEvidence, InvalidNativePlan,
+    MutationReceipt, NativeBinding, NativeCloneOwnership, NativeDecision, NativeEvaluation,
+    NativeEvaluationContext, NativeEvaluationMode, NativeEvidence, NativeEvidenceInput,
+    NativeEvidenceSource, NativeIdentityRead, NativeOperationPlan, NativeRead, NativeReason,
+    NativeReceipt, NativeStep, NativeVmPlan, PveMutationPort, PveWriteError, StartRequest,
+    evaluate_native_outcome, evaluate_native_preflight, is_fresh,
 };
 pub use native_fake::{
     FakeMutationOutcome, NativeFakePve, NativeMutationRequest, UnsupportedFakeOutcome,

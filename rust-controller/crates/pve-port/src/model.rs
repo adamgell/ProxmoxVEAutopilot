@@ -453,7 +453,7 @@ impl VmConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskState {
     Running,
@@ -461,7 +461,8 @@ pub enum TaskState {
     CompleteFailure,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaskStatus {
     upid: Upid,
     state: TaskState,
@@ -639,7 +640,8 @@ pub struct PveEvidence {
     pub facts: Vec<PveFact>,
 }
 
-#[derive(Clone, Debug, Error, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PveReadError {
     #[error("PVE read was unauthorized")]
     Unauthorized,

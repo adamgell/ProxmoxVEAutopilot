@@ -7,7 +7,7 @@ mod serde_wire;
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -70,10 +70,6 @@ where
     }
 }
 
-fn fresh(observed_at: DateTime<Utc>, as_of: DateTime<Utc>) -> bool {
-    observed_at <= as_of && as_of - observed_at <= Duration::seconds(30)
-}
-
 macro_rules! timestamp_accessors {
     () => {
         #[must_use]
@@ -82,7 +78,7 @@ macro_rules! timestamp_accessors {
         }
         #[must_use]
         pub fn is_fresh(&self, as_of: DateTime<Utc>) -> bool {
-            fresh(self.observed_at, as_of)
+            crate::is_fresh(self.observed_at, as_of)
         }
     };
 }

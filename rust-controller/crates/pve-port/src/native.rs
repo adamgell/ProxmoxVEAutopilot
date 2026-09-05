@@ -1,11 +1,15 @@
 //! Immutable synthetic native-v1 contracts. Encoders are for fake inspection;
 //! no transport consumes them and the marker is never a live PVE parameter.
+mod evaluation;
+mod evidence;
 use crate::{
     BridgeName, MacAddress, NativeVmConfig, NativeVmName, NodeName, StorageName, Upid, VmUuid, Vmid,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use controller_domain::OperationId;
+pub use evaluation::*;
+pub use evidence::*;
 use serde::{Deserialize, Serialize, de};
 use uuid::Uuid;
 
@@ -163,7 +167,8 @@ pub enum PveWriteError {
     Rejected,
     OutcomeUnknown,
 }
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum MutationReceipt {
     Task(Upid),
     SynchronousAccepted,
