@@ -32,6 +32,8 @@ Task1 owns osdeploy-adapter/src/restore.rs, private restore/wire.rs if needed, l
 
 Task2 owns postgres-store/src/osdeploy.rs and focused osdeploy/registration.rs, osdeploy/records.rs, osdeploy/stage.rs; lib.rs/Cargo.toml exports/dependency; migrations/0004_osdeploy_registration.sql; store.rs migration/raw-intake guard; scheduler.rs generic guards; native.rs explicit cross-family conflict; tests/osdeploy_registration.rs and tests/osdeploy_support/mod.rs. Focused existing test adjustments are scheduler/tests/postgres.rs per-kind-cap fixture and postgres-store/tests/native.rs historical-upgrade fixture. No service, controller, API route or PVE implementation changes.
 
+Main-approved implementation amendment: postgres-store/tests/postgres.rs may update only EXPECTED_TABLES from fourteen to seventeen entries, adding the three new table names in sorted order. Preserve its exact-table assertion and historical fixture implementation. Full regression execution includes the existing cached-container foundation and scheduler fixtures with the verified local Docker context pinned; their older ownership/cleanup limitations must be reported separately from the newer proof_support guarantees.
+
 New store dependency is osdeploy-adapter path only; preserve no reverse adapter→store or pve→adapter dependency. Cargo.lock may change only the local package dependency edge; no package versions or remote dependency additions.
 
 ### Task 1: Named, fully validated plan restoration
