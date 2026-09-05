@@ -130,6 +130,40 @@ cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p arti
 The test image includes this pure suite. Actual Linux execution and exact artifact
 acceptance require the separate committed-source artifact gate.
 
+## OSDeploy stage and input values
+
+The pure `osdeploy-adapter` contract fixes sixteen OSDeploy stage keys, their work
+kinds and their dependencies. It describes separate PE and disk starts and a
+single special ensure-stopped prerequisite. Grace expiry remains Unknown; the
+special edge requires later guarded store evaluation and confers no escalation
+authority. A potentially mutating stage may satisfy from verified no-change
+facts. Agent heartbeat requires both guest work and later independent evaluation.
+
+Validated private values pin grow-only capacity, distinct requested/PVE/Windows
+names and deterministic agent IDs, and phase budgets. Capacity uses checked
+binary GiB, with an 80-GiB request minimum and exact larger template bytes retained.
+It makes no storage sufficiency or real-PVE size-parsing claim. Legacy name
+normalization remains a pure ASCII filter; native admission additionally rejects
+empty, trailing-hyphen and all-numeric results. Shared agent IDs do not establish
+uniqueness without later reservations.
+
+Production budgets are registration 2400 s, PE 7200 s, shutdown grace 300 s,
+full OS 7200 s, mutation 300 s and evidence freshness 30 s. Force-stop permission
+is caller-pinned policy, not execution authority. Synthetic short phase budgets
+are permitted. Full-OS actions must later share one absolute deadline that lease
+renewal cannot reset. Serialized values have no clocks, readiness flags or
+unchecked deserialization; later reload must reconstruct through constructors
+and verify the complete canonical deployment digest.
+
+This slice does not yet supply the complete deployment snapshot, durable stage
+evaluation, callback binding, transport mutations, service execution, restart
+proof or production readiness. It leaves existing native operation keys and
+Python wire schemas unchanged. Run its pure contract and compile-fail tests with:
+
+```bash
+cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p osdeploy-adapter
+```
+
 ## Local proof
 
 Run from the repository root with Rust 1.92, Docker/Compose, and the approved native
