@@ -16,7 +16,7 @@ mod tests {
     use super::{JobEnvelope, normalize_job};
 
     const BASELINE_JOB: &str = r#"{
-        "id":"synthetic-job-0001",
+        "id":"20260904-deadbeef",
         "job_type":"test_long_sleep",
         "playbook":"/app/playbooks/_test_long_sleep.yml",
         "cmd":["ansible-playbook","/app/playbooks/_test_long_sleep.yml","-e","duration=5"],
@@ -119,7 +119,7 @@ mod tests {
 
         let plan = normalize_job(&job).unwrap();
 
-        assert_eq!(plan.job_id(), "synthetic-job-0001");
+        assert_eq!(plan.job_id(), "20260904-deadbeef");
         assert_eq!(plan.operation_kind(), OperationKind::SyntheticLongSleep);
         assert_eq!(plan.contract_version(), 1);
         assert_eq!(
@@ -138,7 +138,7 @@ mod tests {
         assert_eq!(plan.postconditions(), ["synthetic_sleep_completed"]);
         assert_eq!(
             plan.fingerprint().unwrap().as_hex(),
-            "31476a1bade27e2f04b3cc1d0495cffb8ac7cf5dffb07728ed9756f6218672d2"
+            "d53da5428e15afe31341a00657c50c6f8223b05f0aedea58cb04ad3b18693340"
         );
     }
 
@@ -195,6 +195,86 @@ mod tests {
     }
 
     #[test]
+    fn normalization_requires_python_job_ids_and_blocks_short_encoded_suffixes() {
+        // This safe, non-baseline ID must reach the normalization gate itself.
+        let raw = BASELINE_JOB.replace("20260904-deadbeef", "fake-job");
+        let job = JobEnvelope::from_json_str(&raw).unwrap();
+        assert!(matches!(
+            normalize_job(&job),
+            Err(super::NormalizationError::InvalidJobId)
+        ));
+        for job_id in [
+            "job_c2VjcmV0",
+            "job_dG9rZW4",
+            "job_QmVhcmVy",
+            "job_cGFzc3dvcmQ",
+            "job_////",
+            "job_AAAAA",
+            "20260904-DEADBEEF",
+            "20261340-deadbeef",
+            "synthetic-job-0001",
+            "job_UVdKag",
+            "AAAA////",
+        ] {
+            assert!(!crate::job::is_python_job_id(job_id));
+            let raw = BASELINE_JOB.replace("20260904-deadbeef", job_id);
+            if let Ok(job) = JobEnvelope::from_json_str(&raw) {
+                assert!(normalize_job(&job).is_err(), "normalized {job_id}");
+            }
+        }
+    }
+
+    #[test]
+    fn python_job_id_dates_and_random_hex_are_not_encoded_text_or_ip_addresses() {
+        for job_id in [
+            "20260904-deadbeef",
+            "20260904-ffffffff",
+            "20260904-32322360",
+            "20240229-00000000",
+            "20000229-abcdef09",
+        ] {
+            let raw = BASELINE_JOB.replace("20260904-deadbeef", job_id);
+            let job = JobEnvelope::from_json_str(&raw).unwrap();
+            assert_eq!(normalize_job(&job).unwrap().job_id(), job_id);
+        }
+        for job_id in [
+            "20260229-deadbeef",
+            "19000229-deadbeef",
+            "20260931-deadbeef",
+            "00000904-deadbeef",
+            "20260904-deadbee",
+            "20260904-deadbeeff",
+            "20260904-deadbeeg",
+        ] {
+            assert!(!crate::job::is_python_job_id(job_id));
+            let raw = BASELINE_JOB.replace("20260904-deadbeef", job_id);
+            if let Ok(job) = JobEnvelope::from_json_str(&raw) {
+                assert!(normalize_job(&job).is_err(), "normalized {job_id}");
+            }
+        }
+
+        let nested_id = BASELINE_JOB.replace(
+            "\"duration\":\"5\"",
+            "\"duration\":\"5\",\"nested\":{\"id\":\"20260904-32322360\"}",
+        );
+        assert!(JobEnvelope::from_json_str(&nested_id).is_err());
+    }
+
+    #[test]
+    fn sanitizer_rejects_encoding_beyond_its_bounded_decode_budget() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let mut encoded = "secret".to_owned();
+        for _ in 0..4 {
+            encoded = STANDARD.encode(encoded);
+        }
+        let raw = BASELINE_JOB.replace(
+            "\"duration\":\"5\"",
+            &format!("\"duration\":\"5\",\"note\":\"b64_{encoded}\""),
+        );
+        assert!(JobEnvelope::from_json_str(&raw).is_err());
+    }
+
+    #[test]
     fn sanitizer_rejects_encoded_confusable_nested_and_integer_ip_bypasses() {
         let cases = [
             "tok\\u200ben",
@@ -245,6 +325,12 @@ mod tests {
             "x_MTkyLjE2OC4yLjQ=",
             "base64:MjAwMTpkYjg6OjE=",
             "prefix_UW1WaGNtVnlJSE5sYm5OcGRHbDJaUT09",
+            "note: label_c2VjcmV0",
+            "note: label_dG9rZW4",
+            "note: label_QmVhcmVy",
+            "note: label_cGFzc3dvcmQ",
+            "label_QQ===",
+            "AAAA////",
             "b64_////",
             "b64_AAAAA",
             "base64:QmVhcmVy*",

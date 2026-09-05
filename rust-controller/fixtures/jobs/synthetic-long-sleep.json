@@ -1,5 +1,5 @@
 {
-  "id": "synthetic-job-0001",
+  "id": "20260904-deadbeef",
   "job_type": "test_long_sleep",
   "playbook": "/app/playbooks/_test_long_sleep.yml",
   "cmd": [

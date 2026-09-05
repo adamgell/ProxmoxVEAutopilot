@@ -225,11 +225,7 @@ pub fn normalize_job(job: &JobEnvelope) -> Result<NormalizedPlan, NormalizationE
 }
 
 fn validate_job_id(job_id: &str) -> Result<(), NormalizationError> {
-    if job_id.is_empty()
-        || !job_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-    {
+    if !crate::job::is_python_job_id(job_id) {
         return Err(NormalizationError::InvalidJobId);
     }
     Ok(())

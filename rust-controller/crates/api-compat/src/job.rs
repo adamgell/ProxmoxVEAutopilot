@@ -263,6 +263,12 @@ fn validate_value(value: &Value, depth: usize) -> Result<(), JobValidationError>
             for (key, value) in values {
                 validate_ascii(key)?;
                 validate_key(key)?;
+                // The producer's date and random hex are typed identity data,
+                // not decimal IP addresses or Base64. Only the exact root ID
+                // grammar gets this exemption; arbitrary/nested IDs are scanned.
+                if depth == 0 && key == "id" && value.as_str().is_some_and(is_python_job_id) {
+                    continue;
+                }
                 validate_value(value, depth + 1)?;
             }
         }
@@ -326,6 +332,34 @@ fn validate_string(value: &str) -> Result<(), JobValidationError> {
     validate_decoded(value, 0)
 }
 
+pub(crate) fn is_python_job_id(value: &str) -> bool {
+    // Baseline c8ab4b2 web/jobs.py JobManager._generate_id():
+    // datetime.now(timezone.utc).strftime("%Y%m%d") + '-' + os.urandom(4).hex().
+    let bytes = value.as_bytes();
+    if bytes.len() != 17
+        || bytes[8] != b'-'
+        || !bytes[..8].iter().all(u8::is_ascii_digit)
+        || !bytes[9..]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+    {
+        return false;
+    }
+    let year = value[..4].parse::<u32>().expect("four ASCII digits");
+    let month = value[4..6].parse::<u32>().expect("two ASCII digits");
+    let day = value[6..8].parse::<u32>().expect("two ASCII digits");
+    let days = match month {
+        4 | 6 | 9 | 11 => 30,
+        2 if year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100)) => {
+            29
+        }
+        2 => 28,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => return false,
+    };
+    year != 0 && (1..=days).contains(&day)
+}
+
 fn validate_decoded(value: &str, round: usize) -> Result<(), JobValidationError> {
     let lowercase = value.to_ascii_lowercase();
     if [
@@ -344,11 +378,10 @@ fn validate_decoded(value: &str, round: usize) -> Result<(), JobValidationError>
     if contains_non_loopback_ip(value) || contains_non_loopback_integer_ip(value) {
         return Err(JobValidationError::NonLoopbackAddress);
     }
-    if round == MAX_DECODE_ROUNDS {
-        return Ok(());
-    }
-
     if value.contains('%') {
+        if round == MAX_DECODE_ROUNDS {
+            return Err(JobValidationError::UnsafeEncoding);
+        }
         let decoded = percent_decode(value)?;
         validate_ascii(&decoded)?;
         validate_decoded(&decoded, round + 1)?;
@@ -378,9 +411,16 @@ fn percent_decode(value: &str) -> Result<String, JobValidationError> {
 }
 
 fn looks_like_base64(value: &str) -> bool {
-    value.len() >= 8
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'-' | b'_' | b'=')
+    // Seven bytes cover an unpadded encoded five-character secret marker.
+    // Ordinary lowercase contract words are not encoding declarations. Padding,
+    // uppercase, digits, or binary alphabet symbols make short text plausible.
+    value.len() >= 7
+        && value
+            .trim_end_matches('=')
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'-' | b'_'))
+        && value.bytes().any(|byte| {
+            byte.is_ascii_uppercase() || byte.is_ascii_digit() || matches!(byte, b'=' | b'+' | b'/')
         })
 }
 
@@ -401,18 +441,14 @@ fn validate_base64_candidates(value: &str, round: usize) -> Result<(), JobValida
     for (index, character) in value.char_indices() {
         if is_base64_delimiter(character) {
             let candidate = base64_delimited_prefix(&value[index + character.len_utf8()..]);
-            if candidate.len() >= MIN_DELIMITED_BASE64_BYTES {
+            if candidate.len() >= MIN_DELIMITED_BASE64_BYTES || looks_like_base64(candidate) {
                 validate_base64_candidate(candidate, round)?;
             }
         }
     }
 
-    if looks_like_base64(value)
-        && let Some(decoded) = decode_base64(value)
-        && let Ok(decoded) = String::from_utf8(decoded)
-    {
-        validate_ascii(&decoded)?;
-        validate_decoded(&decoded, round + 1)?;
+    if looks_like_base64(value) {
+        validate_base64_candidate(value, round)?;
     }
     Ok(())
 }
@@ -439,6 +475,9 @@ fn is_base64_delimiter(character: char) -> bool {
 }
 
 fn validate_base64_candidate(candidate: &str, round: usize) -> Result<(), JobValidationError> {
+    if round == MAX_DECODE_ROUNDS {
+        return Err(JobValidationError::UnsafeEncoding);
+    }
     if candidate.len() > MAX_STRING_BYTES {
         return Err(JobValidationError::InvalidCharacters);
     }

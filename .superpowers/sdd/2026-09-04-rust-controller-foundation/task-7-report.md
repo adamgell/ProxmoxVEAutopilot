@@ -11,6 +11,12 @@ fixture, and observe sections, progress ledger, existing `OperationKind`, canoni
 event hashing API, and baseline Python/PostgreSQL job schema were therefore the
 implementation authority.
 
+Round three resumed from `3df8500`, preserving the interrupted regression edits.
+The helper status check was blocked by the shell network sandbox; the configured
+MCP documentation search still responded, but returned no indexed copy of the
+Rust-controller foundation plan. Local approved documents and `git show
+c8ab4b2:autopilot-proxmox/web/jobs.py` supplied the exact producer contract.
+
 No production, Proxmox, Graph, Entra, tenant, external-network, Ansible, or
 arbitrary-process action was performed. PostgreSQL tests use only the already-local
 `postgres:16-alpine` image with `--pull=never`, Docker-assigned loopback ports,
@@ -28,21 +34,29 @@ and drop-guard cleanup. Cargo resolution and verification were offline and locke
   `synthetic_long_sleep` wire spelling is rejected.
 - `normalize_job` requires pending status, the exact executable/playbook/argument
   contract, one canonical decimal duration string from 0 through 20, a safe job
-  ID, and no traversal. Unknown types, executables, playbooks, arguments, unsafe
+  ID, and no traversal. The ID is exactly a valid `YYYYMMDD` calendar date, a
+  hyphen, and eight lowercase hexadecimal characters, matching baseline
+  `JobManager._generate_id()`. Only that exact root ID grammar is exempt from
+  generic encoded-text/IP scanning; malformed and nested IDs are still scanned.
+  Unknown types, executables, playbooks, arguments, unsafe
   scalar types, and mismatches fail before a plan exists.
 - Sanitization is bounded to 16 KiB, depth 8, 32 container members, 1,024-byte
   ASCII strings, and three recursive decode rounds. It recursively scans nested
   maps/arrays, bounded percent/Base64 decodings, and bounded Base64 candidates
   following `_`, `:`, and other safe delimiters. Plausible marked/delimited
-  candidates fail closed when malformed or non-UTF8, while valid decodings are
-  scanned recursively. It rejects control, non-ASCII, confusable and zero-width
+  candidates and plausible whole-field candidates fail closed when malformed or
+  non-UTF8, while valid decodings are scanned recursively. Short unmarked
+  candidates begin at seven bytes and require uppercase, digit, padding, or
+  Base64 symbol evidence; ordinary lowercase contract words remain admissible.
+  Remaining plausible encodings at the three-round limit reject. It rejects
+  control, non-ASCII, confusable and zero-width
   text; secret-shaped keys/values; broad tenant, directory, application, client,
   service-principal, object identity, `oid`, `tid`, and `principal_id` keys;
   and textual, mapped, percent-encoded, decimal, or hexadecimal non-loopback IPs.
 - `NormalizedPlan`, `SanitizedValue`, and `PlanFingerprint` retain private
   construction. Fingerprints use `event-journal::payload_digest`, the repository's
   canonical JSON SHA-256 API. The repaired full fingerprint is
-  `31476a1bade27e2f04b3cc1d0495cffb8ac7cf5dffb07728ed9756f6218672d2`;
+  `d53da5428e15afe31341a00657c50c6f8223b05f0aedea58cb04ad3b18693340`;
   observe output exposes only its 12-hex prefix.
 - Both database and PVE endpoints are parsed before pool/client construction.
   Without explicit observe/read permission, both must be normalized literal
@@ -57,7 +71,8 @@ and drop-guard cleanup. Cargo resolution and verification were offline and locke
   after setup, parse generic `statement:` and `execute <name>:` records plus the
   SQLx parameter detail, and require the exact ordered BEGIN/verification SELECT/
   pending-job SELECT/ROLLBACK sequence on one backend PID. Unknown records, extra
-  SQL, `FOR UPDATE`, and advisory-lock calls fail closed. All advisory functions are
+  SQL, duplicate/missing/misplaced/wrong-backend parameter details, `FOR UPDATE`,
+  and advisory-lock calls fail closed. All advisory functions are
   revoked from `PUBLIC` and the observer role; catalog privilege checks and an
   attempted `pg_try_advisory_lock` both prove denial.
 - Observe production code has only a borrowed `PgConnection` capability and no
@@ -67,7 +82,9 @@ and drop-guard cleanup. Cargo resolution and verification were offline and locke
 - The synthetic-only manifest retains baseline version `v2026.09.2`, baseline
   Git SHA `c8ab4b2`, contract version 1, and sanitizer version 1. Its recomputed
   fixture SHA-256 is
-  `5a8ab56cbd7a30cee8d2e71775b67a4f80b8e3e22cbd5a3f9399c78700632457`.
+  `1635ef251a7bf2138e656381a564fca6c8cbf2b57af997932351f405b03d6001`.
+  Both hashes changed in round three because the synthetic fixture now uses the
+  baseline-shaped ID `20260904-deadbeef` instead of `synthetic-job-0001`.
 
 ## Round-one TDD evidence
 
@@ -115,19 +132,45 @@ manifest self-consistency, and redacted rejection output.
   slice, SQLx's actual execute and parameter-detail records, exact step order,
   and a single backend PID.
 
+## Round-three regression evidence
+
+- Before implementation, the normalization reachability test failed with
+  `normalized job_c2VjcmV0`, demonstrating that an otherwise exact baseline
+  envelope produced a plan with an encoded secret ID. The test now rejects all
+  supplied short encoded ID probes at parsing or normalization. A separate safe
+  `fake-job` probe must parse successfully and return `InvalidJobId` from
+  `normalize_job()` itself, pinning the dedicated normalization gate.
+- The baseline-shaped ID initially failed construction with
+  `NonLoopbackAddress`. GREEN applies exact calendar-date/lowercase-hex validation
+  only to the root identity, preserving random hexadecimal and digit-only
+  suffixes without interpreting them as encoded data or integer IPs. Tests cover
+  valid leap days, invalid dates and lengths, uppercase/nonhex suffixes, and the
+  absence of the exemption on nested IDs.
+- Direct sanitizer tests cover short `note: label_` suffixes (which do not
+  accidentally match the older `x_` marker or the whole-field scan), a non-UTF8
+  whole-field candidate, malformed candidates, and a four-times encoded secret
+  exceeding the decode budget. An independent regression check temporarily
+  restored the old 12-byte delimiter threshold while retaining the new ID and
+  whole-field checks: RED failed with `accepted note: label_c2VjcmV0`. Restoring
+  the short-candidate check returned the full API suite to GREEN.
+- Before implementation, the server-log parser test failed at its duplicate
+  `DETAIL` assertion. GREEN counts the detail exactly once after the pending-job
+  SELECT on the same PID. Missing, misplaced, wrong-PID, duplicate, and unknown
+  records all reject; the real PostgreSQL trace remains accepted.
+
 ## Final verification
 
 Fresh commands completed successfully:
 
 ```text
 cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p api-compat
-# 15 unit tests + 2 compile-fail doc tests passed; 0 failed
+# 18 unit tests + 2 compile-fail doc tests passed; 0 failed
 
 cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service observe -- --test-threads=1
 # 9 observe-filtered tests passed; 0 failed
 
 cargo test --offline --locked --manifest-path rust-controller/Cargo.toml --workspace --all-features --no-fail-fast -- --test-threads=1
-# 131 runtime tests + 6 compile-fail doc tests passed; 0 failed
+# 134 runtime tests + 6 compile-fail doc tests passed; 0 failed
 
 cargo clippy --offline --locked --manifest-path rust-controller/Cargo.toml --workspace --all-targets --all-features -- -D warnings
 # passed with warnings denied
@@ -137,9 +180,13 @@ git diff --check
 # both passed
 ```
 
+The final API suite was rerun after strengthening the delimiter-only regression
+probe. Local Docker tests required scoped sandbox escalation, which was approved;
+no integration test was silently skipped.
+
 ## Concerns and gates
 
-No blocking Task 7 concern remains. An operator must provision the production
+Round-three implementation is awaiting independent review. An operator must provision the production
 SELECT-only role and explicitly revoke advisory functions before any separately
 approved production observe run; this task changed only a disposable test role.
 Only the approved synthetic compatibility kind is recognized. Task 8 owns any

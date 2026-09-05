@@ -111,7 +111,7 @@ fn parse_observer_trace(logs: &str) -> std::result::Result<ObserverTrace, String
         ObserverStep::Rollback,
     ];
     let mut statements: Vec<(String, ObserverStep)> = Vec::new();
-    let mut parameter_detail = false;
+    let mut parameter_detail_count = 0;
 
     for line in logs.lines().filter(|line| line.contains(IDENTITY)) {
         let (prefix, record) = line
@@ -127,12 +127,13 @@ fn parse_observer_trace(logs: &str) -> std::result::Result<ObserverTrace, String
         if let Some(detail) = record.strip_prefix("DETAIL:") {
             let detail = detail.trim_start();
             if statements.last().map(|entry| entry.1) != Some(ObserverStep::ReadPendingJob)
+                || parameter_detail_count != 0
                 || detail != "parameters: $1 = 'test_long_sleep'"
                 || statements.last().map(|entry| entry.0.as_str()) != Some(backend_pid)
             {
                 return Err(format!("unexpected observer detail record: {line}"));
             }
-            parameter_detail = true;
+            parameter_detail_count += 1;
             continue;
         }
 
@@ -174,7 +175,7 @@ fn parse_observer_trace(logs: &str) -> std::result::Result<ObserverTrace, String
     }
 
     let steps = statements.iter().map(|entry| entry.1).collect::<Vec<_>>();
-    if steps != expected_steps || !parameter_detail {
+    if steps != expected_steps || parameter_detail_count != 1 {
         return Err(format!(
             "observer trace did not match the exact transaction sequence: {steps:?}"
         ));
@@ -322,7 +323,7 @@ mod tests {
             );
             INSERT INTO jobs (id, job_type, playbook, cmd_json, args_json, status, created_at)
             VALUES (
-                'synthetic-job-0001',
+                '20260904-deadbeef',
                 'test_long_sleep',
                 '/app/playbooks/_test_long_sleep.yml',
                 '["ansible-playbook","/app/playbooks/_test_long_sleep.yml","-e","duration=5"]',
@@ -332,7 +333,7 @@ mod tests {
             );
             INSERT INTO jobs (id, job_type, playbook, cmd_json, args_json, status, created_at)
             VALUES (
-                'older-running-job',
+                '20260904-00000001',
                 'test_long_sleep',
                 '/app/playbooks/_test_long_sleep.yml',
                 '["ansible-playbook","/app/playbooks/_test_long_sleep.yml","-e","duration=6"]',
@@ -342,7 +343,7 @@ mod tests {
             );
             INSERT INTO jobs (id, job_type, playbook, cmd_json, args_json, status, created_at)
             VALUES (
-                'newer-pending-job',
+                '20260904-00000002',
                 'test_long_sleep',
                 '/app/playbooks/_test_long_sleep.yml',
                 '["ansible-playbook","/app/playbooks/_test_long_sleep.yml","-e","duration=7"]',
@@ -421,10 +422,10 @@ mod tests {
         assert_eq!(locks_after, locks_before);
         assert_eq!(
             output,
-            "{\"compatibility\":\"compatible\",\"fingerprint\":\"sha256:31476a1bade2…\"}"
+            "{\"compatibility\":\"compatible\",\"fingerprint\":\"sha256:d53da5428e15…\"}"
         );
         for forbidden in [
-            "synthetic-job-0001",
+            "20260904-deadbeef",
             "sleep_seconds",
             "ansible-playbook",
             "_test_long_sleep.yml",
@@ -473,6 +474,17 @@ mod tests {
             "{trace}\n2026-09-04 [42] observer_login task7_observe NOTICE: unrecognized record"
         );
         assert!(parse_observer_trace(&unknown).is_err());
+
+        let detail = "2026-09-04 [42] observer_login task7_observe DETAIL: parameters: $1 = 'test_long_sleep'";
+        let duplicate_detail = trace.replace(detail, &format!("{detail}\n{detail}"));
+        assert!(parse_observer_trace(&duplicate_detail).is_err());
+        assert!(parse_observer_trace(&trace.replace(detail, "")).is_err());
+        let without_detail = trace.replace(&format!("{detail}\n"), "");
+        assert!(parse_observer_trace(&format!("{detail}\n{without_detail}")).is_err());
+        assert!(parse_observer_trace(&format!("{without_detail}\n{detail}")).is_err());
+        assert!(
+            parse_observer_trace(&trace.replace(detail, &detail.replace("[42]", "[43]"))).is_err()
+        );
 
         let extra_select = format!(
             "2026-09-04 [42] observer_login task7_observe LOG: statement: SELECT 1\n{trace}"
