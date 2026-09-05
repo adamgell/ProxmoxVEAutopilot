@@ -96,6 +96,40 @@ proof regressions passed 8 Python tests; the coordination file requires unittest
 discovery because running it directly does not execute its test. The example
 command took 4.25 seconds including 1.90 seconds compilation in this run.
 
+## Declared artifact identity and supplied bytes
+
+The pure `artifact-index` native-v1 library admits non-nil opaque artifact UUIDs,
+literal `amd64`, a 14-ASCII-digit build label, normalized SHA-256 declarations,
+and positive image indices. The current builder's timestamp-shaped `build_sha`
+label is neither a source digest nor a content digest; this library validates its
+shape without calendar authority. It does not parse or tighten existing API rows
+or legacy manifests.
+
+A present output index controls the apply index; a missing output falls back to
+the source index, and a present zero is invalid. Canonical fingerprints bind the
+complete serialized descriptor, including index provenance, contract version 1,
+and fixed `declared_only` evidence. Private fields and serialization-only outputs
+preserve construction ownership; they are not a security boundary against
+malicious code running in the same process.
+
+Comparing supplied nonempty ISO/WIM slices checks their SHA-256 values directly.
+The report retains only the descriptor fingerprint and exact lengths, with fixed
+`supplied_bytes_matched` evidence and `publication_verified: false`. This proves
+agreement of those slices with the declarations, without establishing origin,
+file stability, PVE publication, WIM validity, bootability, or readiness. Declared
+hashes, supplied-byte matches, published locations, and boot/readiness proofs
+remain separate claims. Neither output confers native execution authority or
+activates a service.
+
+Run the focused offline suite, including construction-boundary compile-fail docs:
+
+```bash
+cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p artifact-index
+```
+
+The test image includes this pure suite. Actual Linux execution and exact artifact
+acceptance require the separate committed-source artifact gate.
+
 ## Local proof
 
 Run from the repository root with Rust 1.92, Docker/Compose, and the approved native

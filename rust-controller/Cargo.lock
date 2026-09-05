@@ -56,6 +56,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "artifact-index"
+version = "0.1.0"
+dependencies = [
+ "event-journal",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
