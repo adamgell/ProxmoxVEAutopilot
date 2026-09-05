@@ -172,7 +172,7 @@ Run `cargo test --locked --manifest-path rust-controller/Cargo.toml -p pve-port`
 
 - [ ] **Step 1: Write contract rejection and request-shape tests.**
 
-Use serde JSON inputs built from the synthetic values below. Test that unknown fields `cmd`, `args`, `url`, `token`, `delete`, `ssh`, `new_vmid` and `extra_parameters` fail decoding; zero/out-of-range numeric values and invalid names fail through constructors. Changing any mutation-relevant field changes `event_journal::payload_digest` of the serialized plan. Add a dev dependency on `event-journal` for this digest test only.
+Use serde JSON inputs built from the synthetic values below. Test that unknown fields `cmd`, `args`, `url`, `token`, `delete`, `ssh`, `new_vmid` and `extra_parameters` fail decoding; zero/out-of-range numeric values and invalid names fail through constructors. Changing any mutation-relevant field changes `event_journal::payload_digest` of the serialized plan. Add a normal dependency on `event-journal` for shared canonical plan/request hashing in the fake and tests; do not duplicate canonicalization. This adds no cycle because event-journal depends on domain, not pve-port or store.
 
 Pin the exact operation payload shapes:
 
@@ -235,6 +235,8 @@ Define `CloneRequest`, `ConfigureRequest`, `StartRequest` with private fields an
 | Start | `POST nodes/{node}/qemu/{target_vmid}/status/start` | empty form |
 
 Configure never includes `delete`, `args`, media, disk, firmware or arbitrary keys. Its `digest` is the exact last authoritative config digest, not the plan digest. A failed config digest check becomes conflict/unknown observation; never silently refresh and resend. The inherited boot disk is checked and preserved.
+
+Construct the operation ID and fresh request marker before computing the request digest. Hash the request's canonical fields including that metadata, but exclude the resulting digest and provenance wrapper itself. The fake derives and stores provenance using the same hash function; there is no circular digest field or caller-supplied unchecked hash.
 
 - [ ] **Step 3: Implement a sealed mutation trait backed only by a fake.**
 
@@ -351,6 +353,8 @@ fn freshness_rejects_future_and_accepts_exact_boundary() {
 ```
 
 The evaluator takes `as_of` explicitly. Production-capable store decisions always provide database time; pure tests provide the fixed clock. A returned `Ready` is advice, not a send capability: only the fenced store transaction can mint `NativeDispatchPermit`.
+
+Cluster inventory alone does not carry all UUID/MAC facts. A collision-free decision requires fresh, complete per-VM identity/config coverage for the relevant inventory, with each fact bound to that inventory's node/VMID. Missing, unavailable, stale, or contradictory coverage returns Unknown/Conflicted as appropriate. Task 5 must bound the collection and fail closed when the bound prevents completeness, never assume a missing identity is unique. Include a fixture where the desired UUID or MAC belongs to a different VM and another where that VM's config cannot be read.
 
 - [ ] **Step 3: Add property invariants and verify the shared transaction path.**
 
@@ -659,7 +663,7 @@ Replace the foundation-only opening with an accurate statement that the library 
 | Unknown and late results | Design sections 8–10 | persisted dispatch crash scenarios and narrow unknown reconciliation |
 | Production no-touch | Design sections 16, 20–21 | no live transport implementation; startup denial and zero-request assertions |
 
-The local Python/YAML sources establish compatibility intent, not independent confirmation of every PVE response schema. Mark new node/storage/network/resource read envelopes, clone `qmclone` source-worker binding and an eventual real clone provenance mechanism as synthetic contracts requiring official API-schema or separately authorized read-only verification before a future real-PVE artifact. The fake-only provenance marker has no live wire representation in this plan. Do not silently turn the fake's behavior into a live compatibility claim. No raw source inventory, production payload, credential reference or secret is copied into fixtures.
+The local Python/YAML sources establish compatibility intent, not independent confirmation of every PVE response schema. Mark new node/storage/network/resource read envelopes, clone `qmclone` source-worker binding and an eventual real clone provenance mechanism as synthetic contracts requiring official API-schema verification or sanitized observation within the user's existing read-only authorization before a future real-PVE artifact. This phase's automated proof still makes zero live requests. The fake-only provenance marker has no live wire representation in this plan. Do not silently turn the fake's behavior into a live compatibility claim. No raw source inventory, production payload, credential reference or secret is copied into fixtures.
 
 - [ ] **Step 4: Commit and hand off evidence without activating anything.**
 
