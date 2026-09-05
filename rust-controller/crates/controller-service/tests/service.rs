@@ -21,7 +21,14 @@ impl Drop for ServiceChild {
     }
 }
 
-fn denied_startup(mode: &str, transport: &str, db: Option<&str>, pve: Option<&str>, allow: bool) {
+fn denied_startup(
+    mode: &str,
+    transport: &str,
+    db: Option<&str>,
+    pve: Option<&str>,
+    allow: bool,
+    expected_failure: &str,
+) {
     // Break: an activation/target guard moves after DB access or listener startup.
     // Denied destinations are never probed. Only these owned loopback canaries are observed.
     let database = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -86,28 +93,43 @@ fn denied_startup(mode: &str, transport: &str, db: Option<&str>, pve: Option<&st
         .read_to_string(&mut stderr)
         .unwrap();
     assert!(
-        stderr
-            == "controller startup or runtime failed; check local configuration and dependencies\n",
-        "startup error was not the fixed sanitized label"
+        stderr == format!("{expected_failure}\n"),
+        "startup did not reject at the expected fixed failure category"
     );
 }
 
 #[test]
 fn native_startup_fails_before_local_io_even_with_read_permission() {
     for allow in [false, true] {
-        denied_startup("native", "fake", None, None, allow);
+        denied_startup(
+            "native",
+            "fake",
+            None,
+            None,
+            allow,
+            "controller startup or runtime failed; check local configuration and dependencies",
+        );
     }
 }
 
 #[test]
 fn real_transport_startup_fails_before_local_io_even_with_read_permission() {
     for allow in [false, true] {
-        denied_startup("observe", "real", None, None, allow);
+        denied_startup(
+            "observe",
+            "real",
+            None,
+            None,
+            allow,
+            "controller startup or runtime failed; check local configuration and dependencies",
+        );
     }
 }
 
 #[test]
 fn remote_pve_and_database_startup_targets_are_denied() {
+    // Break: skipping startup's network validation must not pass because a later
+    // missing adapter setting happens to cause the same generic startup failure.
     for target in ["192.0.2.1", "[::ffff:192.0.2.1]", "denied-pve.invalid"] {
         let db = format!("postgresql://startup-canary@{target}:5432/proof");
         let pve = format!("https://{target}:8006");
@@ -117,8 +139,22 @@ fn remote_pve_and_database_startup_targets_are_denied() {
             ("adapter", true),
             ("native", true),
         ] {
-            denied_startup(mode, "fake", Some(&db), None, allow);
-            denied_startup(mode, "fake", None, Some(&pve), allow);
+            denied_startup(
+                mode,
+                "fake",
+                Some(&db),
+                None,
+                allow,
+                "controller startup rejected by network boundary",
+            );
+            denied_startup(
+                mode,
+                "fake",
+                None,
+                Some(&pve),
+                allow,
+                "controller startup rejected by network boundary",
+            );
         }
     }
 }

@@ -167,6 +167,11 @@ kind, and blocked/unknown/conflicted counts. It excludes DSNs, URLs, tokens,
 worker/VM/operation identities, and payloads. Build Git SHA identifies the checked-out
 revision; precommit local builds may also contain working-tree edits. Startup and
 runtime failures never print raw dependency error chains.
+Network-boundary startup rejection emits the fixed label
+`controller startup rejected by network boundary`; other startup/runtime failures
+retain the generic sanitized message. The remote startup matrix requires this
+specific category, so a later missing adapter setting cannot masquerade as target
+rejection. Neither label includes an address, credential, or dependency error.
 
 ## Service configuration and adapter limits
 
