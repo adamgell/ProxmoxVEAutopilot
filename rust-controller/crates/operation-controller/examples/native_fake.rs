@@ -1,4 +1,9 @@
 //! Disposable local proof. No DB/PVE destination, credential, or mode input.
+//! Work has a 30-second async budget. Cancellation can add up to 200ms for
+//! child reaping plus one 3-second container cleanup budget (33.2s total,
+//! apart from OS scheduling delays). Unconfirmed cleanup fails the proof;
+//! a container created without a returned ID may remain if ownership cannot
+//! be verified before that budget expires.
 use controller_domain::ExecutionState;
 use operation_controller::NativeProgress;
 use std::{process::ExitCode, time::Duration};
@@ -32,7 +37,9 @@ async fn main() -> ExitCode {
             }
         }
         fixture.assert_success().await;
-        Ok(fixture.summary().await)
+        let summary = fixture.summary().await;
+        fixture.cleanup()?;
+        Ok(summary)
     })
     .await;
     if let Ok(Ok(summary)) = result {

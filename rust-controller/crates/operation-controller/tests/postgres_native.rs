@@ -24,6 +24,7 @@ async fn full_slice_duplicate_intake_has_three_exact_sends() {
         );
     }
     f.assert_success().await;
+    f.cleanup().unwrap();
 }
 
 // Catches adoption of live work on restart and repeated sends during owned Waiting.
