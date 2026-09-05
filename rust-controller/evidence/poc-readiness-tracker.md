@@ -33,6 +33,8 @@ The user approved clearing only this isolated worktree's rebuildable Rust cache 
 
 ## Active implementation checkpoint
 
+Saved OSDeploy plan restoration is accepted at `64dc3664f1ee4a3914439db9c2d433abae73c146`: independent review found no issues; macOS evidence records 48 integration and 6 compile-fail documentation tests plus formatting and strict workspace Clippy. This is validated persistence input, not durable execution or Linux service proof. Atomic sixteen-stage registration, complete reload and generic scheduler isolation are now assigned to the Astra implementation worker under `2026-09-05-rust-osdeploy-registration.md`. Next come durable attempts/deadlines, callbacks, service integration and recovery; the overall goal remains active.
+
 The rich provisioning plan separates broad observed/declaration values from executable compatibility. Its next request layer must retain the original source and target before-state, bind the full workflow and individual operation separately, preserve the original dispatch across recovery, and never turn missing receipts into resend permission. PE start and installed-disk start remain distinct operations.
 
 Main's pinned upstream check corrected the new resize worker convention and added its before-config digest. Configuring an existing disk's serial must preserve capacity, not model informational size as growth. Desired disk serials longer than 20 ASCII bytes must be rejected at request construction and downward workflow conversion before any clone; never silently truncated. These are conservative contracts for the next local phase, not proof of compatibility with the installed production PVE version. Task 1's broad validated fact representation remains unchanged.
