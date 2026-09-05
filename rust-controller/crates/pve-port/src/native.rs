@@ -440,6 +440,25 @@ pub(crate) mod sealed {
 }
 /// Only the in-memory fake has this sealed capability. Downstream observers
 /// cannot implement it (the local wrapper avoids relying on the orphan rule).
+/// Direct observer mutation calls are unavailable, even with the trait imported:
+/// ```compile_fail,E0599
+/// use pve_port::{ReqwestPveObserver, PveMutationPort, CloneRequest};
+/// async fn cannot_clone(observer: &ReqwestPveObserver, request: &CloneRequest) {
+///     observer.clone_vm(request).await;
+/// }
+/// ```
+/// ```compile_fail,E0599
+/// use pve_port::{ReqwestPveObserver, PveMutationPort, ConfigureRequest};
+/// async fn cannot_configure(observer: &ReqwestPveObserver, request: &ConfigureRequest) {
+///     observer.configure_vm(request).await;
+/// }
+/// ```
+/// ```compile_fail,E0599
+/// use pve_port::{ReqwestPveObserver, PveMutationPort, StartRequest};
+/// async fn cannot_start(observer: &ReqwestPveObserver, request: &StartRequest) {
+///     observer.start_vm(request).await;
+/// }
+/// ```
 /// ```compile_fail
 /// use pve_port::*;
 /// struct RealObserver(ReqwestPveObserver);

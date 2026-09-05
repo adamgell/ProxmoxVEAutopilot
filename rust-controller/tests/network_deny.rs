@@ -1,7 +1,36 @@
 use pve_port::{
-    PveAccessMode, PveBaseUrl, PveObserverBuildError, PveObserverConfig, PveRequestAudit,
-    ReqwestPveObserver,
+    PveAccessMode, PveApiToken, PveBaseUrl, PveObserverBuildError, PveObserverConfig,
+    PveRequestAudit, ReqwestPveObserver,
 };
+
+#[test]
+fn credentials_never_authorize_denied_targets_or_send_requests() {
+    // Break: supplying a credential bypasses the target/mode permission check.
+    for target in [
+        "https://192.0.2.1:8006",
+        "https://[::ffff:192.0.2.1]:8006",
+        "https://denied-pve.invalid:8006",
+    ] {
+        for (mode, allow) in [
+            (PveAccessMode::Observe, false),
+            (PveAccessMode::Adapter, false),
+            (PveAccessMode::Adapter, true),
+            (PveAccessMode::Native, false),
+            (PveAccessMode::Native, true),
+        ] {
+            let requests = PveRequestAudit::new();
+            let config = PveObserverConfig::new(PveBaseUrl::parse(target).unwrap(), mode, allow)
+                .with_api_token(
+                    PveApiToken::parse("observer@pve!local-proof", "synthetic-secret-123").unwrap(),
+                )
+                .with_request_audit(requests.clone());
+            let error = ReqwestPveObserver::new(config).unwrap_err();
+            assert_eq!(error, PveObserverBuildError::TargetReadDenied);
+            assert_eq!(requests.request_count(), 0);
+            assert!(!format!("{error:?} {error}").contains("synthetic-secret-123"));
+        }
+    }
+}
 
 #[test]
 fn production_address_is_rejected_before_http_client_construction() {

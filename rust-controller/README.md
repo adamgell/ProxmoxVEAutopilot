@@ -1,9 +1,78 @@
-# Rust Controller Foundation
+# Rust Controller: Foundation and Fake Native Workflow
 
-This local foundation provides a PostgreSQL journal, fenced scheduler, compatibility
-normalizer, fake PVE evidence, one synthetic Ansible adapter, and a persistent
-HTTP health service. It has **no native PVE mutation and is not production-ready**.
+The library now has a durable fake-only native clone/configure/start workflow,
+alongside the PostgreSQL journal, fenced scheduler, compatibility normalizer,
+synthetic Ansible adapter, and persistent HTTP health service. Native mode and
+real transport remain unavailable in the service. Only the sealed in-memory fake
+implements native mutation; the authenticated HTTP observer has read capabilities.
+This is a local proof, not a production controller replacement.
 Synthetic success says nothing about OOBE, enrollment, ESP, or usable-device readiness.
+
+## Fake native proof
+
+From the repository root, with the existing local Unix Docker endpoint and cached
+`postgres:16-alpine` image available:
+
+```bash
+cargo run --locked --manifest-path rust-controller/Cargo.toml -p operation-controller --example native_fake
+```
+
+The example owns its disposable PostgreSQL container and in-memory PVE. It accepts
+no DB/PVE destination, credential, CLI mode, or live transport selector; it rejects
+`DOCKER_HOST` overrides and derives the database port only from its verified owned
+container's literal loopback publication. The measured result is:
+
+```json
+{"final_power":"running","mutation_requests":3,"native_operations":3,"os_readiness_proven":false,"reservations":1,"satisfied_operations":3,"transport":"in_memory_fake"}
+```
+
+Success requires exact requested identity/configuration, unchanged source and boot
+disk ownership, three separate satisfied operations with one send apiece, retained
+reservation, and confirmed disposable-container cleanup. The budget is 30 seconds
+of async work plus up to 200ms child cancellation/reaping and one three-second
+container cleanup budget: 33.2 seconds total apart from OS scheduling delays.
+Unconfirmed cleanup fails the proof; a possibly created container can remain when
+ownership cannot be verified within that bound.
+
+## Source and verification mapping
+
+All paths below are repository-relative. Test names identify executable local
+evidence; YAML/Python references establish compatibility intent. These sources do
+not independently confirm every response schema or the installed PVE release.
+
+| Contract / approved requirement | Local source used | Verification in this slice |
+|---|---|---|
+| Clone form and target identity | `autopilot-proxmox/roles/proxmox_vm_clone/tasks/clone_vm.yml` | `native_contract::fixed_requests_apply_identity_preserve_disk_and_provenance` checks the exact clone form; `concurrent_identity_reservation_has_one_winner` and `occupied_foreign_vmid_is_preserved_without_send` check fixed reservation/collision behavior. The YAML's automatic alternative-VMID attempts are intentionally not migrated. |
+| Typed config and separate root capability | `autopilot-proxmox/roles/proxmox_vm_clone/tasks/update_config.yml` | `fixed_requests_apply_identity_preserve_disk_and_provenance` checks seven config form keys, including digest; `changed_digest_alone_rejects_configure_without_refresh_or_resend` and `retained_marker_does_not_hide_changed_intermediate_identity_or_disk` reject conflicts. No args/delete/SSH capability exists. EFI/TPM/media and the source's root SSH args path are outside this subset. |
+| Clone/config/start order | `autopilot-proxmox/roles/proxmox_vm_clone_linux/tasks/main.yml` | `full_slice_duplicate_intake_has_three_exact_sends` checks three separate durable operations and exact sends; `typed_configure_and_start_dispatches_use_owned_requests_and_receipts` checks prerequisite ownership. Source cloud-init/media and first-boot stages are not migrated. |
+| API token wire header | `autopilot-proxmox/web/proxmox_client.py` (`_proxmox_api`) | `token_is_sent_once_only_in_sensitive_authorization_header`, `token_validation_and_debug_never_echo_input`, and `redirect_cannot_forward_token_or_issue_second_request` pass against local listeners. The Python source supplies header shape only; Rust transport tests and its verified rustls builder establish local TLS behavior, not Python's `verify=False`. |
+| Observation freshness and task identity | `rust-controller/crates/pve-port/src/{lib,model,observer}.rs` | Existing observer suite plus `every_snapshot_enforces_thirty_second_freshness_and_rejects_future_facts`, `outcome_observations_must_postdate_dispatch_including_absence_and_power`, and `coherent_receipt_and_task_substitution_cannot_replace_persisted_upid`. |
+| Immutable plan and fenced authority | `rust-controller/crates/postgres-store/src/{store,scheduler}.rs` | `semantic_plan_cannot_be_substituted_after_claim_or_by_concurrent_intake` and `authority_generation_cannot_aba_back_to_an_old_grant`, plus `concurrent_identity_reservation_has_one_winner`, `concurrent_cancel_and_dispatch_never_allow_downstream_send`, `old_generation_cannot_record_an_active_native_decision`, and `native_decision_checks_revision_and_generation`. |
+| No public execution-event injection | `PgStore::append_event` in `store.rs` | Original public append restrictions plus native `public_append_remains_evidence_only`; only EvidenceRecorded can enter through that API. |
+| Unknown and late results | Replacement design sections 8–10 | `crash_after_dispatch_never_grants_second_send`, `clone_response_loss_stays_unknown_and_never_advances`, `unknown_reconciliation_uses_current_generation_original_dispatch_and_receipt`, and `late_success_preserves_newer_conflict`. |
+| Production no-touch | Replacement design sections 16, 20–21 | `native_startup_fails_before_local_io_even_with_read_permission`, `real_transport_startup_fails_before_local_io_even_with_read_permission`, and `remote_pve_and_database_startup_targets_are_denied`; credential denial has zero-request and private zero-client-build counters. Four compile-fail cases reject observer clone/configure/start and downstream mutation implementations. |
+
+New node/storage/network/resource envelopes and fake clone provenance remain
+synthetic contracts. Pinned official public source supports the selected
+[node uptime shape](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Nodes.pm#L501),
+[usable-storage shape](https://github.com/proxmox/pve-storage/blob/7c6a03839920d4939a8ae725a2b0ef91c0cbc6c9/src/PVE/API2/Storage/Status.pm#L348),
+and [`qmclone` source-VMID worker binding](https://github.com/proxmox/qemu-server/blob/6c0127e612f6c576888a13f9bfb30874911b804d/src/PVE/API2/Qemu.pm#L4749).
+This does not verify the installed release. The next read-contract slice must
+address [optional network `active`](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Network.pm#L282),
+mixed QEMU/LXC and RRD-incomplete inventories, and
+[`VM.Audit` visibility filtering](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Cluster.pm#L587).
+Current conservative rejection is retained. Official schema verification or
+sanitized observation within the existing read-only authorization is still needed
+before a future real-PVE artifact. The fake provenance marker has no live wire
+representation; a real clone ownership mechanism remains unimplemented. No raw
+production inventory, payload, credential reference, or secret is copied into fixtures.
+
+Local macOS ARM64 Task 6 validation passed 308 unique workspace tests, including
+11 compile-fail checks (4 at the PVE capability boundary), with no failures or
+ignored tests. The named mapping tests above all passed in that run. Producer and
+proof regressions passed 8 Python tests; the coordination file requires unittest
+discovery because running it directly does not execute its test. The example
+command took 4.25 seconds including 1.90 seconds compilation in this run.
 
 ## Local proof
 
@@ -13,10 +82,12 @@ Ansible installation available. Dependency resolution is pinned by Cargo.lock.
 ```bash
 cargo fmt --manifest-path rust-controller/Cargo.toml --all -- --check
 cargo clippy --locked --manifest-path rust-controller/Cargo.toml --workspace --all-targets --all-features -- -D warnings
-cargo test --locked --manifest-path rust-controller/Cargo.toml --workspace --all-features --no-fail-fast
-cargo install cargo-deny --version 0.19.0 --locked
+RUST_TEST_THREADS=2 cargo test --locked --manifest-path rust-controller/Cargo.toml --workspace --all-features --no-fail-fast
 cargo deny --manifest-path rust-controller/Cargo.toml check
-docker pull postgres:16-alpine
+python3 rust-controller/scripts/test_producer_contract.py
+python3 rust-controller/scripts/test_proof_wait.py
+python3 rust-controller/scripts/test_proof_coordination.py
+python3 -m unittest discover -s rust-controller/scripts -p test_proof_coordination.py -v
 docker build --platform linux/amd64 --build-arg CONTROLLER_GIT_SHA="$(git rev-parse HEAD)" -f rust-controller/Dockerfile.test -t rust-controller-task9:local .
 docker compose -f rust-controller/docker-compose.test.yml config --quiet
 bash rust-controller/scripts/compose-proof.sh
@@ -33,6 +104,22 @@ and a killed running worker reaches unknown after actual 30-second lease expiry.
 It then executes Linux native adapter and /proc descendant-cleanup tests.
 An EXIT trap removes the project's containers, network, and disposable data.
 The local image and build cache remain; nothing is published.
+
+Task 6 local macOS ARM64 validation runs the whole workspace, including actual
+owned PostgreSQL native tests. `RUST_TEST_THREADS=2` bounds fixture contention;
+explicit competing-worker and transaction-race tests still exercise concurrency.
+The Linux AMD64 image compiles every workspace test target and release example,
+then executes PVE tests, pure `operation-controller --test decision`, and exactly
+`operation-controller --test postgres_native support:: -- --test-threads=1`.
+The nine filtered support tests use fixed local Unix child helpers and no Docker.
+The unfiltered native PostgreSQL binary and `native_fake` example require their
+own Docker fixture and are not executed inside the image. Linux actual database
+execution here is the foundation Compose/native adapter proof; Linux native
+controller PostgreSQL end-to-end remains a separate artifact gate. No host Docker
+socket is mounted. Exact committed-source checksums, image/binary hashes, test
+counts, logs and cleanup evidence are retained in the native Task 6 handoff report.
+Cargo-deny can emit the known duplicate-dependency baseline warnings; passing
+policy checks do not mean warning-free output.
 
 The image pins the official Rust 1.92 Bookworm AMD64 digest and the Ansible/Python
 database-driver package versions. Debian transitive packages and CI bootstrap
@@ -86,13 +173,15 @@ runtime failures never print raw dependency error chains.
 Required in every mode:
 
 - RUST_CONTROLLER_MODE: observe or adapter; parsed native fails startup.
-- RUST_CONTROLLER_DATABASE_URL: PostgreSQL URL with literal loopback host.
-- RUST_CONTROLLER_PVE_BASE_URL: validated HTTP(S) URL with literal loopback host.
+- RUST_CONTROLLER_DATABASE_URL: PostgreSQL URL; literal loopback without the explicit observe read opt-in described below.
+- RUST_CONTROLLER_PVE_BASE_URL: validated HTTP(S) URL; the same target restrictions apply.
 - RUST_CONTROLLER_AUTHORITY_GENERATION: positive expected generation; never bootstrapped.
 
 RUST_CONTROLLER_LISTEN defaults to 127.0.0.1:9090 and must be loopback.
 RUST_CONTROLLER_PVE_TRANSPORT defaults to fake; any other value fails startup.
 The service constructs only the in-memory fake and performs no PVE network request.
+API-token configuration exists only on the observer library constructor; there is
+no service API-token environment integration or native activation permission.
 Fake transport labels are not device-readiness evidence.
 
 Adapter additionally requires RUST_CONTROLLER_WORKER_ID,

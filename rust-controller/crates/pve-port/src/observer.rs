@@ -482,4 +482,40 @@ mod boundary_tests {
             assert_eq!(builds.load(Ordering::SeqCst), 0, "built for {target}");
         }
     }
+
+    #[test]
+    fn credential_denial_precedes_client_build_for_every_denied_mode() {
+        // Break: authenticated construction bypasses target authorization.
+        for target in [
+            "https://192.0.2.1:8006",
+            "https://[::ffff:192.0.2.1]:8006",
+            "https://denied-pve.invalid:8006",
+        ] {
+            for (mode, allow) in [
+                (PveAccessMode::Observe, false),
+                (PveAccessMode::Adapter, false),
+                (PveAccessMode::Adapter, true),
+                (PveAccessMode::Native, false),
+                (PveAccessMode::Native, true),
+            ] {
+                let builds = Arc::new(AtomicUsize::new(0));
+                let config =
+                    PveObserverConfig::new(PveBaseUrl::parse(target).unwrap(), mode, allow)
+                        .with_api_token(
+                            crate::PveApiToken::parse(
+                                "observer@pve!local-proof",
+                                "synthetic-secret-123",
+                            )
+                            .unwrap(),
+                        );
+                let error = ReqwestPveObserver::new_with_client_builder(
+                    config,
+                    CountingBuilder(Arc::clone(&builds)),
+                )
+                .unwrap_err();
+                assert_eq!(builds.load(Ordering::SeqCst), 0);
+                assert_eq!(error, PveObserverBuildError::TargetReadDenied);
+            }
+        }
+    }
 }
