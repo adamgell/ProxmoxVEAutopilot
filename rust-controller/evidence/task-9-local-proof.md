@@ -72,3 +72,46 @@ Every Compose attempt invoked its EXIT cleanup, removing its specific containers
 - Dependency downloads used Cargo.lock. Debian transitive packages and CI bootstrap tools are package-manager resolved, not a fully hermetic OS snapshot. CDLA-Permissive-2.0 is explicitly allowed for the webpki root data; local path dependencies are allowed while unknown registry/git sources and registry wildcard dependencies are denied.
 - The GitHub workflow is configured, not remotely executed. macos-15 is documented as ARM64 in [GitHub runner documentation](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). The hosted Colima/QEMU bootstrap has not been exercised here; actual macOS proof used the existing local Docker runtime and approved installed Ansible.
 - No generalized queue-plan storage/intake is present: each worker accepts only its configured synthetic fixture and exact fingerprint. No external outbox delivery sink is wired, so undrained backlog ages eventually make readiness503. Real PVE/native mutation, production deployment, tenant/Graph operations and publication remain unavailable or untouched. This foundation is not production-ready.
+
+## Task 9 review repair round 1
+
+Repair base: `a71569f38ffeab890660463d47423f0671e8c5d3`. This section supersedes current-behavior/provenance details above where explicitly changed; original execution evidence remains historical. The work stayed local and was not published or deployed.
+
+### Findings and meaningful failing proofs
+
+- Observe cancellation: a real PostgreSQL AccessExclusive lock held the observer at its pending-job SELECT. Aborting that future against the original raw BEGIN implementation returned an open read-only transaction to a one-connection pool: the regression observed `transaction_read_only=on` where `off` was required. The repair uses SQLx's read-only transaction plus an outer pool-connection guard. Only acknowledged rollback recycles the session; cancellation/error before that detaches and closes it, including cancellation during BEGIN/ROLLBACK. GREEN verifies idle reuse, zero remaining locks for the interrupted backend, and a subsequent successful observe sweep. The existing exact SQL audit still passes with BEGIN READ ONLY, two SELECTs, ROLLBACK and zero mutation. The broader focused run exposed cross-test Docker children in the old process inventory assertion; that test now runs its unchanged before/after inventory in its own test subprocess.
+- Operational health: an actual adapter invocation was validated against a temporary copy of the approved fixture, then that temporary playbook alone was removed. The real runner failed preparation before any durable process start. A discarded-result implementation returned readyz200, as did actual Tokio panic/abort join failures. GREEN returns503 with fixed `adapter_preparation`/`worker_join` labels, without the temporary path or panic canary in JSON, even after a later successful database sweep. Spawn/process fault reports also latch sanitized faults; normal cancellation, timeout and authority-loss reports do not. The worker stops new claims after a fault while continuing fenced reaping/reads. Recovery of this operational latch requires repair and restart.
+- Readiness waiter: actual loopback HTTP503 and connection refusal escaped the original polling helper and failed the new tests. GREEN retries only HTTP503/refusal to a monotonic deadline. Persistent failure is bounded; malformed JSON, HTTP401 and safety assertions fail immediately. No broad exception suppression was added.
+- The first two repaired Compose runs hit the final-state deadline. Live inspection on the second found healthy surviving workers with no operational fault, zero remaining leases and five satisfied/one unknown: a selected five-second operation had finished between selection and Docker SIGKILL. The integration harness now pauses a candidate container, verifies its still-running/unexpired durable lease, then kills it. An already-finished candidate is resumed and selected again within a bound; other failures abort. A command-boundary regression first demonstrated the missing pause/confirm sequence and then passed the retry ordering. Neither synthetic duration, lease expiry nor recovery deadline was increased. Both failed projects were removed by EXIT cleanup.
+
+### Exact repair checks
+
+All commands below ran from the isolated worktree. No hosted GitHub Actions execution is claimed.
+
+| Command | Result |
+| --- | --- |
+| `cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service` | PASS: 17 unit/integration tests in6.89s plus1 actual service subprocess test in2.52s; no failures/ignored |
+| `cargo clippy --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service --all-targets --all-features -- -D warnings` | PASS |
+| `cargo fmt --manifest-path rust-controller/Cargo.toml --all -- --check` | PASS |
+| `python3 -m unittest discover -s rust-controller/scripts -p 'test_*.py' -v` | PASS: 6 tests in2.943s, including real HTTP/refusal and shell coordination regression |
+| `bash -n rust-controller/scripts/compose-proof.sh` | PASS |
+| `cargo run --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service --example verify_adapter` | PASS on actual macOS; validates trusted entrypoint/fixture, launches no process |
+| `cargo deny --manifest-path rust-controller/Cargo.toml check` | PASS: advisories/bans/licenses/sources ok. Existing duplicate-version warnings and unmatched CDLA-Permissive-2.0 license allowance warning remain documented; no risk-hiding suppression |
+| `docker compose -f rust-controller/docker-compose.test.yml config --quiet` | PASS |
+| `docker build --network none --platform linux/amd64 -f .superpowers/sdd/2026-09-04-rust-controller-foundation/linux-repair-round-1.Dockerfile -t rust-controller-task9:local .` | PASS: actual repaired AMD64 release compile11.28s and release verifier compile1.56s; verifier ran successfully in the Linux image |
+| `bash rust-controller/scripts/compose-proof.sh` | PASS scenario below; Linux native/process results and cleanup recorded below |
+| `git diff --check` | PASS |
+
+The incremental offline Dockerfile inherits the already executed Task9 image, copies updated Cargo.lock and the controller-service crate, sets CONTROLLER_GIT_SHA to the repair base, and runs the actual release build and release verifier. It uses the previously installed normalized Debian Ansible entrypoint, not a host modification. This is a real incremental repaired release build, not a newly executed full one-pass Dockerfile or hosted job. Runtime proof scripts are bound read-only from this checkout.
+
+Repaired image ID: `sha256:fc73f340020429d19915cf0aed07f90ed893ce34eee9b57b155d9016a16bcb76`, inspected architecture `amd64`. Repaired service binary SHA256: `853dffe32e552a82f3367c8c7bfe4a08e31740a62fe19d1da8e044bb0340cff3`. Cargo.lock SHA256: `d1f574bf7a805cf5a49c9dfea1f057d9a85b1d3bff442cbd998acce65d61f2da`. Lock change only adds the service's existing tempfile dev dependency. The artifact reports base a71569f and includes uncommitted repair source at build time.
+
+The Linux hosted setup now explicitly normalizes the trusted system Python3 entrypoint before tests. Both Linux and macOS hosted jobs run `verify_adapter`, invoking the actual registry contract and failing closed on unexpected packaging. Actual macOS and disposable Linux preflight passed here; hosted package resolution/Colima execution remain configured, not executed. Unchanged full workspace/PVE/Python baseline suites were not rerun in this repair.
+
+Actual corrected Compose scenario:
+
+```json
+{"attempts_per_operation_max":1,"cap":2,"observer_sweeps":39,"recovery":"real_30_second_lease_expiry","result":"PASS","states":{"pending":1,"satisfied":4,"unknown":2},"transport":"fake","workers_claimed":2,"workers_started_and_ready":3}
+```
+
+Linux adapter tests executed by the successful Compose script passed: 12 lifecycle/process tests in6.61s, including actual /proc descendant/drop cleanup; 4 native PostgreSQL tests in13.71s, including success, cancellation, authority flip/current-authority recovery and mismatched-plan preservation. No test was ignored. All three repair projects (1788572189-18573, 1788572276-19453, 1788572439-22196) executed cleanup. Post-run Docker container/network/volume listings for the repair project prefix were empty. Only the reusable local proof image/build cache remains; nothing was pushed. The observer process inventory in the diagnostic run showed only its controller process.

@@ -72,6 +72,7 @@ services:
     profiles: [tools]
     volumes:
       - ./scripts/compose-proof.py:/workspace/rust-controller/scripts/compose-proof.py:ro
+      - ./scripts/proof_wait.py:/workspace/rust-controller/scripts/proof_wait.py:ro
     entrypoint: [/usr/bin/python3, /workspace/rust-controller/scripts/compose-proof.py]
 networks:
   proof:

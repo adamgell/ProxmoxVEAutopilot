@@ -55,15 +55,22 @@ startup never migrates or initializes authority. Observe mode verifies a
 non-superuser SELECT-only jobs role inside a read-only transaction, normalizes one
 pending synthetic compatibility row, rolls back, and reads typed aggregate health.
 It never constructs a scheduler/adapter or spawns a process. An empty jobs table
-produces rejected compatibility without claiming work. The observer's successful
-sweep timestamp records completion of those actual reads.
+produces rejected compatibility without claiming work. A SQLx transaction guard
+and an outer connection guard recycle a session only after acknowledged rollback;
+cancellation during BEGIN, a read, or ROLLBACK discards the connection.
+The observer's successful sweep timestamp records completion of those actual reads.
 
 GET /healthz is process liveness, independent of PostgreSQL. GET /readyz queries
 the store with a two-second bound and returns structured JSON. It is 503 when the
 database/schema is unavailable, authority is absent or mismatched, the latest sweep
 failed or is older than 15 seconds, the outbox exceeds 1,000 pending events, or its
 oldest undelivered event exceeds 300 seconds. Unavailable counts are null. The
-outbox fields report backlog health; no external outbox delivery sink is wired in
+fixed operational_failure field also makes readiness503 after unexpected adapter
+preparation, spawn, process, or worker-join failures. This failure stays latched
+until restart after repair; subsequent successful reads cannot clear it. New
+claims stop while current-authority reaping and health reads continue. Normal
+cancellation, timeout, and authority-loss reports retain their execution semantics.
+The outbox fields report backlog health; no external outbox delivery sink is wired in
 this foundation, so a long-lived undrained deployment eventually becomes unready.
 
 Health includes version, build Git SHA, mode, actual authority executor/generation,
@@ -121,5 +128,8 @@ to this proof.
 The workflow configures fmt, Clippy, all tests, cargo-deny, repeated PostgreSQL
 races/crash tests, Linux AMD64 release and Compose proof, and macOS ARM64 native
 tests. The macOS job boots disposable Colima/QEMU for PostgreSQL. Hosted workflow
-execution and local execution are separate claims; see the checked-in Task 9
+setup explicitly normalizes Debian's trusted Python shebang before native tests.
+Both native jobs run the actual adapter registry preflight through the
+verify_adapter example and fail closed if their installed runtime violates it.
+Hosted workflow execution and local execution are separate claims; see the checked-in Task 9
 evidence report for what actually ran. No workflow publishes an image or package.

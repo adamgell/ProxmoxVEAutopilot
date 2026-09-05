@@ -13,6 +13,16 @@ pub struct Progress {
     pub last_success: Option<(Instant, DateTime<Utc>)>,
     pub successful_sweeps: u64,
     pub last_sweep_ok: bool,
+    pub operational_failure: Option<OperationalFailure>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationalFailure {
+    AdapterPreparation,
+    AdapterSpawn,
+    AdapterProcess,
+    WorkerJoin,
 }
 impl Progress {
     pub fn succeeded(&mut self) {
@@ -50,6 +60,7 @@ pub struct ReadyResponse {
     reconciler_last_success: Option<DateTime<Utc>>,
     successful_sweeps: u64,
     reconciler_fresh: bool,
+    operational_failure: Option<OperationalFailure>,
     adapter_versions: Vec<&'static str>,
     pve_transport: &'static str,
     pve_evidence: &'static str,
@@ -74,6 +85,7 @@ fn evaluate(
             .last_success
             .is_some_and(|(time, _)| time.elapsed() <= Duration::from_secs(15));
     let ready = snapshot.is_some()
+        && progress.operational_failure.is_none()
         && outbox
         && fresh
         && transport == "fake"
@@ -98,6 +110,7 @@ fn evaluate(
         reconciler_last_success: progress.last_success.map(|(_, utc)| utc),
         successful_sweeps: progress.successful_sweeps,
         reconciler_fresh: fresh,
+        operational_failure: progress.operational_failure,
         adapter_versions: state.adapter_versions.clone(),
         pve_transport: transport,
         pve_evidence: "synthetic_no_device_readiness",
@@ -171,6 +184,7 @@ fn test_router(
         last_success: age.map(|age| (Instant::now() - Duration::from_secs(age), Utc::now())),
         successful_sweeps: u64::from(age.is_some()),
         last_sweep_ok: true,
+        operational_failure: None,
     };
     let snapshot = StoreHealthSnapshot {
         observed_at: Utc::now(),

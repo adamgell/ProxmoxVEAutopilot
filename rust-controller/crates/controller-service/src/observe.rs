@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use api_compat::{JobEnvelope, normalize_job};
 use serde_json::json;
-use sqlx::{PgConnection, PgPool};
+use sqlx::{Connection, PgConnection, PgPool, Postgres, pool::PoolConnection};
 
 const BEGIN_READ_ONLY_SQL: &str = "BEGIN TRANSACTION READ ONLY";
 const VERIFY_READ_ONLY_SQL: &str = "SELECT \
@@ -27,22 +27,48 @@ struct ObserveReadCapability<'a> {
     connection: &'a mut PgConnection,
 }
 
+// A transaction guard rolls back once BEGIN has completed. This outer guard
+// also covers cancellation during BEGIN or ROLLBACK: until rollback has been
+// acknowledged, drop closes the socket instead of recycling an uncertain session.
+struct ObserveConnection(Option<PoolConnection<Postgres>>);
+impl ObserveConnection {
+    fn connection(&mut self) -> &mut PgConnection {
+        self.0.as_mut().expect("owned observe connection")
+    }
+
+    fn recycle_after_rollback(mut self) {
+        drop(self.0.take());
+    }
+}
+impl Drop for ObserveConnection {
+    fn drop(&mut self) {
+        if let Some(connection) = self.0.take() {
+            drop(connection.detach());
+        }
+    }
+}
+
 pub(crate) async fn observe_once(pool: &PgPool) -> Result<String> {
-    let mut connection = pool
+    let connection = pool
         .acquire()
         .await
         .context("observe-mode database connection acquisition failed")?;
-    sqlx::query(BEGIN_READ_ONLY_SQL)
-        .execute(&mut *connection)
+    let mut connection = ObserveConnection(Some(connection));
+    let mut transaction = connection
+        .connection()
+        .begin_with(BEGIN_READ_ONLY_SQL)
         .await
         .context("observe-mode read-only transaction start failed")?;
 
     let result = observe_in_transaction(ObserveReadCapability {
-        connection: &mut connection,
+        connection: &mut transaction,
     })
     .await;
-    let rollback = sqlx::query("ROLLBACK").execute(&mut *connection).await;
-    rollback.context("observe-mode transaction rollback failed")?;
+    transaction
+        .rollback()
+        .await
+        .context("observe-mode transaction rollback failed")?;
+    connection.recycle_after_rollback();
     result
 }
 
@@ -371,6 +397,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_observe_discards_open_transaction_and_releases_locks_before_reuse() {
+        // Break: dropping an in-flight raw BEGIN/query returns an open read-only
+        // transaction to the pool, retaining locks and poisoning the next sweep.
+        let (postgres, admin, _observer) = fixture().await;
+        let observer = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&postgres.observer_dsn())
+            .await
+            .unwrap();
+        let mut blocker = admin.begin().await.unwrap();
+        sqlx::query("LOCK TABLE jobs IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let read_pool = observer.clone();
+        let task = tokio::spawn(async move { observe_once(&read_pool).await });
+        let blocked_pid: i32 = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(pid) = sqlx::query_scalar("SELECT pid FROM pg_stat_activity WHERE usename='observer_login' AND wait_event_type='Lock' AND query LIKE 'SELECT json_build_object%'").fetch_optional(&admin).await.unwrap() {
+                    break pid;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        blocker.rollback().await.unwrap();
+        let readonly: String = tokio::time::timeout(
+            Duration::from_secs(5),
+            sqlx::query_scalar("SHOW transaction_read_only").fetch_one(&observer),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            readonly, "off",
+            "cancelled observer leaked a transaction into the pool"
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let locks: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_locks WHERE pid=$1")
+                    .bind(blocked_pid)
+                    .fetch_one(&admin)
+                    .await
+                    .unwrap();
+                if locks == 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            observe_once(&observer)
+                .await
+                .unwrap()
+                .contains("compatible")
+        );
+        let readonly: String = sqlx::query_scalar("SHOW transaction_read_only")
+            .fetch_one(&observer)
+            .await
+            .unwrap();
+        assert_eq!(
+            readonly, "off",
+            "successful rollback must leave reusable connection idle"
+        );
+    }
+
+    #[tokio::test]
     async fn observe_uses_select_only_role_and_audits_zero_mutating_statements() {
         let (postgres, admin, observer) = fixture().await;
         let privileges: (bool, bool, bool, bool) = sqlx::query_as(
@@ -533,6 +629,24 @@ mod tests {
 
     #[tokio::test]
     async fn observe_has_no_process_capability_and_leaves_no_child_process() {
+        // Other tests launch Docker fixtures concurrently. Isolate this process
+        // inventory proof so their children cannot contaminate its before/after.
+        if std::env::var_os("RUST_CONTROLLER_OBSERVE_CHILD_PROOF").is_none() {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "observe::tests::observe_has_no_process_capability_and_leaves_no_child_process",
+                ])
+                .env("RUST_CONTROLLER_OBSERVE_CHILD_PROOF", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated observe process proof failed: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
         let (_postgres, _admin, observer) = fixture().await;
         let before = child_processes();
 

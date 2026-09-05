@@ -19,14 +19,18 @@ jobs:
           rustup default 1.92.0
           sudo apt-get update -qq
           sudo apt-get install -y ansible-core
+          sudo sed -i '1s|^#! */usr/bin/python3$|#!/usr/bin/python3|' /usr/bin/ansible-playbook
           docker pull postgres:16-alpine
           cargo install cargo-deny --version 0.19.0 --locked
+      - name: Verify installed native adapter contract
+        run: cargo run --locked --manifest-path rust-controller/Cargo.toml -p controller-service --example verify_adapter
       - name: Quality and all tests
         run: |
           cargo fmt --manifest-path rust-controller/Cargo.toml --all -- --check
           cargo clippy --locked --manifest-path rust-controller/Cargo.toml --workspace --all-targets --all-features -- -D warnings
           cargo test --locked --manifest-path rust-controller/Cargo.toml --workspace --all-features --no-fail-fast
           cargo deny --manifest-path rust-controller/Cargo.toml check
+          python3 -m unittest discover -s rust-controller/scripts -p 'test_*.py' -v
       - name: Repeat PostgreSQL crash and concurrency proof
         run: |
           cargo test --locked --manifest-path rust-controller/Cargo.toml -p scheduler -p postgres-store
@@ -50,6 +54,8 @@ jobs:
           colima start --vm-type qemu --arch aarch64 --cpu-type max --mount-type 9p --cpu 2 --memory 4
           docker pull postgres:16-alpine
           /opt/homebrew/bin/ansible-playbook --version
+      - name: Verify installed native adapter contract
+        run: cargo run --locked --manifest-path rust-controller/Cargo.toml -p controller-service --example verify_adapter
       - name: All macOS ARM64 tests
         run: cargo test --locked --manifest-path rust-controller/Cargo.toml --workspace --all-features --no-fail-fast
       - name: Stop disposable runtime

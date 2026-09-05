@@ -1,9 +1,11 @@
 use crate::{
     config::{ControllerConfig, ControllerMode},
-    health::{HealthState, Progress},
+    health::{HealthState, OperationalFailure, Progress},
     observe,
 };
-use ansible_adapter::{AdapterRegistry, AdapterRunner, SYNTHETIC_LONG_SLEEP_V1};
+use ansible_adapter::{
+    AdapterError, AdapterRegistry, AdapterReport, AdapterRunner, SYNTHETIC_LONG_SLEEP_V1,
+};
 use anyhow::{Result, ensure};
 use api_compat::{JobEnvelope, NormalizedPlan, normalize_job};
 use controller_domain::WorkflowKind;
@@ -21,6 +23,31 @@ struct AdapterWork {
     plan: NormalizedPlan,
     scheduler: Scheduler,
     cap: u32,
+}
+
+type AdapterResult = std::result::Result<AdapterReport, AdapterError>;
+fn record_completion(
+    progress: &mut Progress,
+    result: std::result::Result<AdapterResult, tokio::task::JoinError>,
+) {
+    use ansible_adapter::CompletionReason;
+    let failure = match result {
+        Err(_) => Some(OperationalFailure::WorkerJoin),
+        Ok(Err(_)) => Some(OperationalFailure::AdapterPreparation),
+        Ok(Ok(report)) => match report.reason {
+            CompletionReason::SpawnFailed => Some(OperationalFailure::AdapterSpawn),
+            CompletionReason::ProcessError => Some(OperationalFailure::AdapterProcess),
+            CompletionReason::Exited
+            | CompletionReason::Cancelled
+            | CompletionReason::TimedOut
+            | CompletionReason::AuthorityLost => None,
+        },
+    };
+    // Failures are fixed enum labels, never dependency errors or panic payloads.
+    // Latch until restart after repair; a healthy DB sweep cannot clear a fault.
+    if progress.operational_failure.is_none() {
+        progress.operational_failure = failure;
+    }
 }
 
 pub async fn serve(config: ControllerConfig) -> Result<()> {
@@ -108,7 +135,7 @@ async fn sweeps(
     work: Option<AdapterWork>,
     mut stop: watch::Receiver<bool>,
 ) {
-    let mut active: Option<JoinHandle<()>> = None;
+    let mut active: Option<JoinHandle<AdapterResult>> = None;
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -119,12 +146,13 @@ async fn sweeps(
         if active.as_ref().is_some_and(JoinHandle::is_finished)
             && let Some(done) = active.take()
         {
-            let _ = done.await;
+            let result = done.await;
+            record_completion(&mut *state.progress.write().await, result);
         }
         let sweep = async {
             if let Some(work) = &work {
                 work.scheduler.reap_expired().await?;
-                if active.is_none() {
+                if active.is_none() && state.progress.read().await.operational_failure.is_none() {
                     let fingerprint = work.plan.fingerprint()?;
                     if let Some(grant) = work
                         .scheduler
@@ -139,9 +167,7 @@ async fn sweeps(
                         let invocation = work.registry.validate(&work.plan)?;
                         let runner = AdapterRunner::new(work.scheduler.clone());
                         let cancellation = stop.clone();
-                        active = Some(tokio::spawn(async move {
-                            let _ = runner.run(invocation, grant, cancellation).await;
-                        }));
+                        active = Some(tokio::spawn(runner.run(invocation, grant, cancellation)));
                     }
                 }
             } else {
@@ -162,13 +188,15 @@ async fn sweeps(
             progress.last_sweep_ok = false;
         }
     }
-    if let Some(mut active) = active
-        && tokio::time::timeout(Duration::from_secs(12), &mut active)
-            .await
-            .is_err()
-    {
-        active.abort();
-        let _ = active.await;
+    if let Some(mut active) = active {
+        let result = match tokio::time::timeout(Duration::from_secs(12), &mut active).await {
+            Ok(result) => result,
+            Err(_) => {
+                active.abort();
+                active.await
+            }
+        };
+        record_completion(&mut *state.progress.write().await, result);
     }
 }
 
@@ -183,3 +211,7 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let _ = tokio::signal::ctrl_c().await;
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

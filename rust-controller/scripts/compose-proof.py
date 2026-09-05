@@ -2,8 +2,8 @@
 import json
 import subprocess
 import sys
-import time
 import urllib.request
+from proof_wait import wait_for
 
 import psycopg2
 
@@ -15,16 +15,6 @@ def query(sql):
     with db.cursor() as cursor:
         cursor.execute(sql)
         return cursor.fetchall()
-
-
-def wait_for(check, seconds=45):
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        result = check()
-        if result:
-            return result
-        time.sleep(0.1)
-    raise AssertionError("bounded local proof deadline exceeded")
 
 
 def health(port):
@@ -48,10 +38,19 @@ if sys.argv[1] == "cancel-and-select":
         wait_for(lambda: health(port))
     subprocess.run(["/workspace/rust-controller/target/release/examples/seed", "cancel"], check=True, stdout=subprocess.DEVNULL)
     wait_for(lambda: query("SELECT count(*) FROM rust_controller.operations WHERE state='unknown'")[0][0] == 1)
+
+if sys.argv[1] in ("cancel-and-select", "select-running"):
     rows = wait_for(lambda: query("SELECT l.worker_id FROM rust_controller.worker_leases l JOIN rust_controller.operations o USING(operation_id) WHERE o.state='running'"))
     owner = rows[0][0]
     assert owner in ("worker-1", "worker-2", "worker-3")
     print(owner)
+elif sys.argv[1] == "confirm-paused-running":
+    owner = sys.argv[2]
+    assert owner in ("worker-1", "worker-2", "worker-3")
+    capped()
+    rows = query("SELECT l.worker_id FROM rust_controller.worker_leases l JOIN rust_controller.operations o USING(operation_id) WHERE o.state='running' AND l.lease_expires_at>clock_timestamp()")
+    # A finished selection is a distinct retry result, not a safety exception.
+    sys.exit(0 if (owner,) in rows else 3)
 elif sys.argv[1] == "verify":
     def finished():
         capped()
