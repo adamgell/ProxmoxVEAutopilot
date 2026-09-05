@@ -20,7 +20,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 | Selected-node service integration | Accepted for c429807443f80b74530cbd10af334e50e97b695b; see selected-node-service-acceptance.md for exact macOS/Linux execution limits |
 | Artifact and OSDeploy input contracts | Artifact identity/byte-match library accepted at 15fadd049ee7a52ea61a2edfe6789a15a6929628. OSDeploy fixed-stage/input contract accepted at 6ee5bf08eed76b20e17056df9b2d27bbc1581113 on macOS/Linux; see osdeploy-contract-acceptance.md. Durable workflow binding remains pending |
 | Callback compatibility and server-side binding | Pending run/attempt/identity binding, replay, duplicate, conflict and late-result proofs |
-| Native OSDeploy vertical slice | Next: sibling rich PVE facts/requests/evaluators and shared fake execution in docs/superpowers/plans/2026-09-05-rust-provisioning-port.md. Actual service-driven sixteen-stage workflow and fake-client recovery proof remain pending |
+| Native OSDeploy vertical slice | Rich provisioning facts committed at 13a6ecb9877c8598825354b6b5760d35556bcea2; implementation report records165 runtime tests and12 doctests, fmt and strict Clippy passing. Independent Astra review is running, so this task is not yet accepted. The next bound-request/evaluation brief is prepared, not dispatched. Shared fake execution and actual service-driven sixteen-stage recovery proof remain pending |
 | Agent/build-host, CloudOSD and legacy WinPE | Pending compatible contracts and workflow proofs |
 | Python/Rust single-writer transition | Pending local dual-executor generation fencing and handoff proofs |
 | Release-candidate assurance | Pending full differential/fault/rebuild/backup-restore/rollback evidence, exact immutable artifacts, remaining contract suites and independent readiness review |
@@ -29,7 +29,15 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 
 ## Current resource ruling
 
-The user approved clearing only this isolated worktree's rebuildable Rust cache after preserving its verified executable and logs. A fresh pre-cleanup check showed 152,893,628 KiB available (about 146 GiB), above the 18 GiB artifact-start guard. Cleanup is unnecessary and was not performed. Keep evidence, accepted images, unrelated worktrees and Docker resources intact. Recheck headroom before the artifact build.
+The user approved clearing only this isolated worktree's rebuildable Rust cache after preserving its verified executable and logs. The historical pre-cleanup check showed 152,893,628 KiB available (about 146 GiB); the later accepted OSDeploy Linux gate recorded 119,637,000 KiB, still above the 18 GiB artifact-start guard. These are past observations, not a live free-space guarantee. Cleanup was not performed. Keep evidence, accepted images, unrelated worktrees and Docker resources intact. Recheck headroom before the next artifact build.
+
+## Active implementation checkpoint
+
+The rich provisioning plan separates broad observed/declaration values from executable compatibility. Its next request layer must retain the original source and target before-state, bind the full workflow and individual operation separately, preserve the original dispatch across recovery, and never turn missing receipts into resend permission. PE start and installed-disk start remain distinct operations.
+
+Main's pinned upstream check corrected the new resize worker convention and added its before-config digest. Configuring an existing disk's serial must preserve capacity, not model informational size as growth. Desired disk serials longer than 20 ASCII bytes must be rejected at request construction and downward workflow conversion before any clone; never silently truncated. These are conservative contracts for the next local phase, not proof of compatibility with the installed production PVE version. Task 1's broad validated fact representation remains unchanged.
+
+Upstream references pinned to qemu-server commit `6c0127e612f6c576888a13f9bfb30874911b804d`: [resize endpoint implementation](https://github.com/proxmox/qemu-server/blob/6c0127e612f6c576888a13f9bfb30874911b804d/src/PVE/API2/Qemu.pm#L5558-L5685) and [disk size/serial schema](https://github.com/proxmox/qemu-server/blob/6c0127e612f6c576888a13f9bfb30874911b804d/src/PVE/QemuServer/Drive.pm#L181-L235).
 
 ## Completion truth
 
