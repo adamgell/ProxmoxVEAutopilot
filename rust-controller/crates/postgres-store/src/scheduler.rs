@@ -83,6 +83,9 @@ impl Scheduler {
         if cap == 0 {
             return Err(SchedulerError::InvalidCap { cap });
         }
+        if kind == WorkflowKind::OsDeploy {
+            return Ok(None);
+        }
         let mut transaction = self.store.pool().begin().await?;
         self.lock_authority(&mut transaction).await?;
 
@@ -294,7 +297,7 @@ impl Scheduler {
         self.lock_authority(&mut transaction).await?;
         self.validate_grant_owner(grant)?;
         let (state, revision) = lock_operation(&mut transaction, grant.operation_id()).await?;
-        reject_native(&mut transaction, grant.operation_id()).await?;
+        reject_typed_dispatch(&mut transaction, grant.operation_id()).await?;
         let persisted = lock_lease(&mut transaction, grant.operation_id()).await?;
         validate_persisted_lease(grant, &persisted)?;
         let distinct: i64 = sqlx::query_scalar(
@@ -381,6 +384,7 @@ impl Scheduler {
     pub async fn continuation(&self, grant: &LeaseGrant) -> Result<ExecutionState, SchedulerError> {
         let mut transaction = self.store.pool().begin().await?;
         self.lock_authority(&mut transaction).await?;
+        reject_osdeploy(&mut transaction, grant.operation_id()).await?;
         lock_native_run_if_present(&mut transaction, grant.operation_id()).await?;
         self.validate_grant_owner(grant)?;
         let (state, _) = lock_operation(&mut transaction, grant.operation_id()).await?;
@@ -404,6 +408,7 @@ impl Scheduler {
     pub async fn heartbeat(&self, grant: &LeaseGrant) -> Result<LeaseGrant, SchedulerError> {
         let mut transaction = self.store.pool().begin().await?;
         self.lock_authority(&mut transaction).await?;
+        reject_osdeploy(&mut transaction, grant.operation_id()).await?;
         lock_native_run_if_present(&mut transaction, grant.operation_id()).await?;
         self.validate_grant_owner(grant)?;
         let (state, _) = lock_operation(&mut transaction, grant.operation_id()).await?;
@@ -472,7 +477,7 @@ impl Scheduler {
         let mut transaction = self.store.pool().begin().await?;
         self.lock_authority(&mut transaction).await?;
         let (state, revision) = lock_operation(&mut transaction, operation_id).await?;
-        reject_native(&mut transaction, operation_id).await?;
+        reject_typed_dispatch(&mut transaction, operation_id).await?;
         if let Some(grant) = grant {
             self.validate_grant_owner(grant)?;
             let persisted = lock_lease(&mut transaction, operation_id).await?;
@@ -542,7 +547,7 @@ impl Scheduler {
         self.lock_authority(&mut transaction).await?;
         self.validate_grant_owner(grant)?;
         let (current, revision) = lock_operation(&mut transaction, grant.operation_id()).await?;
-        reject_native(&mut transaction, grant.operation_id()).await?;
+        reject_typed_dispatch(&mut transaction, grant.operation_id()).await?;
         let persisted = lock_lease(&mut transaction, grant.operation_id()).await?;
         validate_persisted_lease(grant, &persisted)?;
         if current == ExecutionState::Leased {
@@ -616,7 +621,7 @@ impl Scheduler {
             "SELECT operations.operation_id FROM rust_controller.operations operations \
              JOIN rust_controller.worker_leases leases USING (operation_id) \
              WHERE leases.lease_expires_at <= clock_timestamp() \
-               AND operations.workflow_kind <> 'native_pve_vm_boot' \
+               AND operations.workflow_kind NOT IN ('native_pve_vm_boot','os_deploy') \
              ORDER BY operations.operation_id \
              FOR UPDATE OF operations SKIP LOCKED LIMIT $1",
         )
@@ -628,6 +633,9 @@ impl Scheduler {
         for operation_uuid in operation_ids {
             let operation_id = decode_operation_id(operation_uuid)?;
             let (current, revision) = lock_operation(&mut transaction, operation_id).await?;
+            if is_osdeploy(&mut transaction, operation_id).await? {
+                continue;
+            }
             let lease = lock_lease(&mut transaction, operation_id).await?;
             if lease.active {
                 continue;
@@ -1216,12 +1224,33 @@ fn decode_execution_state(state: &str) -> Result<ExecutionState, SchedulerError>
     }
 }
 
-async fn reject_native(
+async fn reject_typed_dispatch(
     tx: &mut Transaction<'_, Postgres>,
     operation: OperationId,
 ) -> Result<(), SchedulerError> {
-    let native:bool=sqlx::query_scalar("SELECT workflow_kind='native_pve_vm_boot' FROM rust_controller.operations WHERE operation_id=$1").bind(operation.as_uuid()).fetch_one(&mut **tx).await?;
+    let native:bool=sqlx::query_scalar("SELECT workflow_kind IN ('native_pve_vm_boot','os_deploy') FROM rust_controller.operations WHERE operation_id=$1").bind(operation.as_uuid()).fetch_one(&mut **tx).await?;
     if native {
+        Err(SchedulerError::PlanBindingMismatch)
+    } else {
+        Ok(())
+    }
+}
+async fn is_osdeploy(
+    tx: &mut Transaction<'_, Postgres>,
+    operation: OperationId,
+) -> Result<bool, SchedulerError> {
+    Ok(sqlx::query_scalar(
+        "SELECT workflow_kind='os_deploy' FROM rust_controller.operations WHERE operation_id=$1",
+    )
+    .bind(operation.as_uuid())
+    .fetch_one(&mut **tx)
+    .await?)
+}
+async fn reject_osdeploy(
+    tx: &mut Transaction<'_, Postgres>,
+    operation: OperationId,
+) -> Result<(), SchedulerError> {
+    if is_osdeploy(tx, operation).await? {
         Err(SchedulerError::PlanBindingMismatch)
     } else {
         Ok(())

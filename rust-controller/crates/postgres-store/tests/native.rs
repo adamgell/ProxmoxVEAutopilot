@@ -295,10 +295,33 @@ async fn foundation_database_upgrade_preserves_four_previous_workflows() {
             "a".repeat(64),
         )
         .unwrap();
-        f.store.append_command(id, &command).await.unwrap();
+        if kind == WorkflowKind::OsDeploy {
+            // Preserve a real historical row through the prior schema. Typed
+            // registration intentionally forbids new generic OSDeploy intake.
+            let mut tx = f.pool.begin().await.unwrap();
+            sqlx::query("INSERT INTO rust_controller.operations(operation_id,workflow_kind,run_id,operation_key,contract_version,state,revision) VALUES($1,'os_deploy',$2,'foundation',1,'pending',0)").bind(id.as_uuid()).bind(command.semantic_key().run_id().as_uuid()).execute(&mut *tx).await.unwrap();
+            sqlx::query("INSERT INTO rust_controller.commands(idempotency_key,operation_id,payload_digest) VALUES($1,$2,$3)").bind(command.idempotency_key()).bind(id.as_uuid()).bind(command.payload_digest()).execute(&mut *tx).await.unwrap();
+            sqlx::query("INSERT INTO rust_controller.operation_projection(operation_id,state,revision) VALUES($1,'pending',0)").bind(id.as_uuid()).execute(&mut *tx).await.unwrap();
+            tx.commit().await.unwrap();
+        } else {
+            f.store.append_command(id, &command).await.unwrap();
+        }
         operations.push(id);
     }
+    let history_query = "SELECT jsonb_build_object('operations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY operation_id) FROM rust_controller.operations o),'commands',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM rust_controller.commands c),'projections',(SELECT jsonb_agg(to_jsonb(p) ORDER BY operation_id) FROM rust_controller.operation_projection p))";
+    let history: serde_json::Value = sqlx::query_scalar(history_query)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
     f.store.migrate().await.unwrap();
+    let upgraded: serde_json::Value = sqlx::query_scalar(history_query)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        upgraded, history,
+        "upgrade changed historical family, key, digest, state, revision or timestamps"
+    );
     f.store
         .enqueue_native_vm(RunId::new(), &vm())
         .await
@@ -311,6 +334,13 @@ async fn foundation_database_upgrade_preserves_four_previous_workflows() {
     assert_eq!(f.counts().await.operations, 7);
     assert_eq!(f.counts().await.commands, 7);
     assert_eq!(f.counts().await.plans, 3);
+    assert!(
+        f.scheduler()
+            .claim_next(WorkflowKind::OsDeploy, 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]

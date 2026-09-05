@@ -15,9 +15,13 @@ mod health;
 mod scheduler;
 pub use health::StoreHealthSnapshot;
 pub mod native;
+mod osdeploy;
 mod store;
 pub use native::{
     NativeDispatchPermit, NativeOperationSnapshot, NativeStoreError, NativeWorkflowIds,
+};
+pub use osdeploy::{
+    OsDeployOperationPlanV1, OsDeployRegistrationV1, OsDeployStoreError, OsDeployWorkflowIds,
 };
 
 pub use scheduler::{

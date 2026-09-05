@@ -17,6 +17,7 @@ event-journal = { path = "../event-journal" }
 serde_json.workspace = true
 serde.workspace = true
 pve-port = { path = "../pve-port" }
+osdeploy-adapter = { path = "../osdeploy-adapter" }
 sqlx.workspace = true
 thiserror.workspace = true
 uuid.workspace = true

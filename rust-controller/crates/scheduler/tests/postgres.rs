@@ -699,7 +699,7 @@ async fn per_kind_cap_is_enforced_without_blocking_another_kind() {
         .create_operation("synthetic-two", WorkflowKind::SyntheticLongSleep)
         .await;
     fixture
-        .create_operation("osdeploy-one", WorkflowKind::OsDeploy)
+        .create_operation("task-sequence-one", WorkflowKind::TaskSequence)
         .await;
     let first = fixture.scheduler("worker-a", ExecutorKind::Rust, 7);
     let second = fixture.scheduler("worker-b", ExecutorKind::Rust, 7);
@@ -720,13 +720,13 @@ async fn per_kind_cap_is_enforced_without_blocking_another_kind() {
     );
     assert!(
         second
-            .claim_next(WorkflowKind::OsDeploy, 1)
+            .claim_next(WorkflowKind::TaskSequence, 1)
             .await
             .unwrap()
             .is_some()
     );
     assert!(matches!(
-        second.claim_next(WorkflowKind::OsDeploy, 0).await,
+        second.claim_next(WorkflowKind::TaskSequence, 0).await,
         Err(SchedulerError::InvalidCap { cap: 0 })
     ));
 }

@@ -140,6 +140,9 @@ impl PgStore {
         sqlx::raw_sql(include_str!("../migrations/0003_native_pve.sql"))
             .execute(&self.pool)
             .await?;
+        sqlx::raw_sql(include_str!("../migrations/0004_osdeploy_registration.sql"))
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -153,7 +156,23 @@ impl PgStore {
         validate_digest(command.payload_digest())?;
         i16::try_from(command.semantic_key().contract_version())
             .map_err(|_| StoreError::ContractVersionOutOfRange)?;
+        if command.semantic_key().workflow_kind() == WorkflowKind::OsDeploy {
+            return Err(StoreError::TypedWorkflowRequired);
+        }
         let mut transaction = self.pool.begin().await?;
+        // Share typed registration's run lock before any command/operation lock.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!(
+                "native:run:{}",
+                command.semantic_key().run_id().as_uuid()
+            ))
+            .execute(&mut *transaction)
+            .await?;
+        let typed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.operations WHERE run_id=$1 AND workflow_kind='os_deploy')")
+            .bind(command.semantic_key().run_id().as_uuid()).fetch_one(&mut *transaction).await?;
+        if typed {
+            return Err(StoreError::TypedWorkflowRequired);
+        }
         let result = Self::append_command_tx(&mut transaction, operation_id, command).await?;
         transaction.commit().await?;
         Ok(result)
@@ -578,6 +597,8 @@ impl PgStore {
 
 #[derive(Debug, Error)]
 pub enum StoreError {
+    #[error("workflow requires typed registration")]
+    TypedWorkflowRequired,
     #[error("execution lifecycle events require a fenced scheduler capability")]
     SchedulerOwnedEvent,
     #[error("semantic operation has no unambiguous persisted command binding")]

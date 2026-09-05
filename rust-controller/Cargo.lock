@@ -1237,6 +1237,7 @@ dependencies = [
  "chrono",
  "controller-domain",
  "event-journal",
+ "osdeploy-adapter",
  "pve-port",
  "serde",
  "serde_json",

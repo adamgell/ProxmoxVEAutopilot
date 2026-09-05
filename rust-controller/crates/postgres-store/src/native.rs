@@ -302,6 +302,10 @@ impl PgStore {
         let plan_digest = digest(&plan)?;
         let mut tx = self.pool().begin().await?;
         lock_run(&mut tx, run_id).await?;
+        let osdeploy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.operations WHERE run_id=$1 AND workflow_kind='os_deploy')").bind(run_id.as_uuid()).fetch_one(&mut *tx).await?;
+        if osdeploy {
+            return Err(NativeStoreError::Conflict);
+        }
         let existing: Option<String> = sqlx::query_scalar(
             "SELECT plan_digest FROM rust_controller.native_vm_reservations WHERE run_id=$1",
         )
