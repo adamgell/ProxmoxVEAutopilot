@@ -260,11 +260,13 @@ pub(super) enum LinuxFault {
     Stamped,
     Locked,
 }
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 pub(super) struct FaultChild {
-    child: ManagedChild,
+    pid: u32,
     deadline: Instant,
-    stage: &'static str,
+    readiness: std::sync::mpsc::Receiver<()>,
+    cancel: std::sync::mpsc::Sender<()>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 #[cfg(all(test, target_os = "linux"))]
 pub(super) fn linux_fault(request: &str, fault: LinuxFault) -> io::Result<FaultChild> {
@@ -295,30 +297,94 @@ pub(super) fn linux_fault(request: &str, fault: LinuxFault) -> io::Result<FaultC
         std::ffi::OsStr::new("create"),
         encoded,
     ]);
-    let mut child = ManagedChild::spawn(command)?;
+    supervise_fault(ManagedChild::spawn(command)?, deadline, stage)
+}
+#[cfg(test)]
+fn supervise_fault(
+    mut child: ManagedChild,
+    deadline: Instant,
+    stage: &'static str,
+) -> io::Result<FaultChild> {
+    // Startup already consumed part of this exact deadline. The supervisor
+    // never derives a new budget from its own start or the readiness event.
     child.cleanup_deadline = Some(deadline);
+    let pid = child.id();
+    let (announce, readiness) = std::sync::mpsc::channel();
+    let (cancel, cancellation) = std::sync::mpsc::channel();
+    let worker = std::thread::Builder::new()
+        .name("owned-fixture-deadline".into())
+        .spawn(move || {
+            let expected = format!("{{\"stage\":\"{stage}\",\"version\":1}}\n");
+            let work_deadline = deadline.checked_sub(REAP_GRACE).unwrap_or(deadline);
+            let mut announced = false;
+            loop {
+                if Instant::now() >= work_deadline {
+                    break;
+                }
+                match cancellation.try_recv() {
+                    Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                }
+                // Capture and wait are nonblocking, with the same streaming
+                // cap as ordinary commands. No Tokio progress is required.
+                match child.poll() {
+                    Ok(None) => {}
+                    Ok(Some(_)) | Err(_) => break,
+                }
+                if !announced && child.captured == expected.as_bytes() {
+                    if Instant::now() >= work_deadline || announce.send(()).is_err() {
+                        break;
+                    }
+                    announced = true;
+                }
+                match cancellation.recv_timeout(
+                    POLL_INTERVAL.min(work_deadline.saturating_duration_since(Instant::now())),
+                ) {
+                    Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                }
+            }
+            // Exclusive child ownership stays here until kill/reap completes,
+            // using the reserved grace INSIDE the original absolute deadline.
+            drop(child);
+        })?;
+    // If thread creation fails, its owned closure (including the child guard)
+    // is dropped. Every successful thread is retained and joined by this owner.
     Ok(FaultChild {
-        child,
+        pid,
         deadline,
-        stage,
+        readiness,
+        cancel,
+        worker: Some(worker),
     })
 }
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
+impl Drop for FaultChild {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(());
+        if let Some(worker) = self.worker.take()
+            && worker.join().is_err()
+        {
+            eprintln!("native_fake_fault_supervisor_unconfirmed");
+        }
+    }
+}
+#[cfg(test)]
 impl FaultChild {
     pub(super) fn id(&self) -> u32 {
-        self.child.id()
+        self.pid
     }
     pub(super) async fn ready(&mut self) -> io::Result<()> {
-        let expected = format!("{{\"stage\":\"{}\",\"version\":1}}\n", self.stage);
         loop {
             if Instant::now() + REAP_GRACE >= self.deadline {
                 return Err(io::Error::other("local_linux_fault_timeout"));
             }
-            if self.child.poll()?.is_some() {
-                return Err(io::Error::other("local_linux_fault_early_exit"));
-            }
-            if self.child.captured == expected.as_bytes() {
-                return Ok(());
+            match self.readiness.try_recv() {
+                Ok(()) => return Ok(()),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    return Err(io::Error::other("local_linux_fault_early_exit"));
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
@@ -374,6 +440,115 @@ pub(super) fn assert_child_reaped(pid: u32) {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    fn fault_child(deadline: Instant, announce: bool, overflow: bool) -> FaultChild {
+        let mut command = Command::new("/usr/bin/python3");
+        let source = if overflow {
+            "import sys,time; print('{\"stage\":\"stamped\",\"version\":1}',flush=True); time.sleep(0.15); sys.stdout.write('x'*8193); sys.stdout.flush(); time.sleep(60)"
+        } else if announce {
+            "import time; print('{\"stage\":\"stamped\",\"version\":1}',flush=True); time.sleep(60)"
+        } else {
+            "import time; time.sleep(60)"
+        };
+        command.env_clear().args(["-I", "-B", "-c", source]);
+        supervise_fault(ManagedChild::spawn(command).unwrap(), deadline, "stamped").unwrap()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn retained_ready_fault_is_reaped_before_owner_drop() {
+        let deadline = Instant::now() + Duration::from_millis(600);
+        let mut owned = fault_child(deadline, true, false);
+        let pid = owned.id();
+        owned.ready().await.unwrap();
+        // Deliberately block this runtime: a Tokio watchdog cannot make progress.
+        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        assert_child_reaped(pid);
+        let drop_started = Instant::now();
+        drop(owned);
+        assert!(drop_started.elapsed() < Duration::from_millis(200));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn delayed_fault_startup_does_not_reset_original_deadline() {
+        let deadline = Instant::now() + Duration::from_millis(1000);
+        std::thread::sleep(Duration::from_millis(500));
+        let mut owned = fault_child(deadline, true, false);
+        let pid = owned.id();
+        owned.ready().await.unwrap();
+        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        assert_child_reaped(pid);
+        drop(owned);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop() {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        let mut command = Command::new("/usr/bin/python3");
+        command.env_clear().args(["-I", "-B", "-c", "import time; time.sleep(0.65); print('{\"stage\":\"stamped\",\"version\":1}',flush=True); time.sleep(60)"]);
+        let mut owned =
+            supervise_fault(ManagedChild::spawn(command).unwrap(), deadline, "stamped").unwrap();
+        let pid = owned.id();
+        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        assert!(owned.ready().await.is_err());
+        assert_child_reaped(pid);
+        drop(owned);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fault_supervision_progresses_during_synchronous_cleanup() {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        let mut owned = fault_child(deadline, true, false);
+        let pid = owned.id();
+        owned.ready().await.unwrap();
+        let cleanup_pids = std::sync::Mutex::new(vec![]);
+        assert!(
+            scripted_cleanup(
+                TestCleanupCommand::Hang,
+                Instant::now() + Duration::from_millis(700),
+                &cleanup_pids
+            )
+            .is_err()
+        );
+        assert_child_reaped(pid);
+        for cleanup_pid in cleanup_pids.into_inner().unwrap() {
+            assert_child_reaped(cleanup_pid);
+        }
+        drop(owned);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor() {
+        let mut owned = fault_child(Instant::now() + COMMAND_BOUND, false, false);
+        let pid = owned.id();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), owned.ready())
+                .await
+                .is_err()
+        );
+        let started = Instant::now();
+        drop(owned);
+        assert_child_reaped(pid);
+        assert!(started.elapsed() < Duration::from_millis(600));
+
+        let owned = fault_child(Instant::now() + COMMAND_BOUND, false, false);
+        let pid = owned.id();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _owned = owned;
+            panic!("fixed_owned_fault_caller_panic");
+        }));
+        assert!(result.is_err());
+        assert_child_reaped(pid);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fault_output_overflow_after_readiness_reaps_before_owner_drop() {
+        let mut owned = fault_child(Instant::now() + COMMAND_BOUND, true, true);
+        let pid = owned.id();
+        owned.ready().await.unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert_child_reaped(pid);
+        drop(owned);
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission() {
