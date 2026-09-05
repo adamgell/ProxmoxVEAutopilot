@@ -12,10 +12,16 @@ use event_journal::{EventKind, JournalEvent, payload_digest};
 use postgres_store::{CommandAppend, EventAppend, ExecutorKind, PgStore, Scheduler, StoreError};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
-const EXPECTED_TABLES: [&str; 8] = [
+const EXPECTED_TABLES: [&str; 14] = [
     "attempts",
     "commands",
     "journal_events",
+    "native_decisions",
+    "native_dispatches",
+    "native_operation_plans",
+    "native_receipts",
+    "native_run_cancellations",
+    "native_vm_reservations",
     "operation_projection",
     "operations",
     "orchestration_authority",

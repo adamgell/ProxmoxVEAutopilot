@@ -137,6 +137,9 @@ impl PgStore {
         sqlx::raw_sql(include_str!("../migrations/0002_scheduler.sql"))
             .execute(&self.pool)
             .await?;
+        sqlx::raw_sql(include_str!("../migrations/0003_native_pve.sql"))
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -145,14 +148,28 @@ impl PgStore {
         operation_id: OperationId,
         command: &CommandEnvelope,
     ) -> Result<CommandAppend, StoreError> {
+        // Preserve the public boundary's validation order even when storage
+        // is unavailable; the private helper also validates native intake.
+        validate_digest(command.payload_digest())?;
+        i16::try_from(command.semantic_key().contract_version())
+            .map_err(|_| StoreError::ContractVersionOutOfRange)?;
+        let mut transaction = self.pool.begin().await?;
+        let result = Self::append_command_tx(&mut transaction, operation_id, command).await?;
+        transaction.commit().await?;
+        Ok(result)
+    }
+
+    pub(crate) async fn append_command_tx(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        operation_id: OperationId,
+        command: &CommandEnvelope,
+    ) -> Result<CommandAppend, StoreError> {
         validate_digest(command.payload_digest())?;
         let contract_version = i16::try_from(command.semantic_key().contract_version())
             .map_err(|_| StoreError::ContractVersionOutOfRange)?;
-        let mut transaction = self.pool.begin().await?;
-
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
             .bind(command.idempotency_key())
-            .execute(&mut *transaction)
+            .execute(&mut **transaction)
             .await?;
 
         let existing: Option<(Uuid, String)> = sqlx::query_as(
@@ -160,20 +177,19 @@ impl PgStore {
              WHERE idempotency_key = $1",
         )
         .bind(command.idempotency_key())
-        .fetch_optional(&mut *transaction)
+        .fetch_optional(&mut **transaction)
         .await?;
         if let Some((existing_id, existing_digest)) = existing {
             let existing_operation_id = decode_operation_id(existing_id)?;
             if existing_digest == command.payload_digest() {
                 sqlx::query("SELECT operation_id FROM rust_controller.operations WHERE operation_id = $1 FOR UPDATE")
-                    .bind(existing_id).fetch_one(&mut *transaction).await?;
+                    .bind(existing_id).fetch_one(&mut **transaction).await?;
                 require_command_binding(
-                    &mut transaction,
+                    transaction,
                     existing_operation_id,
                     command.payload_digest(),
                 )
                 .await?;
-                transaction.commit().await?;
                 return Ok(CommandAppend::AlreadyPresent(existing_operation_id));
             }
             return Err(StoreError::CommandDigestConflict {
@@ -194,7 +210,7 @@ impl PgStore {
         .bind(semantic.run_id().as_uuid())
         .bind(semantic.operation_key())
         .bind(contract_version)
-        .fetch_optional(&mut *transaction)
+        .fetch_optional(&mut **transaction)
         .await?;
 
         let (persisted_id, inserted_operation) = if let Some(inserted) = inserted_operation_id {
@@ -210,7 +226,7 @@ impl PgStore {
                 .bind(semantic.run_id().as_uuid())
                 .bind(semantic.operation_key())
                 .bind(contract_version)
-                .fetch_one(&mut *transaction)
+                .fetch_one(&mut **transaction)
                 .await?,
                 false,
             )
@@ -218,7 +234,7 @@ impl PgStore {
 
         if !inserted_operation {
             require_command_binding(
-                &mut transaction,
+                transaction,
                 decode_operation_id(persisted_id)?,
                 command.payload_digest(),
             )
@@ -232,7 +248,7 @@ impl PgStore {
         .bind(command.idempotency_key())
         .bind(persisted_id)
         .bind(command.payload_digest())
-        .execute(&mut *transaction)
+        .execute(&mut **transaction)
         .await?;
         if inserted_operation {
             sqlx::query(
@@ -240,11 +256,10 @@ impl PgStore {
                  VALUES ($1, 'pending', 0)",
             )
             .bind(persisted_id)
-            .execute(&mut *transaction)
+            .execute(&mut **transaction)
             .await?;
         }
 
-        transaction.commit().await?;
         Ok(CommandAppend::Appended(decode_operation_id(persisted_id)?))
     }
 

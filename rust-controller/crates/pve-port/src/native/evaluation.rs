@@ -279,7 +279,11 @@ fn binding(context: &NativeEvaluationContext, facts: &NativeEvidenceInput) -> Ev
 }
 fn state(context: &NativeEvaluationContext, preflight: bool) -> EvaluationResult<()> {
     let eligible = if preflight {
-        context.mode == NativeEvaluationMode::Preflight && context.state == ExecutionState::Leased
+        context.mode == NativeEvaluationMode::Preflight
+            && matches!(
+                context.state,
+                ExecutionState::Leased | ExecutionState::Running
+            )
     } else {
         match context.mode {
             NativeEvaluationMode::Outcome => matches!(

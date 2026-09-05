@@ -1,5 +1,6 @@
 mod authority;
 mod lease;
+mod native;
 
 use crate::PgStore;
 use chrono::{DateTime, Utc};
@@ -76,6 +77,9 @@ impl Scheduler {
         cap: u32,
         binding: Option<(u16, &str)>,
     ) -> Result<Option<LeaseGrant>, SchedulerError> {
+        if kind == WorkflowKind::NativePveVmBoot {
+            return Ok(None);
+        }
         if cap == 0 {
             return Err(SchedulerError::InvalidCap { cap });
         }
@@ -128,12 +132,26 @@ impl Scheduler {
             return Ok(None);
         };
         let operation_id = decode_operation_id(operation_uuid)?;
+        let grant = self
+            .claim_operation_tx(&mut transaction, operation_id, revision)
+            .await?;
+        transaction.commit().await?;
+        Ok(Some(grant))
+    }
+
+    async fn claim_operation_tx(
+        &self,
+        transaction: &mut Transaction<'_, Postgres>,
+        operation_id: OperationId,
+        revision: i64,
+    ) -> Result<LeaseGrant, SchedulerError> {
+        let operation_uuid = operation_id.as_uuid();
         let attempt_number: i32 = sqlx::query_scalar(
             "SELECT COALESCE(max(attempt_number), 0) + 1 \
              FROM rust_controller.attempts WHERE operation_id = $1",
         )
         .bind(operation_uuid)
-        .fetch_one(&mut *transaction)
+        .fetch_one(&mut **transaction)
         .await?;
         let attempt_id = AttemptId::new();
         let lease_token = Uuid::now_v7();
@@ -148,7 +166,7 @@ impl Scheduler {
         .bind(attempt_id.as_uuid())
         .bind(operation_uuid)
         .bind(attempt_number)
-        .fetch_one(&mut *transaction)
+        .fetch_one(&mut **transaction)
         .await?;
         let (lease_acquired_at, heartbeat_at, lease_expires_at, lease_deadline_at): (
             DateTime<Utc>,
@@ -170,7 +188,7 @@ impl Scheduler {
         .bind(&self.worker_id)
         .bind(lease_token.to_string())
         .bind(deadline_at)
-        .fetch_one(&mut *transaction)
+        .fetch_one(&mut **transaction)
         .await?;
         debug_assert!(lease_acquired_at >= acquired_at);
 
@@ -183,7 +201,7 @@ impl Scheduler {
             "worker_id": self.worker_id,
         });
         append_state_event(
-            &mut transaction,
+            transaction,
             StateAppend {
                 operation_id,
                 attempt_id: Some(attempt_id),
@@ -197,9 +215,7 @@ impl Scheduler {
             },
         )
         .await?;
-        transaction.commit().await?;
-
-        Ok(Some(LeaseGrant::new(
+        Ok(LeaseGrant::new(
             operation_id,
             attempt_id,
             attempt_number,
@@ -211,7 +227,7 @@ impl Scheduler {
             heartbeat_at,
             lease_expires_at,
             lease_deadline_at,
-        )))
+        ))
     }
 
     pub async fn authority_snapshot(&self) -> Result<AuthoritySnapshot, SchedulerError> {
@@ -278,6 +294,7 @@ impl Scheduler {
         self.lock_authority(&mut transaction).await?;
         self.validate_grant_owner(grant)?;
         let (state, revision) = lock_operation(&mut transaction, grant.operation_id()).await?;
+        reject_native(&mut transaction, grant.operation_id()).await?;
         let persisted = lock_lease(&mut transaction, grant.operation_id()).await?;
         validate_persisted_lease(grant, &persisted)?;
         let distinct: i64 = sqlx::query_scalar(
@@ -312,11 +329,23 @@ impl Scheduler {
         if !persisted.active {
             return Err(SchedulerError::LeaseExpired);
         }
+        self.start_operation_tx(&mut transaction, grant, revision)
+            .await?;
+        transaction.commit().await?;
+        Ok(ExecutionState::Running)
+    }
+
+    async fn start_operation_tx(
+        &self,
+        transaction: &mut Transaction<'_, Postgres>,
+        grant: &LeaseGrant,
+        revision: i64,
+    ) -> Result<(), SchedulerError> {
         let observed_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
-            .fetch_one(&mut *transaction)
+            .fetch_one(&mut **transaction)
             .await?;
         let started_revision = append_attempt_started_event(
-            &mut transaction,
+            transaction,
             grant.operation_id(),
             grant.attempt_id(),
             revision,
@@ -324,7 +353,7 @@ impl Scheduler {
         )
         .await?;
         append_state_event(
-            &mut transaction,
+            transaction,
             StateAppend {
                 operation_id: grant.operation_id(),
                 attempt_id: Some(grant.attempt_id()),
@@ -344,15 +373,15 @@ impl Scheduler {
         )
         .bind(grant.attempt_id().as_uuid())
         .bind(grant.operation_id().as_uuid())
-        .execute(&mut *transaction)
+        .execute(&mut **transaction)
         .await?;
-        transaction.commit().await?;
-        Ok(ExecutionState::Running)
+        Ok(())
     }
 
     pub async fn continuation(&self, grant: &LeaseGrant) -> Result<ExecutionState, SchedulerError> {
         let mut transaction = self.store.pool().begin().await?;
         self.lock_authority(&mut transaction).await?;
+        lock_native_run_if_present(&mut transaction, grant.operation_id()).await?;
         self.validate_grant_owner(grant)?;
         let (state, _) = lock_operation(&mut transaction, grant.operation_id()).await?;
         let persisted = lock_lease(&mut transaction, grant.operation_id()).await?;
@@ -375,6 +404,7 @@ impl Scheduler {
     pub async fn heartbeat(&self, grant: &LeaseGrant) -> Result<LeaseGrant, SchedulerError> {
         let mut transaction = self.store.pool().begin().await?;
         self.lock_authority(&mut transaction).await?;
+        lock_native_run_if_present(&mut transaction, grant.operation_id()).await?;
         self.validate_grant_owner(grant)?;
         let (state, _) = lock_operation(&mut transaction, grant.operation_id()).await?;
         let persisted = lock_lease(&mut transaction, grant.operation_id()).await?;
@@ -442,6 +472,7 @@ impl Scheduler {
         let mut transaction = self.store.pool().begin().await?;
         self.lock_authority(&mut transaction).await?;
         let (state, revision) = lock_operation(&mut transaction, operation_id).await?;
+        reject_native(&mut transaction, operation_id).await?;
         if let Some(grant) = grant {
             self.validate_grant_owner(grant)?;
             let persisted = lock_lease(&mut transaction, operation_id).await?;
@@ -511,6 +542,7 @@ impl Scheduler {
         self.lock_authority(&mut transaction).await?;
         self.validate_grant_owner(grant)?;
         let (current, revision) = lock_operation(&mut transaction, grant.operation_id()).await?;
+        reject_native(&mut transaction, grant.operation_id()).await?;
         let persisted = lock_lease(&mut transaction, grant.operation_id()).await?;
         validate_persisted_lease(grant, &persisted)?;
         if current == ExecutionState::Leased {
@@ -573,6 +605,7 @@ impl Scheduler {
     }
 
     pub async fn reap_expired(&self) -> Result<ReapSummary, SchedulerError> {
+        let native_summary = self.reap_native_expired().await?;
         let mut transaction = self.store.pool().begin().await?;
         self.lock_authority(&mut transaction).await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
@@ -583,13 +616,14 @@ impl Scheduler {
             "SELECT operations.operation_id FROM rust_controller.operations operations \
              JOIN rust_controller.worker_leases leases USING (operation_id) \
              WHERE leases.lease_expires_at <= clock_timestamp() \
+               AND operations.workflow_kind <> 'native_pve_vm_boot' \
              ORDER BY operations.operation_id \
              FOR UPDATE OF operations SKIP LOCKED LIMIT $1",
         )
         .bind(REAP_BATCH_LIMIT)
         .fetch_all(&mut *transaction)
         .await?;
-        let mut summary = ReapSummary::default();
+        let mut summary = native_summary;
 
         for operation_uuid in operation_ids {
             let operation_id = decode_operation_id(operation_uuid)?;
@@ -848,6 +882,7 @@ enum TransitionPolicy {
     CancellationUnknown,
     ExpiredUnstarted,
     ExpiredAfterStart,
+    NativeReconciliation,
 }
 
 async fn lock_operation(
@@ -1065,6 +1100,13 @@ fn validate_transition(
     policy: TransitionPolicy,
 ) -> Result<(), SchedulerError> {
     let valid = match policy {
+        TransitionPolicy::NativeReconciliation => {
+            current == ExecutionState::Unknown
+                && matches!(
+                    target,
+                    ExecutionState::Satisfied | ExecutionState::Failed | ExecutionState::Conflicted
+                )
+        }
         TransitionPolicy::Domain => {
             let signal = signal_for_target(target)
                 .ok_or(SchedulerError::InvalidSchedulerTransition { current, target })?;
@@ -1172,4 +1214,38 @@ fn decode_execution_state(state: &str) -> Result<ExecutionState, SchedulerError>
             value: value.to_owned(),
         }),
     }
+}
+
+async fn reject_native(
+    tx: &mut Transaction<'_, Postgres>,
+    operation: OperationId,
+) -> Result<(), SchedulerError> {
+    let native:bool=sqlx::query_scalar("SELECT workflow_kind='native_pve_vm_boot' FROM rust_controller.operations WHERE operation_id=$1").bind(operation.as_uuid()).fetch_one(&mut **tx).await?;
+    if native {
+        Err(SchedulerError::PlanBindingMismatch)
+    } else {
+        Ok(())
+    }
+}
+async fn lock_native_run_if_present(
+    tx: &mut Transaction<'_, Postgres>,
+    operation: OperationId,
+) -> Result<(), SchedulerError> {
+    let run:Option<Uuid>=sqlx::query_scalar("SELECT run_id FROM rust_controller.operations WHERE operation_id=$1 AND workflow_kind='native_pve_vm_boot'").bind(operation.as_uuid()).fetch_optional(&mut **tx).await?;
+    if let Some(run) = run {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("native:run:{run}"))
+            .execute(&mut **tx)
+            .await?;
+        let cancelled: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM rust_controller.native_run_cancellations WHERE run_id=$1)",
+        )
+        .bind(run)
+        .fetch_one(&mut **tx)
+        .await?;
+        if cancelled {
+            return Err(SchedulerError::CancellationRequested);
+        }
+    }
+    Ok(())
 }

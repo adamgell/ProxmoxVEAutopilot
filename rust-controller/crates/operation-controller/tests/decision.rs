@@ -1105,10 +1105,10 @@ fn all_execution_states_guard_preflight_and_unknown_requires_narrow_mode() {
         f.context.state = state;
         assert_eq!(
             f.eval().decision == NativeDecision::Ready,
-            state == ExecutionState::Leased,
+            matches!(state, ExecutionState::Leased | ExecutionState::Running),
             "{state:?}"
         );
-        if state != ExecutionState::Leased {
+        if !matches!(state, ExecutionState::Leased | ExecutionState::Running) {
             assert_ne!(f.eval().decision, NativeDecision::Satisfied);
         }
     }

@@ -14,7 +14,11 @@
 mod health;
 mod scheduler;
 pub use health::StoreHealthSnapshot;
+pub mod native;
 mod store;
+pub use native::{
+    NativeDispatchPermit, NativeOperationSnapshot, NativeStoreError, NativeWorkflowIds,
+};
 
 pub use scheduler::{
     AuthoritySnapshot, ExecutorKind, LeaseGrant, ReapSummary, Scheduler, SchedulerError,

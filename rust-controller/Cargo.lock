@@ -1210,6 +1210,8 @@ dependencies = [
  "chrono",
  "controller-domain",
  "event-journal",
+ "pve-port",
+ "serde",
  "serde_json",
  "sqlx",
  "thiserror",
