@@ -1252,6 +1252,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "controller-domain",
+ "event-journal",
  "reqwest",
  "serde",
  "serde_json",

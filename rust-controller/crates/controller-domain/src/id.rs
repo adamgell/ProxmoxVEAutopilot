@@ -62,6 +62,7 @@ opaque_id!(EventId, is_uuid_v7, "event id must be a UUIDv7");
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowKind {
+    NativePveVmBoot,
     CloudOsd,
     OsDeploy,
     TaskSequence,

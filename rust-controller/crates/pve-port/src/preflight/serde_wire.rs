@@ -136,6 +136,7 @@ impl TryFrom<BootDiskWire> for BootDisk {
 }
 
 snapshot_wire!(NativeVmConfig, NativeVmConfigWire, {
+    fake_clone_provenance: Option<crate::FakeCloneProvenance>,
     node: NodeName, vmid: Vmid, digest: String, name: NativeVmName, cores: u32, memory_mib: u64,
     boot_disk: BootDisk, uuid: VmUuid, mac: MacAddress, bridge: BridgeName, agent_enabled: bool,
     boots_scsi0: bool, template: bool, locked: bool, unsupported: BTreeSet<UnsupportedConfig>, observed_at: DateTime<Utc>
@@ -144,6 +145,10 @@ impl TryFrom<NativeVmConfigWire> for NativeVmConfig {
     type Error = PveReadError;
     fn try_from(wire: NativeVmConfigWire) -> Result<Self, Self::Error> {
         if !safe_atom(&wire.digest, 256)
+            || wire
+                .fake_clone_provenance
+                .as_ref()
+                .is_some_and(|p| p.target_vmid() != wire.vmid)
             || wire.cores == 0
             || wire.memory_mib == 0
             || (wire.boots_scsi0 == wire.unsupported.contains(&UnsupportedConfig::BootOrder))
@@ -158,6 +163,7 @@ impl TryFrom<NativeVmConfigWire> for NativeVmConfig {
             cores: wire.cores,
             memory_mib: wire.memory_mib,
             boot_disk: wire.boot_disk,
+            fake_clone_provenance: wire.fake_clone_provenance,
             uuid: wire.uuid,
             mac: wire.mac,
             bridge: wire.bridge,

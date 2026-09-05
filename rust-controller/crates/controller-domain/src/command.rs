@@ -7,6 +7,9 @@ use crate::{OperationId, SemanticOperationKey};
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
     SyntheticLongSleep,
+    PveClone,
+    PveConfigure,
+    PveStart,
 }
 
 /// ```compile_fail

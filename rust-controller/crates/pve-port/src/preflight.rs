@@ -428,6 +428,7 @@ fn device_key(key: &str, prefix: &str) -> bool {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct NativeVmConfig {
+    fake_clone_provenance: Option<crate::FakeCloneProvenance>,
     node: NodeName,
     vmid: Vmid,
     digest: String,
@@ -446,6 +447,13 @@ pub struct NativeVmConfig {
     observed_at: DateTime<Utc>,
 }
 impl NativeVmConfig {
+    pub const fn fake_clone_provenance(&self) -> Option<&crate::FakeCloneProvenance> {
+        self.fake_clone_provenance.as_ref()
+    }
+    pub(crate) fn with_fake_provenance(mut self, provenance: crate::FakeCloneProvenance) -> Self {
+        self.fake_clone_provenance = Some(provenance);
+        self
+    }
     pub fn from_wire(
         node: NodeName,
         vmid: Vmid,
@@ -589,6 +597,7 @@ impl NativeVmConfig {
             cores,
             memory_mib,
             boot_disk,
+            fake_clone_provenance: None,
             uuid,
             mac,
             bridge,

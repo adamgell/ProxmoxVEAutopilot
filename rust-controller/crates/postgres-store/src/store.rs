@@ -710,5 +710,6 @@ const fn workflow_kind_name(kind: WorkflowKind) -> &'static str {
         WorkflowKind::OsDeploy => "os_deploy",
         WorkflowKind::TaskSequence => "task_sequence",
         WorkflowKind::SyntheticLongSleep => "synthetic_long_sleep",
+        WorkflowKind::NativePveVmBoot => "native_pve_vm_boot",
     }
 }

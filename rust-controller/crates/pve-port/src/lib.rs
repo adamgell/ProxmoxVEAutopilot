@@ -1,6 +1,8 @@
 mod credentials;
 mod fake;
 mod model;
+mod native;
+mod native_fake;
 mod observer;
 mod preflight;
 
@@ -14,6 +16,13 @@ pub use model::{
     BridgeName, CloneIntent, EvidenceSource, MacAddress, NativeVmName, NodeName, PveBaseUrl,
     PveEvidence, PveFact, PveFactKind, PveReadError, PveValidationError, QgaStatus, StorageName,
     TaskState, TaskStatus, Upid, VmConfig, VmUuid, Vmid, Volume,
+};
+pub use native::{
+    CloneRequest, ConfigureRequest, FakeCloneProvenance, InvalidNativePlan, MutationReceipt,
+    NativeOperationPlan, NativeStep, NativeVmPlan, PveMutationPort, PveWriteError, StartRequest,
+};
+pub use native_fake::{
+    FakeMutationOutcome, NativeFakePve, NativeMutationRequest, UnsupportedFakeOutcome,
 };
 pub use observer::{
     PveAccessMode, PveObserverBuildError, PveObserverConfig, PveRequestAudit, ReqwestPveObserver,

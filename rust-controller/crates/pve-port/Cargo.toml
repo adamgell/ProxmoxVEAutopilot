@@ -10,6 +10,7 @@ publish = false
 async-trait.workspace = true
 chrono.workspace = true
 controller-domain = { path = "../controller-domain" }
+event-journal = { path = "../event-journal" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
