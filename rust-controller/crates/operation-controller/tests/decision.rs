@@ -817,6 +817,45 @@ fn successful_proof_cannot_use_target_snapshot_from_before_dispatch() {
 }
 
 #[test]
+fn ownership_roundtrip_preserves_dispatch_before_intervening_observations() {
+    let mut f = Fixture::clone_outcome();
+    f.context.dispatched_at = Some(now() - Duration::seconds(2));
+    let intervening = now() - Duration::seconds(1);
+    let mut input = serde_json::to_value(&f.input).unwrap();
+    for path in [
+        "/inventory/observed_at",
+        "/inventory/result/Ok/observed_at",
+        "/target_power/observed_at",
+        "/target_power/result/Ok/observed_at",
+    ] {
+        *input.pointer_mut(path).unwrap() = json!(intervening);
+    }
+    let evidence = NativeEvidence::new(serde_json::from_value(input).unwrap()).unwrap();
+    let ownership =
+        NativeCloneOwnership::from_satisfied_clone(&f.context, evidence, now()).unwrap();
+    let wire = serde_json::to_value(&ownership).unwrap();
+    assert_eq!(
+        serde_json::from_value::<NativeCloneOwnership>(wire.clone()).unwrap(),
+        ownership
+    );
+    assert_eq!(wire["dispatched_at"], json!(now() - Duration::seconds(2)));
+
+    for invalid in [
+        json!(now()),
+        json!(now() + Duration::seconds(1)),
+        Value::Null,
+        json!("invalid"),
+    ] {
+        let mut invalid_wire = wire.clone();
+        invalid_wire["dispatched_at"] = invalid;
+        assert!(serde_json::from_value::<NativeCloneOwnership>(invalid_wire).is_err());
+    }
+    let mut missing = wire;
+    missing.as_object_mut().unwrap().remove("dispatched_at");
+    assert!(serde_json::from_value::<NativeCloneOwnership>(missing).is_err());
+}
+
+#[test]
 fn ownership_reload_requires_full_historical_success_and_coverage() {
     let f = Fixture::owned(NativeStep::Configure, false, false);
     let ownership = f.context.clone_ownership.as_ref().unwrap();

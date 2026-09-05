@@ -246,6 +246,9 @@ pub struct NativeEvaluationContext {
 pub struct NativeCloneOwnership {
     request: CloneRequest,
     proof: NativeEvidence,
+    /// Preserve the original mutation boundary: some valid observations may
+    /// precede receipt acceptance while still following dispatch.
+    dispatched_at: DateTime<Utc>,
     bound_at: DateTime<Utc>,
 }
 impl NativeCloneOwnership {
@@ -265,6 +268,7 @@ impl NativeCloneOwnership {
         Ok(Self {
             request: context.clone_request.clone(),
             proof,
+            dispatched_at: context.dispatched_at.ok_or(InvalidNativeEvidence)?,
             bound_at,
         })
     }
@@ -292,6 +296,7 @@ impl<'de> Deserialize<'de> for NativeCloneOwnership {
         struct Wire {
             request: CloneRequest,
             proof: NativeEvidence,
+            dispatched_at: DateTime<Utc>,
             bound_at: DateTime<Utc>,
         }
         let w = Wire::deserialize(d).map_err(|_| de::Error::custom(InvalidNativeEvidence))?;
@@ -302,7 +307,7 @@ impl<'de> Deserialize<'de> for NativeCloneOwnership {
             mutation_deadline: None,
             transport_lost: false,
             receipt: w.proof.facts().receipt.clone(),
-            dispatched_at: w.proof.facts().receipt.as_ref().map(|r| r.accepted_at),
+            dispatched_at: Some(w.dispatched_at),
             mode: NativeEvaluationMode::Outcome,
             cancelled: false,
             possible_dispatch: true,
