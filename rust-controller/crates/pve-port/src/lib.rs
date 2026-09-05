@@ -6,6 +6,7 @@ mod native;
 mod native_fake;
 mod observer;
 mod preflight;
+mod provisioning;
 mod visibility;
 
 use async_trait::async_trait;
@@ -43,6 +44,7 @@ pub use preflight::{
     PowerState, PvePreflightReadPort, StorageStatus, UnsupportedConfig, VmPowerStatus,
     observe_target_absence, observe_target_absence_with_clock,
 };
+pub use provisioning::*;
 pub use visibility::{
     ClusterVisibility, GuestKind, PveVisibilityReadPort, VisibleGuest, VisiblePower,
 };

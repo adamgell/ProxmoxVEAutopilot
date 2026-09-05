@@ -9,6 +9,16 @@ implements native mutation; the authenticated HTTP observer has read capabilitie
 This is a local proof, not a production controller replacement.
 Synthetic success says nothing about OOBE, enrollment, ESP, or usable-device readiness.
 
+The sibling `pve-port` provisioning-v1 contract provides explicit rich configuration
+facts, immutable PVE expectations, operation fingerprints, media inventory coverage,
+and node/VM-bound QGA observations. It preserves exact disk bytes, serials, firmware,
+and media slot state. These are pure synthetic contracts with strict persisted
+decoding; they do not change the old native-v1 parser, evidence, fake, or operation
+keys. Required synthetic fields are never inferred from missing real-PVE defaults.
+Its semantic template hash binds observed supported configuration, not disk contents,
+blankness, freshness, media publication, or mutation authority. This addition has no
+GET collector, mutation transport, durable store integration, or service orchestration.
+
 ## Fake native proof
 
 From the repository root, with the existing local Unix Docker endpoint and cached
