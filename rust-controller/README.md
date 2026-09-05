@@ -63,8 +63,8 @@ synthetic contracts. Pinned official public source supports the selected
 [node uptime shape](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Nodes.pm#L501),
 [usable-storage shape](https://github.com/proxmox/pve-storage/blob/7c6a03839920d4939a8ae725a2b0ef91c0cbc6c9/src/PVE/API2/Storage/Status.pm#L348),
 and [`qmclone` source-VMID worker binding](https://github.com/proxmox/qemu-server/blob/6c0127e612f6c576888a13f9bfb30874911b804d/src/PVE/API2/Qemu.pm#L4749).
-This does not verify the installed release. A later node/network slice must
-address [optional network `active`](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Network.pm#L282).
+This does not verify the installed release. The separate node/network visibility
+contracts preserve [optional network `active`](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Network.pm#L282).
 The separate visibility parser accepts mixed QEMU/LXC and RRD-incomplete inventories.
 Because of [`VM.Audit` visibility filtering](https://github.com/proxmox/pve-manager/blob/728286c79bd12f5bee5c9614651fe6e469da723a/PVE/API2/Cluster.pm#L587),
 visibility coverage always remains `unverified`. Existing native
@@ -73,6 +73,21 @@ sanitized observation within the existing read-only authorization is still neede
 before a future real-PVE artifact. The fake provenance marker has no live wire
 representation; a real clone ownership mechanism remains unimplemented. No raw
 production inventory, payload, credential reference, or secret is copied into fixtures.
+
+`PveInfrastructureVisibilityReadPort` exposes only `node_visibility` and
+`network_visibility`. Its HTTP observer makes one authenticated GET per call to
+the validated node's `/status` or `/network` endpoint, with no query, discovery,
+retry, redirect, or proxy. Request, body collection, and envelope decoding share
+a two-second timeout even with a longer configured client timeout; the body is
+limited to 1 MiB and network data to 1,024 rows. Cancellation drops collection.
+Node uptime may be absent or zero. Network observations preserve OVS bridges and
+unknown activity, count malformed rows, and reject duplicate or cross-node
+identities. Both reports remain `unverified` and confer no native execution
+authority. The `infrastructure_visibility_http` loopback suite exercises these
+contracts through the narrow trait; the Dockerfile's full PVE test command also
+discovers this suite. Service collection is still cluster-only. Explicit node
+selection, bounded scheduling and per-component freshness require a separate
+integration slice; storage visibility and activation remain outside this contract.
 
 Local macOS ARM64 Task 6 validation passed 308 unique workspace tests, including
 11 compile-fail checks (4 at the PVE capability boundary), with no failures or

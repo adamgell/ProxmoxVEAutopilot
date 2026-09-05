@@ -22,6 +22,25 @@ use crate::{
 };
 
 #[async_trait]
+impl crate::PveInfrastructureVisibilityReadPort for ReqwestPveObserver {
+    async fn node_visibility(
+        &self,
+        node: &NodeName,
+    ) -> Result<crate::NodeVisibility, PveReadError> {
+        let (data, observed_at) = self.infrastructure_data(node, "status").await?;
+        crate::NodeVisibility::from_wire(node.clone(), data, observed_at)
+    }
+
+    async fn network_visibility(
+        &self,
+        node: &NodeName,
+    ) -> Result<crate::NetworkVisibility, PveReadError> {
+        let (data, observed_at) = self.infrastructure_data(node, "network").await?;
+        crate::NetworkVisibility::from_wire(node.clone(), data, observed_at)
+    }
+}
+
+#[async_trait]
 impl crate::PveVisibilityReadPort for ReqwestPveObserver {
     async fn cluster_visibility(&self) -> Result<crate::ClusterVisibility, PveReadError> {
         let mut url = self
@@ -203,6 +222,42 @@ impl ReqwestPveObserver {
             client,
             request_audit: config.request_audit,
         })
+    }
+
+    async fn infrastructure_data(
+        &self,
+        node: &NodeName,
+        leaf: &'static str,
+    ) -> Result<(serde_json::Value, chrono::DateTime<Utc>), PveReadError> {
+        // Keep the entire request/body/envelope collection bounded even when the
+        // observer's client was configured with a longer timeout.
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let url = self
+                .base_url
+                .endpoint(&["api2", "json", "nodes", node.as_str(), leaf]);
+            self.request_audit.record_request();
+            let mut request = self.client.get(url);
+            if let Some(token) = &self.token {
+                request = request.header(reqwest::header::AUTHORIZATION, token.header());
+            }
+            let response = request.send().await.map_err(map_reqwest_error)?;
+            match response.status() {
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                    return Err(PveReadError::Unauthorized);
+                }
+                StatusCode::NOT_FOUND => return Err(PveReadError::NotFound),
+                StatusCode::CONFLICT => return Err(PveReadError::Conflict),
+                status if !status.is_success() => return Err(PveReadError::TransportUnavailable),
+                _ => {}
+            }
+            let body = bounded_visibility_body(response).await?;
+            let observed_at = Utc::now();
+            let envelope: PveEnvelope<serde_json::Value> =
+                serde_json::from_slice(&body).map_err(|_| PveReadError::InvalidResponse)?;
+            Ok((envelope.data, observed_at))
+        })
+        .await
+        .unwrap_or(Err(PveReadError::TimedOut))
     }
 
     async fn get_data<T>(&self, path: &[&str]) -> Result<T, PveReadError>
