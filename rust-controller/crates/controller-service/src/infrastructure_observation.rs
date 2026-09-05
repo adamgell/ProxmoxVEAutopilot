@@ -1,6 +1,4 @@
 //! Bounded, sanitized visibility for one explicitly selected node.
-// Staged until Task 2 connects the collector and component health consumers.
-#![cfg_attr(not(test), allow(dead_code))]
 
 use crate::{
     config::ValidatedObservationConfig,
@@ -245,6 +243,51 @@ fn error_status(error: PveReadError) -> ObservationStatus {
         PveReadError::NotFound | PveReadError::Conflict | PveReadError::TransportUnavailable => {
             ObservationStatus::Unavailable
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    pub(crate) fn node(
+        status: ObservationStatus,
+        observed_at: Option<DateTime<Utc>>,
+        uptime_known: Option<bool>,
+        completed_at: Option<Instant>,
+    ) -> NodeObservation {
+        NodeObservation {
+            status,
+            observed_at,
+            uptime_known,
+            completed_at,
+        }
+    }
+    pub(crate) fn network(
+        status: ObservationStatus,
+        observed_at: Option<DateTime<Utc>>,
+        has_counts: bool,
+        completed_at: Option<Instant>,
+    ) -> NetworkObservation {
+        NetworkObservation {
+            status,
+            observed_at,
+            completed_at,
+            counts: has_counts.then_some(NetworkObservationCounts {
+                linux_bridges: 0,
+                ovs_bridges: 0,
+                other_interfaces: 0,
+                active: 0,
+                inactive: 0,
+                activity_unknown: 0,
+                rejected_rows: usize::from(status == ObservationStatus::Degraded),
+            }),
+        }
+    }
+    pub(crate) fn result(
+        node: NodeObservation,
+        network: NetworkObservation,
+    ) -> InfrastructureResult {
+        InfrastructureResult { node, network }
     }
 }
 

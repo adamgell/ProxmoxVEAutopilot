@@ -19,6 +19,9 @@ use std::{
 };
 use tokio::task::JoinHandle;
 
+#[path = "infrastructure_service.rs"]
+mod infrastructure_service;
+
 const LOCAL_DATABASE_NAME: &str = "authenticated_observation_proof";
 #[path = "../../../../proof_support/mod.rs"]
 mod local_postgres;

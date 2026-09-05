@@ -85,9 +85,9 @@ unknown activity, count malformed rows, and reject duplicate or cross-node
 identities. Both reports remain `unverified` and confer no native execution
 authority. The `infrastructure_visibility_http` loopback suite exercises these
 contracts through the narrow trait; the Dockerfile's full PVE test command also
-discovers this suite. Service collection is still cluster-only. Explicit node
-selection, bounded scheduling and per-component freshness require a separate
-integration slice; storage visibility and activation remain outside this contract.
+discovers this suite. Service collection additionally supports one explicitly
+selected node, with independent bounded scheduling and per-component freshness.
+Storage visibility and activation remain outside this contract.
 
 Local macOS ARM64 Task 6 validation passed 308 unique workspace tests, including
 11 compile-fail checks (4 at the PVE capability boundary), with no failures or
@@ -145,8 +145,10 @@ policy checks do not mean warning-free output.
 
 The authenticated observation Dockerfile also selects service configuration,
 credential, health, GET-loop cadence/cancellation, startup-denial and loopback HTTP
-tests. It deliberately excludes the single service+owned-PostgreSQL HTTP test,
-which needs Docker on its host. That end-to-end test is macOS-local evidence;
+tests, including selected-node collector, component freshness, cadence and actual
+HTTP service behavior with an unavailable database. It explicitly excludes both
+service+owned-PostgreSQL HTTP tests, which need Docker on their host. Those tests
+provide macOS-local evidence;
 Linux compilation and the existing Compose database proof do not establish Linux
 HTTP-service PostgreSQL end-to-end acceptance. Rebuild and run the final committed
 image after review before making an exact artifact claim.
@@ -242,6 +244,31 @@ summary and can be true while the database is unhealthy. Rejected rows are degra
 This proves visible inventory only, never absence, uniqueness, ownership, complete
 permission coverage, native evidence or execution authority.
 
+The optional `RUST_CONTROLLER_PVE_OBSERVE_NODE` selects exactly one validated node
+in observe/http-observe mode. Absence preserves cluster-only collection. Empty,
+invalid and non-Unicode values, or any value with fake transport, fail before
+credential or client I/O. The existing protected token load is shared by cloning
+the loaded token; selection never reopens the credential file.
+
+With selection, a separate immediate-first-tick loop runs every 10 seconds with
+missed ticks skipped. It issues only the selected node's status GET followed by its
+network GET, at most once each per collection, with 2-second component and 5-second
+whole-pair bounds. It never overlaps collections and drops an in-flight read on
+shutdown. The cluster loop retains its 3/5/15-second collection/cadence/freshness
+policy and proceeds independently of this loop and database reads.
+
+`infrastructure_observation` contains sanitized `node` and `network` components,
+each with current status, nullable observed timestamp and summary, monotonic
+`fresh`, and retained `last_success`. Node summary reports only whether uptime
+was known; network summary contains interface-kind/activity/rejection counts.
+Each component expires 30 seconds after its own response completion. Current
+failure or degraded rows cannot inherit freshness from a retained success.
+`infrastructure_observation_ready` requires both fresh complete components and
+does not change cluster `observation_ready` or execution `ready`. Coverage remains
+`unverified`; identifiers, addresses, raw types, credentials and completion-clock
+values are excluded. Unselected/fake services report null infrastructure and false
+infrastructure readiness.
+
 For `http-observe`, existing `ready` remains false and `/readyz` returns 503 even
 when `observation_ready` is true. Inspect its JSON using `curl -sS` (without `-f`).
 The evidence label is `visibility_only_coverage_unverified`. Successful GETs cannot
@@ -251,7 +278,8 @@ its existing policy. No health endpoint or execution selector is added.
 Run the owned macOS integration proof with:
 
 ```bash
-env -u RUST_CONTROLLER_TEST_DATABASE_URL -u DOCKER_HOST cargo test --locked --manifest-path rust-controller/Cargo.toml -p controller-service --test service observation_service::authenticated_service
+env -u RUST_CONTROLLER_TEST_DATABASE_URL -u DOCKER_HOST -u DOCKER_CONTEXT cargo test --locked --manifest-path rust-controller/Cargo.toml -p controller-service --test service observation_service::authenticated_service
+env -u RUST_CONTROLLER_TEST_DATABASE_URL -u DOCKER_HOST -u DOCKER_CONTEXT cargo test --locked --manifest-path rust-controller/Cargo.toml -p controller-service --test service observation_service::infrastructure_service:: -- --test-threads=1
 ```
 
 Its setup and complete test have 30 and 55 second async bounds, plus finite owned
@@ -263,7 +291,17 @@ or a 256 KiB cap; it never trims the trace. Sampled service process trees contai
 children; the typed HTTP loop additionally has no runner or store capability.
 No production credential, controller, PVE endpoint or tenant is used by this proof.
 
-Node/storage/bridge/artifact observation, real write provenance and retry/reservation
+The selected-node PostgreSQL proof has an 85-second whole-test bound including
+the existing 30-second setup. Three node and three network GETs cover fresh,
+network-only 401, and recovery while cluster visibility remains fresh; the
+independent cluster loop is bounded to 4–6 GETs. Health polling is at most once per
+second, and the existing complete SQL allowlist, 256 KiB log cap, 15-table snapshots,
+sampled childless service process and exact owned-container cleanup apply. A
+separate 12-second actual-service test uses only owned HTTP plus an unavailable
+loopback database to prove both observation loops remain fresh with database,
+outbox and execution readiness false and zero successful database sweeps.
+
+Multi-node scheduling, storage/artifact observation, real write provenance and retry/reservation
 policy, media/firmware/TPM/QGA, OSDeploy/CloudOSD/agent migration, shared Python fencing,
 restore and approved non-production proof remain later Rust slices. Cutover requires
 separate approval; deferred product tracks follow stable controller contracts.

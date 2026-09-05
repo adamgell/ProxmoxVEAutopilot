@@ -5,6 +5,155 @@ use axum::{
 };
 use tower::ServiceExt;
 
+struct PendingInfrastructure {
+    nodes: Arc<std::sync::atomic::AtomicUsize>,
+    networks: Arc<std::sync::atomic::AtomicUsize>,
+    active: Arc<std::sync::atomic::AtomicUsize>,
+}
+async fn pending_component<T>(
+    calls: &std::sync::atomic::AtomicUsize,
+    active: &Arc<std::sync::atomic::AtomicUsize>,
+) -> Result<T, pve_port::PveReadError> {
+    use std::sync::atomic::Ordering;
+    calls.fetch_add(1, Ordering::SeqCst);
+    assert_eq!(
+        active.fetch_add(1, Ordering::SeqCst),
+        0,
+        "overlapping selected-node reads"
+    );
+    struct Active(Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for Active {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    let _active = Active(active.clone());
+    std::future::pending().await
+}
+impl pve_port::PveInfrastructureVisibilityReadPort for PendingInfrastructure {
+    fn node_visibility<'a, 'n, 'b>(
+        &'a self,
+        node: &'n pve_port::NodeName,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<pve_port::NodeVisibility, pve_port::PveReadError>,
+                > + Send
+                + 'b,
+        >,
+    >
+    where
+        'a: 'b,
+        'n: 'b,
+        Self: 'b,
+    {
+        assert_eq!(node.as_str(), "pve-test");
+        Box::pin(pending_component(&self.nodes, &self.active))
+    }
+    fn network_visibility<'a, 'n, 'b>(
+        &'a self,
+        node: &'n pve_port::NodeName,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<pve_port::NetworkVisibility, pve_port::PveReadError>,
+                > + Send
+                + 'b,
+        >,
+    >
+    where
+        'a: 'b,
+        'n: 'b,
+        Self: 'b,
+    {
+        assert_eq!(node.as_str(), "pve-test");
+        Box::pin(pending_component(&self.networks, &self.active))
+    }
+}
+
+// Break: changing the independent cadence, bursting overdue ticks, overlapping or detached reads.
+#[tokio::test(start_paused = true)]
+async fn infrastructure_loop_is_immediate_ten_second_skip_and_joins_cancelled_read() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let nodes = Arc::new(AtomicUsize::new(0));
+    let networks = Arc::new(AtomicUsize::new(0));
+    let active = Arc::new(AtomicUsize::new(0));
+    let observation = crate::infrastructure_observation::InfrastructureObservation::from_port(
+        pve_port::NodeName::parse("pve-test").unwrap(),
+        Box::new(PendingInfrastructure {
+            nodes: nodes.clone(),
+            networks: networks.clone(),
+            active: active.clone(),
+        }),
+    );
+    let (stop, receiver) = watch::channel(false);
+    let worker = tokio::spawn(infrastructure_sweeps(observation, Arc::default(), receiver));
+    tokio::task::yield_now().await;
+    assert_eq!(nodes.load(Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(networks.load(Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    tokio::time::advance(Duration::from_millis(5_999)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(nodes.load(Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_millis(1)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(nodes.load(Ordering::SeqCst), 2);
+    tokio::time::advance(Duration::from_secs(40)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(nodes.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        networks.load(Ordering::SeqCst),
+        1,
+        "expired pair must not start its second request"
+    );
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(networks.load(Ordering::SeqCst), 2);
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(
+        nodes.load(Ordering::SeqCst),
+        3,
+        "missed ticks must not burst"
+    );
+    tokio::time::advance(Duration::from_secs(6)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(nodes.load(Ordering::SeqCst), 4);
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    tokio::time::advance(Duration::from_secs(60)).await;
+    assert_eq!(nodes.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        networks.load(Ordering::SeqCst),
+        2,
+        "shutdown must not start another component"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn infrastructure_loop_shutdown_before_start_issues_no_request() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let nodes = Arc::new(AtomicUsize::new(0));
+    let networks = Arc::new(AtomicUsize::new(0));
+    let observation = crate::infrastructure_observation::InfrastructureObservation::from_port(
+        pve_port::NodeName::parse("pve-test").unwrap(),
+        Box::new(PendingInfrastructure {
+            nodes: nodes.clone(),
+            networks: networks.clone(),
+            active: Arc::default(),
+        }),
+    );
+    let (_, receiver) = watch::channel(true);
+    infrastructure_sweeps(observation, Arc::default(), receiver).await;
+    assert_eq!(nodes.load(Ordering::SeqCst), 0);
+    assert_eq!(networks.load(Ordering::SeqCst), 0);
+}
+
 struct PendingVisibility {
     calls: Arc<std::sync::atomic::AtomicUsize>,
     active: Arc<std::sync::atomic::AtomicUsize>,
@@ -121,6 +270,7 @@ async fn response_after(
         mode: "adapter",
         pve_transport: "fake",
         observation: Arc::default(),
+        infrastructure: Arc::default(),
         generation: 1,
         adapter_versions: vec![SYNTHETIC_LONG_SLEEP_V1.adapter_identity],
     };
@@ -182,6 +332,7 @@ async fn sweep_validation_fault_survives_successful_reads_and_stops_later_claims
         mode: "adapter",
         pve_transport: "fake",
         observation: Arc::default(),
+        infrastructure: Arc::default(),
         generation: 1,
         adapter_versions: vec![SYNTHETIC_LONG_SLEEP_V1.adapter_identity],
     };

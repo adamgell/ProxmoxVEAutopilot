@@ -215,6 +215,8 @@ async fn live_server_survives_database_failure_and_sanitizes_readiness() {
                 assert!(!text.contains("secret-canary"));
                 let body: serde_json::Value = serde_json::from_str(&text).unwrap();
                 assert_eq!(body["database"], false);
+                assert_eq!(body["infrastructure_observation_ready"], false);
+                assert!(body["infrastructure_observation"].is_null());
                 assert!(body["reconciler_last_success"].is_null());
                 break;
             }

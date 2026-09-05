@@ -1,3 +1,4 @@
+use crate::infrastructure_health::{InfrastructureHealth, InfrastructureProgress};
 use crate::pve_observation::{ObservationResult, ObservationStatus};
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use chrono::{DateTime, Utc};
@@ -80,6 +81,7 @@ pub struct HealthState {
     pub adapter_versions: Vec<&'static str>,
     pub pve_transport: &'static str,
     pub observation: Arc<RwLock<ObservationProgress>>,
+    pub infrastructure: Arc<RwLock<InfrastructureProgress>>,
 }
 
 #[derive(Serialize)]
@@ -111,6 +113,8 @@ pub struct ReadyResponse {
     ready: bool,
     pve_observation: Option<ObservationHealth>,
     observation_ready: bool,
+    infrastructure_observation: Option<InfrastructureHealth>,
+    infrastructure_observation_ready: bool,
 }
 
 fn evaluate(
@@ -119,6 +123,7 @@ fn evaluate(
     authority: Option<(&'static str, i64)>,
     progress: &Progress,
     observation: &ObservationProgress,
+    infrastructure: &InfrastructureProgress,
 ) -> ReadyResponse {
     let outbox = snapshot.is_some_and(|s| {
         s.outbox_pending <= 1000 && s.oldest_outbox_age_seconds.is_none_or(|age| age <= 300)
@@ -137,6 +142,10 @@ fn evaluate(
         });
     let pve_observation = observation.snapshot(Instant::now());
     let observation_ready = pve_observation.as_ref().is_some_and(|o| o.fresh);
+    let infrastructure_observation = infrastructure.snapshot(Instant::now());
+    let infrastructure_observation_ready = infrastructure_observation
+        .as_ref()
+        .is_some_and(InfrastructureHealth::ready);
     ReadyResponse {
         version: env!("CARGO_PKG_VERSION"),
         git_sha: env!("CONTROLLER_GIT_SHA"),
@@ -169,6 +178,8 @@ fn evaluate(
         ready,
         pve_observation,
         observation_ready,
+        infrastructure_observation,
+        infrastructure_observation_ready,
     }
 }
 
@@ -190,6 +201,7 @@ async fn readiness(State(state): State<HealthState>) -> (StatusCode, Json<ReadyR
         .and_then(Result::ok);
     let progress = state.progress.read().await;
     let observation = state.observation.read().await;
+    let infrastructure = state.infrastructure.read().await;
     let authority = snapshot
         .as_ref()
         .and_then(|s| s.authority)
@@ -200,6 +212,7 @@ async fn readiness(State(state): State<HealthState>) -> (StatusCode, Json<ReadyR
         authority,
         &progress,
         &observation,
+        &infrastructure,
     ))
 }
 fn response(body: ReadyResponse) -> (StatusCode, Json<ReadyResponse>) {
@@ -233,6 +246,7 @@ fn test_router(
         adapter_versions: vec![],
         pve_transport: transport,
         observation: Arc::default(),
+        infrastructure: Arc::default(),
     };
     let progress = Progress {
         last_success: age.map(|age| (Instant::now() - Duration::from_secs(age), Utc::now())),
@@ -258,6 +272,7 @@ fn test_router(
         authority.map(|generation| ("rust", generation)),
         &progress,
         &ObservationProgress::default(),
+        &InfrastructureProgress::default(),
     );
     let code = if body.ready {
         StatusCode::OK
@@ -359,15 +374,40 @@ mod tests {
             adapter_versions: vec![],
             pve_transport: "http-observe",
             observation: Arc::default(),
+            infrastructure: Arc::default(),
         };
         let mut progress = Progress::default();
         progress.succeeded();
         progress.operational_failure = Some(OperationalFailure::AdapterProcess);
-        let response = evaluate(&state, None, Some(("rust", 1)), &progress, &observation);
+        use crate::infrastructure_observation::test_support::{network, node, result};
+        let mut infrastructure = InfrastructureProgress::default();
+        infrastructure.record(result(
+            node(
+                ObservationStatus::Fresh,
+                Some(Utc::now()),
+                Some(true),
+                Some(Instant::now()),
+            ),
+            network(
+                ObservationStatus::Fresh,
+                Some(Utc::now()),
+                true,
+                Some(Instant::now()),
+            ),
+        ));
+        let response = evaluate(
+            &state,
+            None,
+            Some(("rust", 1)),
+            &progress,
+            &observation,
+            &infrastructure,
+        );
         assert!(!response.ready);
         assert!(!response.database);
         assert!(!response.outbox);
         assert!(response.observation_ready);
+        assert!(response.infrastructure_observation_ready);
         assert!(matches!(
             response.operational_failure,
             Some(OperationalFailure::AdapterProcess)
@@ -414,6 +454,8 @@ mod tests {
         assert_eq!(body["executor_kind"], "rust");
         assert_eq!(body["authority_generation"], 1);
         assert_eq!(body["pve_transport"], "fake");
+        assert_eq!(body["infrastructure_observation_ready"], false);
+        assert!(body["infrastructure_observation"].is_null());
         assert_eq!(body["database"], true);
         assert_eq!(body["outbox"], true);
         assert_eq!(body["outbox_pending"], 3);

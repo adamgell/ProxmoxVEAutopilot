@@ -1,6 +1,8 @@
 use crate::{
     config::{ControllerConfig, ControllerMode, ValidatedObservationConfig},
     health::{HealthState, ObservationProgress, OperationalFailure, Progress},
+    infrastructure_health::InfrastructureProgress,
+    infrastructure_observation::InfrastructureObservation,
     observe, pve_credentials,
     pve_observation::PveObservation,
 };
@@ -65,14 +67,24 @@ pub async fn serve(
     );
     // Selection and target validation precede credential I/O. The runtime consumes
     // the validated capability; environment text is never reparsed as transport.
-    let observation = observation_config
+    let observations = observation_config
         .as_ref()
         .map(|selected| {
             let token = pve_credentials::load_token(selected)?;
-            PveObservation::new(selected, token)
-                .map_err(|_| anyhow::anyhow!("observation setup rejected"))
+            let infrastructure = selected
+                .node_target()
+                .map(|_| InfrastructureObservation::new(selected, token.clone()))
+                .transpose()
+                .map_err(|_| anyhow::anyhow!("observation setup rejected"))?;
+            let observation = PveObservation::new(selected, token)
+                .map_err(|_| anyhow::anyhow!("observation setup rejected"))?;
+            Ok::<_, anyhow::Error>((observation, infrastructure))
         })
         .transpose()?;
+    let (observation, infrastructure) = match observations {
+        Some((observation, infrastructure)) => (Some(observation), infrastructure),
+        None => (None, None),
+    };
     let (pve_transport, _fake) = if observation.is_some() {
         ("http-observe", None)
     } else {
@@ -127,6 +139,7 @@ pub async fn serve(
         generation,
         pve_transport,
         observation: Arc::default(),
+        infrastructure: Arc::default(),
         adapter_versions: if work.is_some() {
             vec![SYNTHETIC_LONG_SLEEP_V1.adapter_identity]
         } else {
@@ -142,6 +155,13 @@ pub async fn serve(
             receiver.clone(),
         ))
     });
+    let infrastructure_observer = infrastructure.map(|observation| {
+        tokio::spawn(infrastructure_sweeps(
+            observation,
+            state.infrastructure.clone(),
+            receiver.clone(),
+        ))
+    });
     let worker = tokio::spawn(sweeps(state.clone(), pool, work, receiver));
     let server = axum::serve(listener, crate::health::router(state))
         .with_graceful_shutdown(async move {
@@ -151,6 +171,9 @@ pub async fn serve(
         .await;
     worker.await?;
     if let Some(observer) = observer {
+        observer.await?;
+    }
+    if let Some(observer) = infrastructure_observer {
         observer.await?;
     }
     server?;
@@ -165,6 +188,24 @@ async fn observation_sweeps(
     mut stop: watch::Receiver<bool>,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(5));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        if *stop.borrow() {
+            break;
+        }
+        tokio::select! { biased; _ = stop.changed() => break, _ = interval.tick() => {} }
+        let result = tokio::select! { biased; _ = stop.changed() => break, result = observation.collect_once() => result };
+        progress.write().await.record(result);
+    }
+}
+
+// This independent loop owns only the selected-node two-GET capability.
+async fn infrastructure_sweeps(
+    observation: InfrastructureObservation,
+    progress: Arc<RwLock<InfrastructureProgress>>,
+    mut stop: watch::Receiver<bool>,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(10));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         if *stop.borrow() {

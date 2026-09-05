@@ -146,8 +146,6 @@ impl ValidatedObservationConfig {
     pub(crate) fn allow_production_reads(&self) -> bool {
         self.allow_production_reads
     }
-    // Staged until the selected-node runtime is connected in Task 2.
-    #[allow(dead_code)]
     pub(crate) fn node_target(&self) -> Option<&NodeName> {
         self.node_target.as_ref()
     }
