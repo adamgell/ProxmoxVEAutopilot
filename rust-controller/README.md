@@ -19,6 +19,24 @@ Its semantic template hash binds observed supported configuration, not disk cont
 blankness, freshness, media publication, or mutation authority. This addition has no
 GET collector, mutation transport, durable store integration, or service orchestration.
 
+Provisioning requests now cover clone, absolute disk growth, PE configuration/start,
+stop, and installed-disk configuration/start. Their complete hashes bind the full
+workflow digest, operation/attempt, evidence fence, plan, historical clone and
+physical predecessor references, and exact observed before-state. The legacy clone
+marker digest remains separate and never appears in a PVE form. Desired disk serials
+must fit 20 ASCII bytes before any request, including clone, can be constructed.
+
+The pure preflight/outcome evaluators validate independent observation clocks,
+complete identity/media coverage, exact original dispatch and receipt provenance,
+and the permitted physical transition. A lost task receipt stays unknown; only
+receiptless synchronous configuration can reconcile an exact desired state against
+the original recorded dispatch. Deadline expiry and cancellation remain unknown.
+Verified clone ownership and physical predecessor baselines retain historical proof
+and have no unchecked constructor or persisted decoder. `Ready` is physical advice:
+the existing locked store must still establish current fences, semantic predecessors,
+PE completion/grace/force-stop policy, and permission to send. These unit tests do not
+prove durable orchestration, real PVE wire behavior, or device readiness.
+
 ## Fake native proof
 
 From the repository root, with the existing local Unix Docker endpoint and cached

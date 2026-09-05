@@ -1,8 +1,14 @@
 //! Pure, explicit synthetic provisioning-v1 facts. Values never grant mutation
 //! authority, certify disk contents, or supply omitted real-PVE defaults.
 mod config;
+mod evidence;
 mod expectations;
 mod serde_wire;
+pub use evidence::*;
+mod evaluation;
+mod requests;
+pub use evaluation::*;
+pub use requests::*;
 
 use crate::{
     BridgeName, FakeCloneProvenance, MacAddress, NativeEvidenceSource, NativeVmName, NativeVmPlan,
