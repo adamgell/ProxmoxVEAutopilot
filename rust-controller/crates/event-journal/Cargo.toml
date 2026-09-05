@@ -3,6 +3,8 @@ name = "event-journal"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+publish = false
 
 [dependencies]
 chrono.workspace = true

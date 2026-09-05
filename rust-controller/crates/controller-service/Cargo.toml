@@ -3,11 +3,24 @@ name = "controller-service"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+publish = false
 
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+serde.workspace = true
+postgres-store = { path = "../postgres-store" }
+scheduler = { path = "../scheduler" }
+ansible-adapter = { path = "../ansible-adapter" }
+controller-domain = { path = "../controller-domain" }
 api-compat = { path = "../api-compat" }
 pve-port = { path = "../pve-port" }
 serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+tower = { version = "0.5", features = ["util"] }

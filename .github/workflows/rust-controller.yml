@@ -1,0 +1,57 @@
+name: Rust controller foundation
+on:
+  pull_request:
+    paths: ["rust-controller/**", "autopilot-proxmox/playbooks/_test_long_sleep.yml", ".github/workflows/rust-controller.yml"]
+  push:
+    paths: ["rust-controller/**", "autopilot-proxmox/playbooks/_test_long_sleep.yml", ".github/workflows/rust-controller.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust and native test dependencies
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.92.0
+          sudo apt-get update -qq
+          sudo apt-get install -y ansible-core
+          docker pull postgres:16-alpine
+          cargo install cargo-deny --version 0.19.0 --locked
+      - name: Quality and all tests
+        run: |
+          cargo fmt --manifest-path rust-controller/Cargo.toml --all -- --check
+          cargo clippy --locked --manifest-path rust-controller/Cargo.toml --workspace --all-targets --all-features -- -D warnings
+          cargo test --locked --manifest-path rust-controller/Cargo.toml --workspace --all-features --no-fail-fast
+          cargo deny --manifest-path rust-controller/Cargo.toml check
+      - name: Repeat PostgreSQL crash and concurrency proof
+        run: |
+          cargo test --locked --manifest-path rust-controller/Cargo.toml -p scheduler -p postgres-store
+      - name: AMD64 release and isolated three worker proof
+        run: |
+          docker build --platform linux/amd64 --build-arg CONTROLLER_GIT_SHA="$GITHUB_SHA" -f rust-controller/Dockerfile.test -t rust-controller-task9:local .
+          docker compose -f rust-controller/docker-compose.test.yml config --quiet
+          bash rust-controller/scripts/compose-proof.sh
+          git diff --check
+  macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: ARM64 Rust, native Ansible and local PostgreSQL runtime
+        run: |
+          test "$(uname -m)" = arm64
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+          brew install ansible docker colima qemu
+          colima start --vm-type qemu --arch aarch64 --cpu-type max --mount-type 9p --cpu 2 --memory 4
+          docker pull postgres:16-alpine
+          /opt/homebrew/bin/ansible-playbook --version
+      - name: All macOS ARM64 tests
+        run: cargo test --locked --manifest-path rust-controller/Cargo.toml --workspace --all-features --no-fail-fast
+      - name: Stop disposable runtime
+        if: always()
+        run: colima stop

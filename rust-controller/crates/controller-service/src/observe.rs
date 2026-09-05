@@ -78,13 +78,6 @@ async fn observe_in_transaction(capability: ObserveReadCapability<'_>) -> Result
     .context("compatibility result serialization failed")
 }
 
-pub(crate) async fn run(database_url: &str) -> Result<String> {
-    let pool = PgPool::connect(database_url)
-        .await
-        .context("observe-mode database connection failed")?;
-    observe_once(&pool).await
-}
-
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ObserverStep {

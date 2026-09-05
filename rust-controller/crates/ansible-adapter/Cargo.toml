@@ -3,6 +3,8 @@ name = "ansible-adapter"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+publish = false
 
 [dependencies]
 api-compat = { path = "../api-compat" }

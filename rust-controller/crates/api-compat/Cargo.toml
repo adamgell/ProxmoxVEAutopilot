@@ -3,6 +3,8 @@ name = "api-compat"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+publish = false
 
 [dependencies]
 base64.workspace = true

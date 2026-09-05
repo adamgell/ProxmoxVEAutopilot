@@ -11,7 +11,9 @@
 //! let _unrestricted = store.pool();
 //! ```
 
+mod health;
 mod scheduler;
+pub use health::StoreHealthSnapshot;
 mod store;
 
 pub use scheduler::{

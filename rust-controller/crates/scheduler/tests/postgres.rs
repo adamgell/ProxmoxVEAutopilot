@@ -18,6 +18,105 @@ struct PostgresContainer {
     id: String,
 }
 
+#[tokio::test]
+async fn health_snapshot_reads_counts_and_authority_without_write_privilege() {
+    let fixture = Fixture::new().await;
+    assert!(
+        fixture
+            .store
+            .health_snapshot()
+            .await
+            .unwrap()
+            .authority
+            .is_none()
+    );
+    fixture.set_authority(ExecutorKind::Rust, 1).await;
+    let pending = fixture
+        .create_operation("pending-health", WorkflowKind::SyntheticLongSleep)
+        .await;
+    fixture
+        .create_operation("leased-health", WorkflowKind::SyntheticLongSleep)
+        .await;
+    let scheduler = fixture.scheduler("health-worker", ExecutorKind::Rust, 1);
+    scheduler
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query("UPDATE rust_controller.operations SET created_at=clock_timestamp()-interval '60 seconds' WHERE state='pending'").execute(&fixture.pool).await.unwrap();
+    sqlx::raw_sql("CREATE ROLE health_reader LOGIN PASSWORD 'local-health'; GRANT USAGE ON SCHEMA rust_controller TO health_reader; GRANT SELECT ON ALL TABLES IN SCHEMA rust_controller TO health_reader; ALTER ROLE health_reader SET default_transaction_read_only=on;").execute(&fixture.pool).await.unwrap();
+    let options = fixture
+        .pool
+        .connect_options()
+        .as_ref()
+        .clone()
+        .username("health_reader")
+        .password("local-health");
+    let reader = PgPoolOptions::new().connect_with(options).await.unwrap();
+    let snapshot = PgStore::new(reader).health_snapshot().await.unwrap();
+    assert_eq!(snapshot.authority.unwrap().generation(), 1);
+    assert_eq!(snapshot.active_leases, 1);
+    assert!(snapshot.oldest_pending_age_seconds.unwrap() >= 60);
+    assert_eq!(snapshot.outbox_pending, 1);
+    assert_eq!(
+        (snapshot.blocked, snapshot.unknown, snapshot.conflicted),
+        (0, 0, 0)
+    );
+    assert!(
+        fixture
+            .store
+            .load_operation(pending)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    fixture.pool.close().await;
+    assert!(fixture.store.health_snapshot().await.is_err());
+}
+
+#[tokio::test]
+async fn bound_claim_skips_unrelated_fingerprints_and_contract_versions() {
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 1).await;
+    let unrelated = fixture
+        .create_operation("unrelated", WorkflowKind::SyntheticLongSleep)
+        .await;
+    let scheduler = fixture.scheduler("bound-worker", ExecutorKind::Rust, 1);
+    assert!(
+        scheduler
+            .claim_next_bound(WorkflowKind::SyntheticLongSleep, 1, 1, &"b".repeat(64))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        scheduler
+            .claim_next_bound(WorkflowKind::SyntheticLongSleep, 1, 2, &"a".repeat(64))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fixture
+            .store
+            .load_operation(unrelated)
+            .await
+            .unwrap()
+            .unwrap()
+            .state(),
+        ExecutionState::Pending
+    );
+    assert_eq!(
+        scheduler
+            .claim_next_bound(WorkflowKind::SyntheticLongSleep, 1, 1, &"a".repeat(64))
+            .await
+            .unwrap()
+            .unwrap()
+            .operation_id(),
+        unrelated
+    );
+}
+
 impl PostgresContainer {
     async fn start() -> Self {
         let output = Command::new("docker")

@@ -29,6 +29,18 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
+    /// Select only an explicitly configured contract and canonical plan, inside
+    /// the same cap/authority/claim transaction. Unrelated work stays pending.
+    pub async fn claim_next_bound(
+        &self,
+        kind: WorkflowKind,
+        cap: u32,
+        version: u16,
+        fingerprint: &str,
+    ) -> Result<Option<LeaseGrant>, SchedulerError> {
+        self.claim_checked(kind, cap, Some((version, fingerprint)))
+            .await
+    }
     pub fn new(
         store: PgStore,
         executor_kind: ExecutorKind,
@@ -54,6 +66,15 @@ impl Scheduler {
         &self,
         kind: WorkflowKind,
         cap: u32,
+    ) -> Result<Option<LeaseGrant>, SchedulerError> {
+        self.claim_checked(kind, cap, None).await
+    }
+
+    async fn claim_checked(
+        &self,
+        kind: WorkflowKind,
+        cap: u32,
+        binding: Option<(u16, &str)>,
     ) -> Result<Option<LeaseGrant>, SchedulerError> {
         if cap == 0 {
             return Err(SchedulerError::InvalidCap { cap });
@@ -89,10 +110,15 @@ impl Scheduler {
         let candidate: Option<(Uuid, i64)> = sqlx::query_as(
             "SELECT operation_id, revision FROM rust_controller.operations \
              WHERE workflow_kind = $1 AND state = 'pending' \
+             AND ($2::integer IS NULL OR (contract_version = $2 AND EXISTS (\
+                 SELECT 1 FROM rust_controller.commands c \
+                 WHERE c.operation_id = operations.operation_id AND c.payload_digest = $3))) \
              ORDER BY created_at, operation_id \
              FOR UPDATE SKIP LOCKED LIMIT 1",
         )
         .bind(workflow_kind_name(kind))
+        .bind(binding.map(|(version, _)| i32::from(version)))
+        .bind(binding.map(|(_, fingerprint)| fingerprint))
         .fetch_optional(&mut *transaction)
         .await?;
         let Some((operation_uuid, revision)) = candidate else {

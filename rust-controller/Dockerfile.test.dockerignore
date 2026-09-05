@@ -1,0 +1,8 @@
+**
+!rust-controller
+!rust-controller/**
+rust-controller/target
+rust-controller/evidence
+!autopilot-proxmox
+!autopilot-proxmox/playbooks
+!autopilot-proxmox/playbooks/_test_long_sleep.yml

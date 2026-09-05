@@ -13,6 +13,9 @@ pub struct Fixture {
 }
 impl Fixture {
     pub async fn new() -> Self {
+        if let Ok(dsn) = std::env::var("RUST_CONTROLLER_TEST_DATABASE_URL") {
+            return Self::isolated_database(&dsn).await;
+        }
         let output = Command::new("docker")
             .args([
                 "run",
@@ -70,6 +73,53 @@ impl Fixture {
             container,
         }
     }
+    // Linux Compose proof uses one disposable PostgreSQL server, with a fresh
+    // database per test. Literal loopback remains mandatory before connecting.
+    async fn isolated_database(dsn: &str) -> Self {
+        use std::{
+            str::FromStr,
+            sync::atomic::{AtomicU64, Ordering},
+        };
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let options = sqlx::postgres::PgConnectOptions::from_str(dsn).unwrap();
+        assert!(
+            options
+                .get_host()
+                .parse::<std::net::IpAddr>()
+                .unwrap()
+                .is_loopback()
+        );
+        let admin = PgPoolOptions::new()
+            .connect_with(options.clone())
+            .await
+            .unwrap();
+        let database = format!(
+            "adapter_proof_{}_{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
+        sqlx::query(&format!("CREATE DATABASE {database}"))
+            .execute(&admin)
+            .await
+            .unwrap();
+        admin.close().await;
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect_with(options.database(&database))
+            .await
+            .unwrap();
+        let store = PgStore::new(pool.clone());
+        store.migrate().await.unwrap();
+        sqlx::query("INSERT INTO rust_controller.orchestration_authority (singleton_key, executor_kind, generation, change_reference) VALUES (1, 'rust', 1, 'local-adapter-test')").execute(&pool).await.unwrap();
+        let scheduler =
+            Scheduler::new(store.clone(), ExecutorKind::Rust, 1, "adapter-test").unwrap();
+        Self {
+            pool,
+            store,
+            scheduler,
+            container: String::new(),
+        }
+    }
     pub async fn grant(&self, plan: &NormalizedPlan) -> LeaseGrant {
         let command = CommandEnvelope::new(
             format!("test:{}", plan.fingerprint().unwrap().as_hex()),
@@ -96,6 +146,9 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
+        if self.container.is_empty() {
+            return;
+        }
         let _ = Command::new("docker")
             .args(["rm", "-f", &self.container])
             .output();
