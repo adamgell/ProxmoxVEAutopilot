@@ -1,9 +1,9 @@
 name: Rust controller foundation
 on:
   pull_request:
-    paths: ["rust-controller/**", "autopilot-proxmox/playbooks/_test_long_sleep.yml", ".github/workflows/rust-controller.yml"]
+    paths: ["rust-controller/**", "autopilot-proxmox/playbooks/_test_long_sleep.yml", "autopilot-proxmox/web/app.py", "autopilot-proxmox/web/jobs.py", "autopilot-proxmox/web/jobs_pg.py", ".github/workflows/rust-controller.yml"]
   push:
-    paths: ["rust-controller/**", "autopilot-proxmox/playbooks/_test_long_sleep.yml", ".github/workflows/rust-controller.yml"]
+    paths: ["rust-controller/**", "autopilot-proxmox/playbooks/_test_long_sleep.yml", "autopilot-proxmox/web/app.py", "autopilot-proxmox/web/jobs.py", "autopilot-proxmox/web/jobs_pg.py", ".github/workflows/rust-controller.yml"]
   workflow_dispatch:
 permissions:
   contents: read

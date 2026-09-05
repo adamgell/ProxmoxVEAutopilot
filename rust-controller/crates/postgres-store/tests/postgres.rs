@@ -9,7 +9,7 @@ use controller_domain::{
     WorkflowKind,
 };
 use event_journal::{EventKind, JournalEvent, payload_digest};
-use postgres_store::{CommandAppend, EventAppend, PgStore, StoreError};
+use postgres_store::{CommandAppend, EventAppend, ExecutorKind, PgStore, Scheduler, StoreError};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
 const EXPECTED_TABLES: [&str; 8] = [
@@ -496,6 +496,12 @@ async fn schema_enforces_journal_outbox_projection_authority_and_lease_invariant
     assert!(deadline_at >= lease_expires_at);
 }
 
+async fn test_scheduler(store: &PgStore, pool: &PgPool) -> Scheduler {
+    sqlx::query("INSERT INTO rust_controller.orchestration_authority (singleton_key, executor_kind, generation, change_reference) VALUES (1, 'rust', 1, 'store-test')")
+        .execute(pool).await.unwrap();
+    Scheduler::new(store.clone(), ExecutorKind::Rust, 1, "store-worker").unwrap()
+}
+
 #[tokio::test]
 async fn append_command_returns_existing_for_same_digest_and_conflict_for_different_digest() {
     // Break caught: treating every duplicate idempotency key alike could replay
@@ -630,14 +636,14 @@ async fn two_connections_allow_one_append_winner_and_report_revision_conflict_fo
         operation_id,
         1,
         "state:left-leased",
-        EventKind::ExecutionStateChanged(ExecutionState::Leased),
+        EventKind::EvidenceRecorded,
         serde_json::json!({"writer": "left"}),
     );
     let right_event = journal_event(
         operation_id,
         1,
         "state:right-leased",
-        EventKind::ExecutionStateChanged(ExecutionState::Leased),
+        EventKind::EvidenceRecorded,
         serde_json::json!({"writer": "right"}),
     );
 
@@ -685,7 +691,7 @@ async fn two_connections_allow_one_append_winner_and_report_revision_conflict_fo
         (event_count, outbox_count, projection.revision()),
         (1, 1, 1)
     );
-    assert_eq!(projection.state(), ExecutionState::Leased);
+    assert_eq!(projection.state(), ExecutionState::Pending);
 }
 
 #[tokio::test]
@@ -768,7 +774,7 @@ async fn outbox_insert_failure_rolls_back_event_projection_and_revision() {
         operation_id,
         1,
         "state:leased",
-        EventKind::ExecutionStateChanged(ExecutionState::Leased),
+        EventKind::EvidenceRecorded,
         serde_json::json!({"state": "leased"}),
     );
 
@@ -804,30 +810,21 @@ async fn rebuild_projection_from_empty_store_matches_transactional_projection() 
     let store = PgStore::new(pool.clone());
     store.migrate().await.unwrap();
     let operation_id = create_operation(&store, "projection-rebuild").await;
-    let leased = journal_event(
-        operation_id,
-        1,
-        "state:leased",
-        EventKind::ExecutionStateChanged(ExecutionState::Leased),
-        serde_json::json!({"state": "leased"}),
-    );
-    store.append_event(0, &leased).await.unwrap();
-    let running = journal_event(
-        operation_id,
-        2,
-        "state:running",
-        EventKind::ExecutionStateChanged(ExecutionState::Running),
-        serde_json::json!({"state": "running"}),
-    );
-    store.append_event(1, &running).await.unwrap();
+    let scheduler = test_scheduler(&store, &pool).await;
+    let grant = scheduler
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    scheduler.start(&grant).await.unwrap();
     let evidence = journal_event(
         operation_id,
-        3,
+        4,
         "evidence:heartbeat",
         EventKind::EvidenceRecorded,
         serde_json::json!({"heartbeat": "synthetic"}),
     );
-    store.append_event(2, &evidence).await.unwrap();
+    store.append_event(3, &evidence).await.unwrap();
     let expected = store.load_operation(operation_id).await.unwrap().unwrap();
 
     sqlx::query("DELETE FROM rust_controller.operation_projection WHERE operation_id = $1")
@@ -840,7 +837,7 @@ async fn rebuild_projection_from_empty_store_matches_transactional_projection() 
 
     assert_eq!(rebuilt, expected);
     assert_eq!(rebuilt.state(), ExecutionState::Running);
-    assert_eq!(rebuilt.revision(), 3);
+    assert_eq!(rebuilt.revision(), 4);
 }
 
 #[tokio::test]
@@ -1055,14 +1052,17 @@ async fn terminal_execution_state_cannot_regress_and_emits_no_followup_event() {
     let store = PgStore::new(pool.clone());
     store.migrate().await.unwrap();
     let operation_id = create_operation(&store, "terminal-regression").await;
-    let satisfied = journal_event(
-        operation_id,
-        1,
-        "state:satisfied",
-        EventKind::ExecutionStateChanged(ExecutionState::Satisfied),
-        serde_json::json!({"state": "satisfied"}),
-    );
-    store.append_event(0, &satisfied).await.unwrap();
+    let scheduler = test_scheduler(&store, &pool).await;
+    let grant = scheduler
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    scheduler.start(&grant).await.unwrap();
+    scheduler
+        .finalize(&grant, ExecutionState::Satisfied)
+        .await
+        .unwrap();
     let regression = journal_event(
         operation_id,
         2,
@@ -1086,8 +1086,8 @@ async fn terminal_execution_state_cannot_regress_and_emits_no_followup_event() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(counts, (1, 1));
-    assert_eq!(operation, ("satisfied".to_owned(), 1));
+    assert_eq!(counts, (4, 4));
+    assert_eq!(operation, ("satisfied".to_owned(), 4));
 }
 
 #[tokio::test]
@@ -1116,14 +1116,12 @@ async fn append_command_never_recreates_a_missing_progressed_projection_as_pendi
         .append_command(operation_id, &first_command)
         .await
         .unwrap();
-    let leased = journal_event(
-        operation_id,
-        1,
-        "state:leased",
-        EventKind::ExecutionStateChanged(ExecutionState::Leased),
-        serde_json::json!({"state": "leased"}),
-    );
-    store.append_event(0, &leased).await.unwrap();
+    let scheduler = test_scheduler(&store, &pool).await;
+    scheduler
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
     sqlx::query("DELETE FROM rust_controller.operation_projection WHERE operation_id = $1")
         .bind(operation_id.as_uuid())
         .execute(&pool)
@@ -1133,7 +1131,7 @@ async fn append_command_never_recreates_a_missing_progressed_projection_as_pendi
     let second_command = CommandEnvelope::new(
         "command:projection-second",
         semantic_key,
-        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
     .unwrap();
     assert_eq!(
@@ -1278,14 +1276,14 @@ async fn two_connections_classify_same_and_different_event_digests_without_extra
             operation_id,
             1,
             "state:leased",
-            EventKind::ExecutionStateChanged(ExecutionState::Leased),
+            EventKind::EvidenceRecorded,
             left_payload,
         );
         let right_event = journal_event(
             operation_id,
             1,
             "state:leased",
-            EventKind::ExecutionStateChanged(ExecutionState::Leased),
+            EventKind::EvidenceRecorded,
             right_payload,
         );
         let left = PgStore::new(

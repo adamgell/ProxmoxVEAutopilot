@@ -3,10 +3,9 @@ use thiserror::Error;
 
 use chrono::{DateTime, Utc};
 use controller_domain::{
-    CommandEnvelope, DomainSignal, EventId, ExecutionState, OperationId, TransitionError,
-    WorkflowKind, decide_transition,
+    CommandEnvelope, EventId, ExecutionState, OperationId, TransitionError, WorkflowKind,
 };
-use event_journal::JournalEvent;
+use event_journal::{EventKind, JournalEvent};
 use uuid::Uuid;
 
 type ClaimedOutboxRow = (
@@ -166,6 +165,14 @@ impl PgStore {
         if let Some((existing_id, existing_digest)) = existing {
             let existing_operation_id = decode_operation_id(existing_id)?;
             if existing_digest == command.payload_digest() {
+                sqlx::query("SELECT operation_id FROM rust_controller.operations WHERE operation_id = $1 FOR UPDATE")
+                    .bind(existing_id).fetch_one(&mut *transaction).await?;
+                require_command_binding(
+                    &mut transaction,
+                    existing_operation_id,
+                    command.payload_digest(),
+                )
+                .await?;
                 transaction.commit().await?;
                 return Ok(CommandAppend::AlreadyPresent(existing_operation_id));
             }
@@ -197,7 +204,7 @@ impl PgStore {
                 sqlx::query_scalar(
                     "SELECT operation_id FROM rust_controller.operations \
                      WHERE workflow_kind = $1 AND run_id = $2 AND operation_key = $3 \
-                       AND contract_version = $4",
+                       AND contract_version = $4 FOR UPDATE",
                 )
                 .bind(workflow_kind_name(semantic.workflow_kind()))
                 .bind(semantic.run_id().as_uuid())
@@ -208,6 +215,15 @@ impl PgStore {
                 false,
             )
         };
+
+        if !inserted_operation {
+            require_command_binding(
+                &mut transaction,
+                decode_operation_id(persisted_id)?,
+                command.payload_digest(),
+            )
+            .await?;
+        }
 
         sqlx::query(
             "INSERT INTO rust_controller.commands \
@@ -237,6 +253,11 @@ impl PgStore {
         expected_revision: i64,
         event: &JournalEvent,
     ) -> Result<EventAppend, StoreError> {
+        // Only observations may arrive without a scheduler capability. In
+        // particular AttemptStarted drives recovery policy even without a state.
+        if event.kind() != EventKind::EvidenceRecorded {
+            return Err(StoreError::SchedulerOwnedEvent);
+        }
         validate_digest(event.payload_digest())?;
         if expected_revision < 0 {
             return Err(StoreError::InvalidExpectedRevision { expected_revision });
@@ -285,12 +306,7 @@ impl PgStore {
             });
         }
 
-        let current_state = decode_execution_state(&current_state_name)?;
-        let (event_kind, event_state) = event_kind_parts(event.kind());
-        let next_state = event_state
-            .map(|target| validate_state_transition(current_state, target))
-            .transpose()?
-            .unwrap_or(current_state);
+        let next_state = decode_execution_state(&current_state_name)?;
         let outbox_payload = serde_json::to_value(event)?;
 
         sqlx::query(
@@ -305,8 +321,8 @@ impl PgStore {
         .bind(event.aggregate_revision())
         .bind(event.semantic_key())
         .bind(event.payload_digest())
-        .bind(event_kind)
-        .bind(event_state.map(execution_state_name))
+        .bind("evidence_recorded")
+        .bind(None::<String>)
         .bind(event.payload())
         .bind(event.observed_at())
         .execute(&mut *transaction)
@@ -547,7 +563,11 @@ impl PgStore {
 
 #[derive(Debug, Error)]
 pub enum StoreError {
-    #[error("command idempotency key already exists with a different digest")]
+    #[error("execution lifecycle events require a fenced scheduler capability")]
+    SchedulerOwnedEvent,
+    #[error("semantic operation has no unambiguous persisted command binding")]
+    AmbiguousCommandBinding,
+    #[error("command or semantic operation already exists with a different digest")]
     CommandDigestConflict { existing_operation_id: OperationId },
     #[error("event semantic key already exists with a different digest")]
     EventDigestConflict { existing_event_id: EventId },
@@ -593,6 +613,28 @@ pub enum StoreError {
     Database(#[from] sqlx::Error),
 }
 
+// The caller holds the operation row lock. All supported intake serializes on
+// it, so the first persisted digest is immutable across idempotency keys. Older
+// databases with conflicting commands are rejected rather than choosing one.
+async fn require_command_binding(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    operation_id: OperationId,
+    fingerprint: &str,
+) -> Result<(), StoreError> {
+    let (distinct, digest): (i64, Option<String>) = sqlx::query_as(
+        "SELECT count(DISTINCT payload_digest), min(payload_digest) FROM rust_controller.commands WHERE operation_id = $1",
+    ).bind(operation_id.as_uuid()).fetch_one(&mut **transaction).await?;
+    if distinct != 1 {
+        return Err(StoreError::AmbiguousCommandBinding);
+    }
+    if digest.as_deref() != Some(fingerprint) {
+        return Err(StoreError::CommandDigestConflict {
+            existing_operation_id: operation_id,
+        });
+    }
+    Ok(())
+}
+
 fn validate_digest(digest: &str) -> Result<(), StoreError> {
     if digest.len() == 64
         && digest
@@ -627,49 +669,6 @@ fn decode_projection(
         revision,
         last_event_id: last_event_id.map(decode_event_id).transpose()?,
     })
-}
-
-fn event_kind_parts(kind: event_journal::EventKind) -> (&'static str, Option<ExecutionState>) {
-    match kind {
-        event_journal::EventKind::CommandAccepted => ("command_accepted", None),
-        event_journal::EventKind::AttemptStarted => ("attempt_started", None),
-        event_journal::EventKind::ExecutionStateChanged(state) => {
-            ("execution_state_changed", Some(state))
-        }
-        event_journal::EventKind::EvidenceRecorded => ("evidence_recorded", None),
-        event_journal::EventKind::DecisionRecorded => ("decision_recorded", None),
-    }
-}
-
-fn validate_state_transition(
-    current: ExecutionState,
-    target: ExecutionState,
-) -> Result<ExecutionState, StoreError> {
-    let signal = match target {
-        ExecutionState::Leased => DomainSignal::Claimed,
-        ExecutionState::Running => DomainSignal::Started,
-        ExecutionState::Waiting => DomainSignal::WaitRequested,
-        ExecutionState::Cancelling => DomainSignal::CancellationRequested,
-        ExecutionState::Satisfied => DomainSignal::Satisfied,
-        ExecutionState::Failed => DomainSignal::Failed,
-        ExecutionState::Blocked => DomainSignal::Blocked,
-        ExecutionState::Unknown => DomainSignal::DeadlineElapsed,
-        ExecutionState::Conflicted => DomainSignal::ConflictDetected,
-        ExecutionState::Pending => {
-            return Err(StoreError::StateTargetMismatch {
-                target,
-                actual: current,
-            });
-        }
-    };
-    let transition = decide_transition(current, signal)?;
-    if transition.next != target {
-        return Err(StoreError::StateTargetMismatch {
-            target,
-            actual: transition.next,
-        });
-    }
-    Ok(transition.next)
 }
 
 const fn execution_state_name(state: ExecutionState) -> &'static str {

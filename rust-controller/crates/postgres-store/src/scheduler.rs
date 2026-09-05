@@ -110,6 +110,8 @@ impl Scheduler {
         let candidate: Option<(Uuid, i64)> = sqlx::query_as(
             "SELECT operation_id, revision FROM rust_controller.operations \
              WHERE workflow_kind = $1 AND state = 'pending' \
+             AND (SELECT count(DISTINCT c.payload_digest) FROM rust_controller.commands c \
+                  WHERE c.operation_id = operations.operation_id) = 1 \
              AND ($2::integer IS NULL OR (contract_version = $2 AND EXISTS (\
                  SELECT 1 FROM rust_controller.commands c \
                  WHERE c.operation_id = operations.operation_id AND c.payload_digest = $3))) \
@@ -278,6 +280,12 @@ impl Scheduler {
         let (state, revision) = lock_operation(&mut transaction, grant.operation_id()).await?;
         let persisted = lock_lease(&mut transaction, grant.operation_id()).await?;
         validate_persisted_lease(grant, &persisted)?;
+        let distinct: i64 = sqlx::query_scalar(
+            "SELECT count(DISTINCT payload_digest) FROM rust_controller.commands WHERE operation_id = $1",
+        ).bind(grant.operation_id().as_uuid()).fetch_one(&mut *transaction).await?;
+        if distinct != 1 {
+            return Err(SchedulerError::PlanBindingMismatch);
+        }
         if let Some((kind, version, fingerprint)) = binding {
             let matches: bool = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM rust_controller.operations o \

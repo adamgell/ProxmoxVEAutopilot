@@ -32,15 +32,30 @@ pub async fn observe_clone_outcome<P>(port: &P, intent: CloneIntent) -> PveEvide
 where
     P: PveReadPort + ?Sized,
 {
+    observe_clone_outcome_with_clock(port, intent, chrono::Utc::now).await
+}
+
+/// Sample the evaluation clock only after both reads finish. Inject a fixed
+/// clock explicitly for historical replay; intent construction never dates facts.
+pub async fn observe_clone_outcome_with_clock<P, C>(
+    port: &P,
+    intent: CloneIntent,
+    clock: C,
+) -> PveEvidence
+where
+    P: PveReadPort + ?Sized,
+    C: FnOnce() -> chrono::DateTime<chrono::Utc>,
+{
     let task = port.task_status(&intent.node, &intent.upid).await;
     let vm = port.vm_config(&intent.node, intent.vmid).await;
-    evaluate_clone_evidence(task, vm, &intent)
+    evaluate_clone_evidence(task, vm, &intent, clock())
 }
 
 fn evaluate_clone_evidence(
     task: Result<TaskStatus, PveReadError>,
     vm: Result<VmConfig, PveReadError>,
     intent: &CloneIntent,
+    as_of: chrono::DateTime<chrono::Utc>,
 ) -> PveEvidence {
     let mut facts = Vec::new();
     let mut errors = Vec::new();
@@ -50,7 +65,7 @@ fn evaluate_clone_evidence(
 
     let task_complete = match task {
         Ok(status) if status.upid() == &intent.upid => {
-            stale |= is_stale(status.observed_at(), intent);
+            stale |= is_stale(status.observed_at(), intent, as_of);
             let state = status.state();
             task_state = Some(state);
             let complete = status.succeeded();
@@ -72,7 +87,7 @@ fn evaluate_clone_evidence(
 
     let vm_identity_satisfied = match vm {
         Ok(config) => {
-            stale |= is_stale(config.observed_at(), intent);
+            stale |= is_stale(config.observed_at(), intent, as_of);
             let satisfied = config.vmid() == intent.vmid
                 && config.smbios_uuid() == Some(intent.expected_uuid)
                 && config.mac_addresses() == &intent.expected_macs;
@@ -108,17 +123,21 @@ fn evaluate_clone_evidence(
         task_state,
         vm_identity_satisfied,
         health,
-        observed_at: intent.as_of,
+        observed_at: as_of,
         source: EvidenceSource::PveApi,
         facts,
     }
 }
 
-fn is_stale(observed_at: chrono::DateTime<chrono::Utc>, intent: &CloneIntent) -> bool {
+fn is_stale(
+    observed_at: chrono::DateTime<chrono::Utc>,
+    intent: &CloneIntent,
+    as_of: chrono::DateTime<chrono::Utc>,
+) -> bool {
     let Ok(maximum_age) = ChronoDuration::from_std(intent.maximum_age) else {
         return true;
     };
-    observed_at > intent.as_of || intent.as_of - observed_at > maximum_age
+    observed_at > as_of || as_of - observed_at > maximum_age
 }
 
 #[cfg(test)]
@@ -142,7 +161,7 @@ mod tests {
     use super::{
         CloneIntent, FakePve, MacAddress, NodeName, PveAccessMode, PveBaseUrl, PveObserverConfig,
         PveReadError, PveReadPort, ReqwestPveObserver, TaskStatus, Upid, VmConfig, VmUuid, Vmid,
-        observe_clone_outcome,
+        observe_clone_outcome, observe_clone_outcome_with_clock,
     };
 
     fn time(value: &str) -> DateTime<Utc> {
@@ -165,14 +184,13 @@ mod tests {
         MacAddress::parse("02:00:00:00:01:01").unwrap()
     }
 
-    fn intent(as_of: DateTime<Utc>) -> CloneIntent {
+    fn intent() -> CloneIntent {
         CloneIntent::new(
             node(),
             Vmid::new(101).unwrap(),
             upid(),
             expected_uuid(),
             BTreeSet::from([expected_mac()]),
-            as_of,
             Duration::from_secs(30),
         )
         .unwrap()
@@ -236,7 +254,6 @@ mod tests {
                 other_node_upid,
                 expected_uuid(),
                 BTreeSet::from([expected_mac()]),
-                time("2026-09-04T12:00:00Z"),
                 Duration::from_secs(30),
             )
             .is_err()
@@ -278,7 +295,9 @@ mod tests {
             Ok(TaskStatus::complete(upid(), observed_at)),
         );
 
-        let evidence = observe_clone_outcome(&fake, intent(time("2026-09-04T12:00:10Z"))).await;
+        let evidence =
+            observe_clone_outcome_with_clock(&fake, intent(), || time("2026-09-04T12:00:10Z"))
+                .await;
 
         assert_eq!(evidence.task_complete, Some(true));
         assert_eq!(evidence.vm_identity_satisfied, None);
@@ -293,7 +312,9 @@ mod tests {
             fake.enqueue_task_status(node(), upid(), Err(error));
             fake.enqueue_vm_config(node(), Vmid::new(101).unwrap(), Err(PveReadError::NotFound));
 
-            let evidence = observe_clone_outcome(&fake, intent(time("2026-09-04T12:00:10Z"))).await;
+            let evidence =
+                observe_clone_outcome_with_clock(&fake, intent(), || time("2026-09-04T12:00:10Z"))
+                    .await;
 
             assert_eq!(evidence.health, ObservationHealth::Unavailable);
             assert_eq!(evidence.task_complete, None);
@@ -310,7 +331,9 @@ mod tests {
             Ok(matching_vm(time("2026-09-04T12:00:00Z"))),
         );
 
-        let evidence = observe_clone_outcome(&fake, intent(time("2026-09-04T12:00:10Z"))).await;
+        let evidence =
+            observe_clone_outcome_with_clock(&fake, intent(), || time("2026-09-04T12:00:10Z"))
+                .await;
 
         assert_eq!(evidence.health, ObservationHealth::TimedOut);
         assert_eq!(evidence.task_complete, None);
@@ -324,7 +347,9 @@ mod tests {
         fake.enqueue_task_status(node(), upid(), Ok(TaskStatus::complete(upid(), old)));
         fake.enqueue_vm_config(node(), Vmid::new(101).unwrap(), Ok(matching_vm(old)));
 
-        let evidence = observe_clone_outcome(&fake, intent(time("2026-09-04T12:00:00Z"))).await;
+        let evidence =
+            observe_clone_outcome_with_clock(&fake, intent(), || time("2026-09-04T12:00:00Z"))
+                .await;
 
         assert_eq!(evidence.task_complete, Some(true));
         assert_eq!(evidence.vm_identity_satisfied, Some(true));
@@ -358,7 +383,9 @@ mod tests {
             );
             fake.enqueue_vm_config(node(), Vmid::new(101).unwrap(), Ok(vm));
 
-            let evidence = observe_clone_outcome(&fake, intent(time("2026-09-04T12:00:10Z"))).await;
+            let evidence =
+                observe_clone_outcome_with_clock(&fake, intent(), || time("2026-09-04T12:00:10Z"))
+                    .await;
 
             assert_eq!(evidence.vm_identity_satisfied, Some(false));
             assert_eq!(evidence.health, ObservationHealth::Contradicted);
@@ -386,8 +413,12 @@ mod tests {
             Ok(matching_vm(observed_at)),
         );
 
-        let first = observe_clone_outcome(&fake, intent(time("2026-09-04T12:00:10Z"))).await;
-        let late = observe_clone_outcome(&fake, intent(time("2026-09-04T12:00:20Z"))).await;
+        let first =
+            observe_clone_outcome_with_clock(&fake, intent(), || time("2026-09-04T12:00:10Z"))
+                .await;
+        let late =
+            observe_clone_outcome_with_clock(&fake, intent(), || time("2026-09-04T12:00:20Z"))
+                .await;
 
         assert_eq!(first.task_complete, Some(false));
         assert_eq!(first.task_state, Some(super::TaskState::Running));
@@ -408,7 +439,9 @@ mod tests {
             Ok(matching_vm(observed_at)),
         );
 
-        let evidence = observe_clone_outcome(&fake, intent(time("2026-09-04T12:00:10Z"))).await;
+        let evidence =
+            observe_clone_outcome_with_clock(&fake, intent(), || time("2026-09-04T12:00:10Z"))
+                .await;
 
         assert_eq!(evidence.task_complete, Some(false));
         assert_eq!(evidence.task_state, Some(super::TaskState::CompleteFailure));
@@ -574,6 +607,54 @@ mod tests {
             .with_timeout(timeout),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn combined_http_observation_evaluates_fresh_facts_after_collection() {
+        let server = TestServer::start_with_limit(
+            TestResponse::json(200, r#"{"data":{"status":"stopped","exitstatus":"OK","smbios1":"uuid=3f2504e0-4f89-41d3-9a0c-0305e82c3301","net0":"virtio=02:00:00:00:01:01"}}"#)
+                .delayed(Duration::from_millis(10)),
+            2, Duration::from_secs(1),
+        ).await;
+        let observer = observer_for(server.base_url(), Duration::from_secs(1));
+        let evidence = observe_clone_outcome(&observer, intent()).await;
+        assert_eq!(evidence.health, ObservationHealth::Fresh);
+        assert_eq!(evidence.task_complete, Some(true));
+        assert_eq!(evidence.vm_identity_satisfied, Some(true));
+        assert_eq!(server.finish().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn injected_evaluation_clock_runs_after_http_collection_and_rejects_old_or_future_facts()
+    {
+        for (offset_seconds, expected) in [
+            (0, ObservationHealth::Fresh),
+            (60, ObservationHealth::Stale),
+            (-60, ObservationHealth::Stale),
+        ] {
+            let server = TestServer::start_with_limit(
+                TestResponse::json(200, r#"{"data":{"status":"stopped","exitstatus":"OK","smbios1":"uuid=3f2504e0-4f89-41d3-9a0c-0305e82c3301","net0":"virtio=02:00:00:00:01:01"}}"#),
+                2, Duration::from_secs(1),
+            ).await;
+            let observer = observer_for(server.base_url(), Duration::from_secs(1));
+            let mut evaluated_at = None;
+            let evidence = observe_clone_outcome_with_clock(&observer, intent(), || {
+                assert_eq!(
+                    server.requests.lock().unwrap().len(),
+                    2,
+                    "clock sampled before collection"
+                );
+                let now = Utc::now() + chrono::Duration::seconds(offset_seconds);
+                evaluated_at = Some(now);
+                now
+            })
+            .await;
+            assert_eq!(evidence.health, expected);
+            assert_eq!(Some(evidence.observed_at), evaluated_at);
+            assert_eq!(evidence.task_complete, Some(true));
+            assert_eq!(evidence.vm_identity_satisfied, Some(true));
+            assert_eq!(server.finish().await.len(), 2);
+        }
     }
 
     #[tokio::test]

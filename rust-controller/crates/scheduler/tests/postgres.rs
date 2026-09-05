@@ -6,16 +6,346 @@ use std::{
 
 use chrono::Utc;
 use controller_domain::{
-    AttemptId, CommandEnvelope, EventId, ExecutionState, OperationId, RunId, SemanticOperationKey,
+    CommandEnvelope, EventId, ExecutionState, OperationId, RunId, SemanticOperationKey,
     WorkflowKind,
 };
 use event_journal::{EventKind, JournalEvent, payload_digest};
-use postgres_store::{CommandAppend, PgStore};
+use postgres_store::{CommandAppend, PgStore, StoreError};
 use scheduler::{ExecutorKind, Scheduler, SchedulerError};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
 struct PostgresContainer {
     id: String,
+}
+
+#[tokio::test]
+async fn semantic_plan_cannot_be_substituted_after_claim_or_by_concurrent_intake() {
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 1).await;
+    let semantic = SemanticOperationKey::new(
+        WorkflowKind::SyntheticLongSleep,
+        RunId::new(),
+        "immutable-plan",
+        1,
+    )
+    .unwrap();
+    let first = CommandEnvelope::new("plan-a", semantic.clone(), "a".repeat(64)).unwrap();
+    let second = CommandEnvelope::new("plan-b", semantic.clone(), "b".repeat(64)).unwrap();
+    let operation = OperationId::new();
+    fixture
+        .store
+        .append_command(operation, &first)
+        .await
+        .unwrap();
+    let scheduler = fixture.scheduler("binding-worker", ExecutorKind::Rust, 1);
+    let grant = scheduler
+        .claim_next_bound(WorkflowKind::SyntheticLongSleep, 1, 1, &"a".repeat(64))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .store
+            .append_command(OperationId::new(), &second)
+            .await,
+        Err(StoreError::CommandDigestConflict { existing_operation_id }) if existing_operation_id == operation
+    ));
+    assert!(matches!(
+        scheduler
+            .start_bound(&grant, WorkflowKind::SyntheticLongSleep, 1, &"b".repeat(64))
+            .await,
+        Err(SchedulerError::PlanBindingMismatch)
+    ));
+    scheduler
+        .start_bound(&grant, WorkflowKind::SyntheticLongSleep, 1, &"a".repeat(64))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .load_operation(operation)
+            .await
+            .unwrap()
+            .unwrap()
+            .state(),
+        ExecutionState::Running
+    );
+
+    for equal in [true, false] {
+        let semantic = SemanticOperationKey::new(
+            WorkflowKind::SyntheticLongSleep,
+            RunId::new(),
+            "racing-plan",
+            1,
+        )
+        .unwrap();
+        let a = CommandEnvelope::new(format!("race-a-{equal}"), semantic.clone(), "a".repeat(64))
+            .unwrap();
+        let b = CommandEnvelope::new(
+            format!("race-b-{equal}"),
+            semantic,
+            if equal { "a" } else { "b" }.repeat(64),
+        )
+        .unwrap();
+        let results = tokio::join!(
+            fixture.store.append_command(OperationId::new(), &a),
+            fixture.store.append_command(OperationId::new(), &b)
+        );
+        assert_eq!(
+            usize::from(results.0.is_ok()) + usize::from(results.1.is_ok()),
+            if equal { 2 } else { 1 }
+        );
+        if equal {
+            assert_eq!(results.0.unwrap(), results.1.unwrap());
+        } else {
+            let (
+                Ok(CommandAppend::Appended(winner)),
+                Err(StoreError::CommandDigestConflict {
+                    existing_operation_id,
+                }),
+            ) = (if results.0.is_ok() {
+                results
+            } else {
+                (results.1, results.0)
+            })
+            else {
+                panic!("conflicting intake did not return the semantic conflict");
+            };
+            assert_eq!(winner, existing_operation_id);
+        }
+    }
+    let counts: (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM rust_controller.operations), (SELECT count(*) FROM rust_controller.commands)").fetch_one(&fixture.pool).await.unwrap();
+    assert_eq!(counts, (3, 4));
+}
+
+#[tokio::test]
+async fn generic_append_cannot_start_or_finalize_after_authority_loss() {
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 1).await;
+    let operation = fixture
+        .create_operation("generic-bypass", WorkflowKind::SyntheticLongSleep)
+        .await;
+    let scheduler = fixture.scheduler("old-worker", ExecutorKind::Rust, 1);
+    let grant = scheduler
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.set_authority(ExecutorKind::Python, 2).await;
+    for kind in [
+        EventKind::AttemptStarted,
+        EventKind::ExecutionStateChanged(ExecutionState::Running),
+        EventKind::ExecutionStateChanged(ExecutionState::Satisfied),
+        EventKind::CommandAccepted,
+        EventKind::DecisionRecorded,
+    ] {
+        let payload = serde_json::json!({"phase": "mutation_started"});
+        let event = JournalEvent::new(
+            EventId::new(),
+            operation,
+            Some(grant.attempt_id()),
+            2,
+            "forged-lifecycle",
+            payload_digest(&payload).unwrap(),
+            kind,
+            payload,
+            Utc::now(),
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                fixture.store.append_event(1, &event).await,
+                Err(StoreError::SchedulerOwnedEvent)
+            ),
+            "unfenced lifecycle event accepted: {kind:?}"
+        );
+    }
+    let state: (String, i64, String, i64, i64, i64) = sqlx::query_as("SELECT o.state, o.revision, a.state, (SELECT count(*) FROM rust_controller.journal_events), (SELECT count(*) FROM rust_controller.outbox), (SELECT count(*) FROM rust_controller.worker_leases) FROM rust_controller.operations o JOIN rust_controller.attempts a USING(operation_id)").fetch_one(&fixture.pool).await.unwrap();
+    assert_eq!(state, ("leased".into(), 1, "leased".into(), 1, 1, 1));
+    assert_eq!(
+        fixture
+            .store
+            .load_operation(operation)
+            .await
+            .unwrap()
+            .unwrap()
+            .revision(),
+        1
+    );
+    // Observations remain admissible but cannot manufacture a scheduler start.
+    let payload = serde_json::json!({"phase": "mutation_started", "state": "satisfied"});
+    let event = JournalEvent::new(
+        EventId::new(),
+        operation,
+        Some(grant.attempt_id()),
+        2,
+        "external-evidence",
+        payload_digest(&payload).unwrap(),
+        EventKind::EvidenceRecorded,
+        payload,
+        Utc::now(),
+    )
+    .unwrap();
+    fixture.store.append_event(1, &event).await.unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .load_operation(operation)
+            .await
+            .unwrap()
+            .unwrap()
+            .state(),
+        ExecutionState::Leased
+    );
+    fixture.set_authority(ExecutorKind::Rust, 3).await;
+    fixture.expire(operation).await;
+    let current = fixture.scheduler("current-worker", ExecutorKind::Rust, 3);
+    assert_eq!(current.reap_expired().await.unwrap().reset_to_pending(), 1);
+    let grant = current
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    current.start(&grant).await.unwrap();
+    let before = fixture
+        .store
+        .load_operation(operation)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.set_authority(ExecutorKind::Python, 4).await;
+    let payload = serde_json::json!({"state": "satisfied"});
+    let final_event = JournalEvent::new(
+        EventId::new(),
+        operation,
+        Some(grant.attempt_id()),
+        before.revision() + 1,
+        "forged-final",
+        payload_digest(&payload).unwrap(),
+        EventKind::ExecutionStateChanged(ExecutionState::Satisfied),
+        payload,
+        Utc::now(),
+    )
+    .unwrap();
+    assert!(
+        fixture
+            .store
+            .append_event(before.revision(), &final_event)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        fixture
+            .store
+            .load_operation(operation)
+            .await
+            .unwrap()
+            .unwrap(),
+        before
+    );
+    let durable: (String, i64, i64, i64) = sqlx::query_as("SELECT state, (SELECT count(*) FROM rust_controller.worker_leases), (SELECT count(*) FROM rust_controller.journal_events), (SELECT count(*) FROM rust_controller.outbox) FROM rust_controller.attempts WHERE attempt_id = $1").bind(grant.attempt_id().as_uuid()).fetch_one(&fixture.pool).await.unwrap();
+    assert_eq!(
+        durable,
+        ("running".into(), 1, before.revision(), before.revision())
+    );
+}
+
+#[tokio::test]
+async fn ambiguous_legacy_bindings_fail_closed_without_rewriting_history() {
+    let fixture = Fixture::new().await;
+    fixture.set_authority(ExecutorKind::Rust, 1).await;
+    let semantic = SemanticOperationKey::new(
+        WorkflowKind::SyntheticLongSleep,
+        RunId::new(),
+        "legacy-ambiguous",
+        1,
+    )
+    .unwrap();
+    let a = CommandEnvelope::new("legacy-a", semantic.clone(), "a".repeat(64)).unwrap();
+    let op = OperationId::new();
+    fixture.store.append_command(op, &a).await.unwrap();
+    let scheduler = fixture.scheduler("legacy-worker", ExecutorKind::Rust, 1);
+    let grant = scheduler
+        .claim_next_bound(WorkflowKind::SyntheticLongSleep, 2, 1, &"a".repeat(64))
+        .await
+        .unwrap()
+        .unwrap();
+    // Simulate rows admitted by the previous release, including a conflict
+    // committed after claim. No supported current writer can create these.
+    sqlx::query("INSERT INTO rust_controller.commands (idempotency_key, operation_id, payload_digest) VALUES ('legacy-b', $1, $2)").bind(op.as_uuid()).bind("b".repeat(64)).execute(&fixture.pool).await.unwrap();
+    fixture.store.migrate().await.unwrap();
+    assert!(matches!(
+        scheduler
+            .start_bound(&grant, WorkflowKind::SyntheticLongSleep, 1, &"a".repeat(64))
+            .await,
+        Err(SchedulerError::PlanBindingMismatch)
+    ));
+    assert!(matches!(
+        scheduler.start(&grant).await,
+        Err(SchedulerError::PlanBindingMismatch)
+    ));
+    assert!(
+        fixture
+            .store
+            .append_command(OperationId::new(), &a)
+            .await
+            .is_err()
+    );
+    let new_key = CommandEnvelope::new("legacy-c", semantic, "a".repeat(64)).unwrap();
+    assert!(
+        fixture
+            .store
+            .append_command(OperationId::new(), &new_key)
+            .await
+            .is_err()
+    );
+    fixture.expire(op).await;
+    scheduler.reap_expired().await.unwrap();
+    assert!(
+        scheduler
+            .claim_next(WorkflowKind::SyntheticLongSleep, 2)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        scheduler
+            .claim_next_bound(WorkflowKind::SyntheticLongSleep, 2, 1, &"a".repeat(64))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let digests: Vec<String> = sqlx::query_scalar(
+        "SELECT payload_digest FROM rust_controller.commands ORDER BY payload_digest",
+    )
+    .fetch_all(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(digests, vec!["a".repeat(64), "b".repeat(64)]);
+    let started: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rust_controller.journal_events WHERE event_kind='attempt_started'",
+    )
+    .fetch_one(&fixture.pool)
+    .await
+    .unwrap();
+    assert_eq!(started, 0);
+    // An orphan legacy operation must not acquire a new plan implicitly either.
+    sqlx::query("DELETE FROM rust_controller.commands WHERE operation_id=$1")
+        .bind(op.as_uuid())
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.store.append_command(OperationId::new(), &a).await,
+        Err(StoreError::AmbiguousCommandBinding)
+    ));
+    assert!(
+        scheduler
+            .claim_next(WorkflowKind::SyntheticLongSleep, 2)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -246,54 +576,6 @@ impl Fixture {
             CommandAppend::Appended(operation_id)
         );
         operation_id
-    }
-
-    async fn record_mutation_start_and_running(
-        &self,
-        operation_id: OperationId,
-        attempt_id: AttemptId,
-    ) {
-        self.record_mutation_start(operation_id, attempt_id).await;
-        let payload = serde_json::json!({"state": "running"});
-        let running = JournalEvent::new(
-            EventId::new(),
-            operation_id,
-            Some(attempt_id),
-            3,
-            format!("scheduler:running:{attempt_id:?}"),
-            payload_digest(&payload).unwrap(),
-            EventKind::ExecutionStateChanged(ExecutionState::Running),
-            payload,
-            Utc::now(),
-        )
-        .unwrap();
-        self.store.append_event(2, &running).await.unwrap();
-        sqlx::query(
-            "UPDATE rust_controller.attempts SET state = 'running' \
-             WHERE attempt_id = $1 AND operation_id = $2",
-        )
-        .bind(attempt_id.as_uuid())
-        .bind(operation_id.as_uuid())
-        .execute(&self.pool)
-        .await
-        .unwrap();
-    }
-
-    async fn record_mutation_start(&self, operation_id: OperationId, attempt_id: AttemptId) {
-        let payload = serde_json::json!({"phase": "mutation_started"});
-        let started = JournalEvent::new(
-            EventId::new(),
-            operation_id,
-            Some(attempt_id),
-            2,
-            format!("scheduler:mutation-start:{attempt_id:?}"),
-            payload_digest(&payload).unwrap(),
-            EventKind::AttemptStarted,
-            payload,
-            Utc::now(),
-        )
-        .unwrap();
-        self.store.append_event(1, &started).await.unwrap();
     }
 
     async fn expire(&self, operation_id: OperationId) {
@@ -562,9 +844,7 @@ async fn running_cancellation_becomes_cancelling_atomically() {
         .await
         .unwrap()
         .unwrap();
-    fixture
-        .record_mutation_start_and_running(operation_id, grant.attempt_id())
-        .await;
+    scheduler.start(&grant).await.unwrap();
 
     assert_eq!(
         scheduler.request_cancel(operation_id).await.unwrap(),
@@ -601,9 +881,7 @@ async fn expired_running_work_becomes_unknown() {
         .await
         .unwrap()
         .unwrap();
-    fixture
-        .record_mutation_start_and_running(operation_id, grant.attempt_id())
-        .await;
+    scheduler.start(&grant).await.unwrap();
     fixture.expire(operation_id).await;
 
     let summary = scheduler.reap_expired().await.unwrap();
@@ -667,9 +945,11 @@ async fn mutation_start_evidence_blocks_pending_reset_even_if_state_still_says_l
         .await
         .unwrap()
         .unwrap();
-    fixture
-        .record_mutation_start(operation_id, grant.attempt_id())
-        .await;
+    scheduler.start(&grant).await.unwrap();
+    // Simulate an inconsistent legacy snapshot with a durable start but stale
+    // state. Supported lifecycle writes now commit both atomically.
+    sqlx::raw_sql("UPDATE rust_controller.operations SET state = 'leased'; UPDATE rust_controller.attempts SET state = 'leased'; UPDATE rust_controller.operation_projection SET state = 'leased';")
+        .execute(&fixture.pool).await.unwrap();
     fixture.expire(operation_id).await;
 
     let summary = scheduler.reap_expired().await.unwrap();
@@ -912,29 +1192,21 @@ async fn waiting_attempt_can_continue_only_with_its_live_capability() {
         .unwrap();
     scheduler.start(&grant).await.unwrap();
 
-    let payload = serde_json::json!({"state": "waiting"});
-    let waiting = JournalEvent::new(
-        EventId::new(),
-        operation_id,
-        Some(grant.attempt_id()),
-        4,
-        format!("scheduler:waiting:{:?}", grant.attempt_id()),
-        payload_digest(&payload).unwrap(),
-        EventKind::ExecutionStateChanged(ExecutionState::Waiting),
-        payload,
-        Utc::now(),
-    )
-    .unwrap();
-    fixture.store.append_event(3, &waiting).await.unwrap();
-    sqlx::query(
-        "UPDATE rust_controller.attempts SET state = 'waiting' \
-         WHERE attempt_id = $1 AND operation_id = $2",
-    )
-    .bind(grant.attempt_id().as_uuid())
-    .bind(operation_id.as_uuid())
-    .execute(&fixture.pool)
-    .await
-    .unwrap();
+    // Historical waiting state remains readable and fenced. The foundation
+    // currently has no public transition into waiting.
+    sqlx::raw_sql("UPDATE rust_controller.operations SET state = 'waiting'; UPDATE rust_controller.attempts SET state = 'waiting'; UPDATE rust_controller.operation_projection SET state = 'waiting';")
+        .execute(&fixture.pool).await.unwrap();
+
+    assert_eq!(
+        fixture
+            .store
+            .load_operation(operation_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .state(),
+        ExecutionState::Waiting
+    );
 
     assert_eq!(
         scheduler.continuation(&grant).await.unwrap(),

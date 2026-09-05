@@ -554,7 +554,6 @@ pub struct CloneIntent {
     pub(crate) upid: Upid,
     pub(crate) expected_uuid: VmUuid,
     pub(crate) expected_macs: BTreeSet<MacAddress>,
-    pub(crate) as_of: DateTime<Utc>,
     pub(crate) maximum_age: Duration,
 }
 
@@ -566,7 +565,6 @@ impl CloneIntent {
         upid: Upid,
         expected_uuid: VmUuid,
         expected_macs: BTreeSet<MacAddress>,
-        as_of: DateTime<Utc>,
         maximum_age: Duration,
     ) -> Result<Self, PveValidationError> {
         if upid.node() != &node {
@@ -584,7 +582,6 @@ impl CloneIntent {
             upid,
             expected_uuid,
             expected_macs,
-            as_of,
             maximum_age,
         })
     }
