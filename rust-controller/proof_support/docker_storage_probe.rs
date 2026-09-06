@@ -200,9 +200,22 @@ impl DockerStorageAudit {
             }
             let template=r#"[{{.TimeNano}},{{if and (eq .Type "container") (eq .Actor.ID "OWNED_ID")}}{{if eq .Action "create"}}1{{else if eq .Action "destroy"}}2{{else}}0{{end}}{{else if and (eq .Type "volume") (eq (index .Actor.Attributes "container") "OWNED_ID")}}{{if eq .Action "mount"}}3{{else if eq .Action "unmount"}}4{{else}}0{{end}}{{else}}0{{end}}]"#
                 .replace("OWNED_ID",self.identity().1);
-            let raw=text(process::docker(&["--host",&self.owned.endpoint,"events","--since","1970-01-01T00:00:00Z","--until","0s","--format",&template])
+            let until = event_cutoff(chrono::Utc::now());
+            let raw=text(process::docker(&["--host",&self.owned.endpoint,"events","--since","1970-01-01T00:00:00Z","--until",&until,"--format",&template])
                 .await.map_err(|_| AuditError::Process)?)?;
-            events(&raw,created)?;
+            let result = events(&raw, created);
+            eprintln!("owned_storage_history {} {} created_ns={} until={} result={:?}",
+                self.identity().0, self.identity().1, created, until, result);
+            if result.is_err() {
+                for line in raw.lines().take(256) {
+                    match serde_json::from_str::<(i64, u8)>(line) {
+                        Ok((at, class)) if at > 0 && class <= 4 =>
+                            eprintln!("owned_storage_history_row {} [{},{}]", self.identity().1, at, class),
+                        _ => eprintln!("owned_storage_history_invalid_row {}", self.identity().1),
+                    }
+                }
+            }
+            result?;
             eprintln!("owned_storage_removed {} {} bounded_recorded_event_bracket_only",self.identity().0,self.identity().1);
             Ok(())
         }).await.map_err(|_| AuditError::Process)?
@@ -270,6 +283,10 @@ fn memory(text: &str) -> Result<u64, AuditError> {
     }
     Ok(current)
 }
+fn event_cutoff(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+}
+
 fn events(text: &str, created: i64) -> Result<(), AuditError> {
     if text.len() > 8192 || !text.ends_with('\n') || created <= 0 {
         return Err(AuditError::History);
@@ -311,6 +328,13 @@ fn events(text: &str, created: i64) -> Result<(), AuditError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn event_cutoff_preserves_subsecond_query_boundary() {
+        let at = chrono::DateTime::parse_from_rfc3339("2026-09-06T13:42:33.999999999Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(event_cutoff(at), "2026-09-06T13:42:33.999999999Z");
+    }
     #[test]
     fn capacity_requires_actual_fixed_tmpfs_and_reserve() {
         assert_eq!(
