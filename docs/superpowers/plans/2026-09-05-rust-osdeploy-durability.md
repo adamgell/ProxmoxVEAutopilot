@@ -599,8 +599,11 @@ async fn submit_and_capture_once(
     admission: &OsDeploySendAdmission, scheduler: &Scheduler, fake: &NativeFakePve,
     grant: &LeaseGrant, workflow_sha256: &str,
     permit: OsDeployDispatchPermit, capture: OsDeployResponseCapture,
+    whole: tokio::time::Instant,
 ) -> Result<OsDeploySendObservation, OsDeployControllerError>;
 ```
+
+Apply the planning decisions' Task8 private send endpoint clarification: `whole` is the original endpoint pinned before the controller's first await, passed unchanged through private phases. Never start a new24second helper budget. This private-only argument correction changes no public API, source scope or capture authority policy; delayed-before-send/capture tests remain required.
 
 - [ ] Add the dev dependency `osdeploy-adapter = { path = "../osdeploy-adapter" }`, callable closed controller bodies and this test:
 
