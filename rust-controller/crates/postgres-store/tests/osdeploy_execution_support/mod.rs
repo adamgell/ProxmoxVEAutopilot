@@ -18,22 +18,74 @@ pub struct Ready {
     pub request: ProvisioningMutationRequestV1,
 }
 impl Scenario {
-    pub async fn ready(&self, stage: osdeploy_adapter::OsDeployStage) -> Ready {
-        let grant = self.started(stage).await;
-        let snapshot = self
+    pub async fn finish_stage(
+        &self,
+        stage: osdeploy_adapter::OsDeployStage,
+    ) -> controller_domain::ExecutionState {
+        Box::pin(async move {
+        let stage_snapshot = self.db.store.load_osdeploy_operation(self.ids.operation(stage)).await.unwrap();
+        let expected = stage_snapshot.plan().pve().unwrap().expected();
+        let mut grant = if stage == osdeploy_adapter::OsDeployStage::DiskCapacity
+            && expected.effective_capacity_bytes() == expected.template_capacity_bytes()
+        {
+            self.started(stage).await
+        } else {
+            let r = self.ready(stage).await;
+            let scheduler = self.db.scheduler();
+            let (permit, capture) = scheduler.begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request).await.unwrap();
+            let receipt = permit.submit_fake_once(&self.fake).await.unwrap();
+            scheduler.record_osdeploy_pve_receipt(&capture, &receipt).await.unwrap();
+            r.grant
+        };
+        for _ in 0..8 {
+            let state = self.observe_and_decide(&grant).await;
+            if state != controller_domain::ExecutionState::Waiting { return state; }
+            let snapshot = self.db.store.load_osdeploy_operation(grant.operation_id()).await.unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(4),sqlx::query("SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz-clock_timestamp()))))").bind(snapshot.next_check_at().unwrap()).execute(&self.db.pool)).await.unwrap().unwrap();
+            grant = self.db.scheduler().resume_osdeploy_bound(grant.operation_id(),grant.attempt_id(),snapshot.revision(),self.ids.workflow_sha256(),1).await.unwrap().unwrap();
+            self.db.scheduler().start_osdeploy_bound(&grant,self.ids.workflow_sha256()).await.unwrap();
+        }
+        panic!("owned stage remained Waiting after eight observations on its original dispatch");
+        }).await
+    }
+
+    pub async fn observe_and_decide(
+        &self,
+        grant: &postgres_store::LeaseGrant,
+    ) -> controller_domain::ExecutionState {
+        let (event, revision) = self.observation(grant).await;
+        match self
+            .db
+            .scheduler()
+            .decide_osdeploy_pve(grant, revision, event)
+            .await
+            .unwrap()
+        {
+            postgres_store::OsDeployProgress::Decided(state) => state,
+            postgres_store::OsDeployProgress::Waiting => controller_domain::ExecutionState::Waiting,
+            postgres_store::OsDeployProgress::Idle => panic!("actual evaluator unexpectedly idle"),
+        }
+    }
+
+    pub async fn observation(
+        &self,
+        grant: &postgres_store::LeaseGrant,
+    ) -> (controller_domain::EventId, i64) {
+        let snap = self
             .db
             .store
             .load_osdeploy_operation(grant.operation_id())
             .await
             .unwrap();
+        let mode = if snap.dispatch().is_some() {
+            ProvisioningEvaluationModeV1::Outcome
+        } else {
+            ProvisioningEvaluationModeV1::Preflight
+        };
         let context = self
             .db
             .store
-            .load_osdeploy_pve_context(
-                grant.operation_id(),
-                snapshot.revision(),
-                ProvisioningEvaluationModeV1::Preflight,
-            )
+            .load_osdeploy_pve_context(grant.operation_id(), snap.revision(), mode)
             .await
             .unwrap();
         let evidence = self.collect(&context).await;
@@ -43,7 +95,7 @@ impl Scenario {
             .record_osdeploy_pve_evidence(
                 grant.operation_id(),
                 grant.attempt_id(),
-                snapshot.revision(),
+                snap.revision(),
                 &evidence,
             )
             .await
@@ -54,18 +106,60 @@ impl Scenario {
             .load_osdeploy_operation(grant.operation_id())
             .await
             .unwrap();
-        let request = self
-            .db
-            .store
-            .prepare_osdeploy_pve_request(grant.operation_id(), current.revision(), event)
-            .await
-            .unwrap();
-        Ready {
-            grant,
-            event,
-            revision: current.revision(),
-            request,
-        }
+        (event, current.revision())
+    }
+
+    pub async fn ready(&self, stage: osdeploy_adapter::OsDeployStage) -> Ready {
+        Box::pin(async move {
+            let grant = self.started(stage).await;
+            let snapshot = self
+                .db
+                .store
+                .load_osdeploy_operation(grant.operation_id())
+                .await
+                .unwrap();
+            let context = self
+                .db
+                .store
+                .load_osdeploy_pve_context(
+                    grant.operation_id(),
+                    snapshot.revision(),
+                    ProvisioningEvaluationModeV1::Preflight,
+                )
+                .await
+                .unwrap();
+            let evidence = self.collect(&context).await;
+            let event = self
+                .db
+                .store
+                .record_osdeploy_pve_evidence(
+                    grant.operation_id(),
+                    grant.attempt_id(),
+                    snapshot.revision(),
+                    &evidence,
+                )
+                .await
+                .unwrap();
+            let current = self
+                .db
+                .store
+                .load_osdeploy_operation(grant.operation_id())
+                .await
+                .unwrap();
+            let request = self
+                .db
+                .store
+                .prepare_osdeploy_pve_request(grant.operation_id(), current.revision(), event)
+                .await
+                .unwrap();
+            Ready {
+                grant,
+                event,
+                revision: current.revision(),
+                request,
+            }
+        })
+        .await
     }
     pub async fn new(mutation_seconds: u32, grow: bool) -> Self {
         Self::with_freshness(mutation_seconds, grow, mutation_seconds.min(30)).await

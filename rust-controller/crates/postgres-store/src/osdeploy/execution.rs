@@ -111,12 +111,15 @@ impl PgStore {
         &self,
         operation: OperationId,
     ) -> Result<OsDeployOperationSnapshot, OsDeployExecutionError> {
-        let mut tx = self.pool().begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await?;
-        let loaded = load::load_execution(&mut tx, operation).await?;
-        tx.commit().await?;
-        Ok(loaded)
+        Box::pin(async move {
+            let mut tx = self.pool().begin().await?;
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(&mut *tx)
+                .await?;
+            let loaded = Box::pin(load::load_execution(&mut tx, operation)).await?;
+            tx.commit().await?;
+            Ok(loaded)
+        })
+        .await
     }
 }

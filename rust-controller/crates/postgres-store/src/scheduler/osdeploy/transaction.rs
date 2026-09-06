@@ -101,7 +101,7 @@ pub(super) async fn current_grant(
     if snapshot.attempt_id() != Some(original.attempt_id())
         || !matches!(
             snapshot.state(),
-            ExecutionState::Leased | ExecutionState::Running
+            ExecutionState::Leased | ExecutionState::Running | ExecutionState::Waiting
         )
     {
         return Err(Error::FenceLost);

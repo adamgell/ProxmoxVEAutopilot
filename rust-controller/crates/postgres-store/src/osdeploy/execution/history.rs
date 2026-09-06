@@ -308,7 +308,7 @@ pub(super) async fn validate(
         return Ok(());
     }
     enabled(records.snapshot.plan().stage())?;
-    let history = predecessors(tx, records).await?;
+    let history = Box::pin(predecessors(tx, records)).await?;
     validate_physical(records, &history)
 }
 
@@ -323,7 +323,7 @@ pub(crate) async fn load_context(
     if revision < 0 || records.snapshot.revision() != revision {
         return Err(Error::FenceLost);
     }
-    let history = predecessors(tx, &records).await?;
+    let history = Box::pin(predecessors(tx, &records)).await?;
     validate_physical(&records, &history)?;
     context(&records, &history, revision as u64, mode, revision, None)
 }
@@ -336,12 +336,30 @@ pub(crate) async fn preflight(
     revision: i64,
     event: EventId,
 ) -> Result<(ProvisioningEvaluationContextV1, ProvisioningEvidenceV1), Error> {
+    indexed_context(
+        tx,
+        operation,
+        revision,
+        event,
+        ProvisioningEvaluationModeV1::Preflight,
+    )
+    .await
+}
+
+/// Reconstruct a decision from indexed evidence, retaining its original fence.
+pub(crate) async fn indexed_context(
+    tx: &mut Transaction<'_, Postgres>,
+    operation: OperationId,
+    revision: i64,
+    event: EventId,
+    mode: ProvisioningEvaluationModeV1,
+) -> Result<(ProvisioningEvaluationContextV1, ProvisioningEvidenceV1), Error> {
     let records = Box::pin(load::load_records(tx, operation)).await?;
     enabled(records.snapshot.plan().stage())?;
     if revision < 0 || records.snapshot.revision() != revision {
         return Err(Error::FenceLost);
     }
-    let history = predecessors(tx, &records).await?;
+    let history = Box::pin(predecessors(tx, &records)).await?;
     validate_physical(&records, &history)?;
     let e = records
         .evidence
@@ -351,7 +369,7 @@ pub(crate) async fn preflight(
         &records,
         &history,
         e.value.facts().binding.evidence_fence(),
-        ProvisioningEvaluationModeV1::Preflight,
+        mode,
         revision,
         None,
     )?;

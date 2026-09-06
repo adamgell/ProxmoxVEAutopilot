@@ -6,6 +6,7 @@ use crate::osdeploy::execution::{load, wire};
 use osdeploy_adapter::OsDeployStage;
 use sqlx::Row;
 
+mod decision;
 mod lifecycle;
 mod pve;
 mod receipt;

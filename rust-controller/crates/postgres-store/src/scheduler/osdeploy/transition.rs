@@ -27,6 +27,7 @@ pub(super) struct ExceptionalTransition {
 pub(super) enum OsDeployTransitionProof {
     InitialLease(LifecycleTransition),
     FirstStart(LifecycleTransition),
+    ResumedStart(LifecycleTransition),
     UnactivatedScopeExpired(ExceptionalTransition),
     ActivatedScopeExpired(ExceptionalTransition),
     ExpiredUnstartedSameAttempt(ExceptionalTransition),
@@ -426,7 +427,7 @@ impl OsDeployTransitionProof {
         tx: &mut Transaction<'_, Postgres>,
         event: EventId,
     ) -> Result<Self, Error> {
-        let (proof, value) = lifecycle_facts(tx, event).await?;
+        let (proof, value) = lifecycle_facts(tx, event, false).await?;
         let wire::Detail::LeaseAcquired(a) = value.detail else {
             return Err(Error::Validation);
         };
@@ -464,7 +465,7 @@ impl OsDeployTransitionProof {
         tx: &mut Transaction<'_, Postgres>,
         event: EventId,
     ) -> Result<Self, Error> {
-        let (proof, value) = lifecycle_facts(tx, event).await?;
+        let (proof, value) = lifecycle_facts(tx, event, false).await?;
         let wire::Detail::EvaluationStarted(a) = value.detail else {
             return Err(Error::Validation);
         };
@@ -498,15 +499,54 @@ impl OsDeployTransitionProof {
     }
 }
 
+impl OsDeployTransitionProof {
+    pub(super) async fn resumed_start(
+        tx: &mut Transaction<'_, Postgres>,
+        event: EventId,
+    ) -> Result<Self, Error> {
+        let (proof, value) = lifecycle_facts(tx, event, true).await?;
+        let wire::Detail::EvaluationStarted(started) = value.detail else {
+            return Err(Error::Validation);
+        };
+        let epoch = sqlx::query("SELECT purpose FROM rust_controller.osdeploy_lease_epochs WHERE acquisition_event_id=$1").bind(started.lease_acquisition_event_id.as_uuid()).fetch_one(&mut **tx).await?;
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.journal_events WHERE operation_id=$1 AND attempt_id=$2 AND event_kind='attempt_started' AND aggregate_revision<$3")
+            .bind(proof.operation.as_uuid()).bind(proof.attempt.as_uuid()).bind(value.before_revision).fetch_one(&mut **tx).await?;
+        let dispatched: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.osdeploy_pve_dispatches WHERE operation_id=$1)").bind(proof.operation.as_uuid()).fetch_one(&mut **tx).await?;
+        if proof.current != ExecutionState::Waiting
+            || count != 1
+            || epoch.try_get::<String, _>("purpose")? != "resume_evaluation"
+            || started.activity
+                != if dispatched {
+                    wire::Activity::OutcomeRead
+                } else {
+                    wire::Activity::PreflightRead
+                }
+        {
+            return Err(Error::Validation);
+        }
+        validate_transition(
+            proof.current,
+            ExecutionState::Running,
+            TransitionPolicy::Domain,
+        )
+        .map_err(|_| Error::Validation)?;
+        Ok(Self::ResumedStart(LifecycleTransition {
+            target: ExecutionState::Running,
+            ..proof
+        }))
+    }
+}
+
 async fn lifecycle_facts(
     tx: &mut Transaction<'_, Postgres>,
     event: EventId,
+    resume: bool,
 ) -> Result<(LifecycleTransition, wire::DecisionEnvelope), Error> {
     // Called only after authority/run/all-operation/attempt/lease locks. The
     // constructor checks the actual persisted decision, CAS, binding and epoch;
     // it accepts no snapshot, arbitrary target or caller-provided payload.
-    let row = sqlx::query("SELECT d.payload_canonical_json,d.decision_revision,o.state,o.revision,b.attempt_id,b.deadline_at,l.lease_expires_at,l.heartbeat_at,e.acquisition_event_id FROM rust_controller.osdeploy_decisions d JOIN rust_controller.operations o USING(operation_id) JOIN rust_controller.osdeploy_attempt_bindings b USING(operation_id) JOIN rust_controller.worker_leases l USING(operation_id) JOIN rust_controller.osdeploy_lease_epochs e ON e.operation_id=l.operation_id AND e.lease_token_sha256=encode(sha256(convert_to(l.lease_token,'UTF8')),'hex') WHERE d.event_id=$1 AND l.attempt_id=b.attempt_id AND e.attempt_id=b.attempt_id AND e.generation=d.generation AND e.worker_id=l.worker_id AND l.generation=e.generation AND l.executor_kind='rust' AND NOT EXISTS(SELECT 1 FROM rust_controller.osdeploy_run_cancellations c WHERE c.run_id=o.run_id) AND NOT EXISTS(SELECT 1 FROM rust_controller.osdeploy_pve_dispatches x WHERE x.operation_id=o.operation_id)")
-        .bind(event.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(Error::Validation)?;
+    let row = sqlx::query("SELECT d.payload_canonical_json,d.decision_revision,o.state,o.revision,b.attempt_id,b.deadline_at,l.lease_expires_at,l.heartbeat_at,e.acquisition_event_id FROM rust_controller.osdeploy_decisions d JOIN rust_controller.operations o USING(operation_id) JOIN rust_controller.osdeploy_attempt_bindings b USING(operation_id) JOIN rust_controller.worker_leases l USING(operation_id) JOIN rust_controller.osdeploy_lease_epochs e ON e.operation_id=l.operation_id AND e.lease_token_sha256=encode(sha256(convert_to(l.lease_token,'UTF8')),'hex') WHERE d.event_id=$1 AND l.attempt_id=b.attempt_id AND e.attempt_id=b.attempt_id AND e.generation=d.generation AND e.worker_id=l.worker_id AND l.generation=e.generation AND l.executor_kind='rust' AND NOT EXISTS(SELECT 1 FROM rust_controller.osdeploy_run_cancellations c WHERE c.run_id=o.run_id) AND ($2 OR NOT EXISTS(SELECT 1 FROM rust_controller.osdeploy_pve_dispatches x WHERE x.operation_id=o.operation_id))")
+        .bind(event.as_uuid()).bind(resume).fetch_optional(&mut **tx).await?.ok_or(Error::Validation)?;
     let d = wire::DecisionEnvelope::decode(&row.try_get::<String, _>("payload_canonical_json")?)?;
     let attempt = d.attempt_id.ok_or(Error::Validation)?;
     let epoch: EventId = load::id(row.try_get("acquisition_event_id")?)?;
@@ -544,7 +584,9 @@ pub(super) async fn append_osdeploy_transition(
     proof: OsDeployTransitionProof,
 ) -> Result<i64, Error> {
     let p = match proof {
-        OsDeployTransitionProof::InitialLease(p) | OsDeployTransitionProof::FirstStart(p) => p,
+        OsDeployTransitionProof::InitialLease(p)
+        | OsDeployTransitionProof::FirstStart(p)
+        | OsDeployTransitionProof::ResumedStart(p) => p,
         OsDeployTransitionProof::UnactivatedScopeExpired(p)
         | OsDeployTransitionProof::ActivatedScopeExpired(p)
         | OsDeployTransitionProof::ExpiredUnstartedSameAttempt(p)
