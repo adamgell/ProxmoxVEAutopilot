@@ -4,6 +4,43 @@
 )]
 mod osdeploy_support;
 
+#[tokio::test]
+async fn activation_creates_one_attempt_with_policy_deadline() {
+    let f = osdeploy_support::Fixture::new().await;
+    let p = osdeploy_support::plan();
+    let ids = f
+        .store
+        .enqueue_osdeploy(controller_domain::RunId::new(), &p)
+        .await
+        .unwrap();
+    let op = ids.operation(osdeploy_adapter::OsDeployStage::Clone);
+    let g = f
+        .scheduler()
+        .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(g.attempt_number(), 1);
+    assert_eq!((*g.deadline_at() - *g.acquired_at()).num_seconds(), 300);
+    let s = f.store.load_osdeploy_operation(op).await.unwrap();
+    assert_eq!(s.attempt_id(), Some(g.attempt_id()));
+    assert_eq!(s.state(), controller_domain::ExecutionState::Leased);
+    assert!(
+        f.other_scheduler()
+            .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    f.scheduler()
+        .start_osdeploy_bound(&g, ids.workflow_sha256())
+        .await
+        .unwrap();
+    let starts: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='attempt_started'")
+        .bind(op.as_uuid()).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(starts, 1);
+}
+
 use osdeploy_support::{Fixture, plan};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, postgres::PgPoolOptions};
@@ -21,6 +58,591 @@ const TABLES: [&str; 9] = [
     "osdeploy_run_cancellations",
     "osdeploy_schedule_projection",
 ];
+
+#[tokio::test]
+async fn lifecycle_same_operation_race_and_start_replay_are_atomic() {
+    let f = Fixture::new().await;
+    let ids = f
+        .store
+        .enqueue_osdeploy(controller_domain::RunId::new(), &plan())
+        .await
+        .unwrap();
+    let op = ids.operation(osdeploy_adapter::OsDeployStage::Clone);
+    let first = f.scheduler();
+    let second = f.other_scheduler();
+    let (a, b) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            first.claim_osdeploy_bound(op, ids.workflow_sha256(), 1),
+            second.claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+        )
+    })
+    .await
+    .unwrap();
+    let (g, scheduler) = match (a.unwrap(), b.unwrap()) {
+        (Some(g), None) => (g, first),
+        (None, Some(g)) => (g, second),
+        _ => panic!("one claimant must win"),
+    };
+    let other_pool_same_owner = postgres_store::Scheduler::new(
+        f.other.clone(),
+        postgres_store::ExecutorKind::Rust,
+        1,
+        g.worker_id(),
+    )
+    .unwrap();
+    let (a, b) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            scheduler.start_osdeploy_bound(&g, ids.workflow_sha256()),
+            other_pool_same_owner.start_osdeploy_bound(&g, ids.workflow_sha256())
+        )
+    })
+    .await
+    .unwrap();
+    assert_eq!(a.unwrap(), controller_domain::ExecutionState::Running);
+    assert_eq!(b.unwrap(), controller_domain::ExecutionState::Running);
+    let before = f.snapshot().await;
+    scheduler
+        .start_osdeploy_bound(&g, ids.workflow_sha256())
+        .await
+        .unwrap();
+    assert_eq!(f.snapshot().await, before);
+    assert_eq!(before["attempts"].as_array().unwrap().len(), 1);
+    assert_eq!(before["osdeploy_lease_epochs"].as_array().unwrap().len(), 1);
+    let chain: Vec<(i64,String,chrono::DateTime<chrono::Utc>,Uuid)> = sqlx::query_as("SELECT aggregate_revision,event_kind,observed_at,attempt_id FROM rust_controller.journal_events WHERE operation_id=$1 ORDER BY aggregate_revision")
+        .bind(op.as_uuid()).fetch_all(&f.pool).await.unwrap();
+    assert_eq!(
+        chain
+            .iter()
+            .map(|r| (r.0, r.1.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (1, "decision_recorded"),
+            (2, "decision_recorded"),
+            (3, "execution_state_changed"),
+            (4, "attempt_started"),
+            (5, "decision_recorded"),
+            (6, "execution_state_changed")
+        ]
+    );
+    assert_eq!(chain[3].2, chain[4].2);
+    assert_eq!(chain[4].2, chain[5].2);
+    assert!(chain.iter().all(|r| r.3 == g.attempt_id().as_uuid()));
+    assert_eq!(
+        f.store
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .revision(),
+        6
+    );
+    let secret_in_history: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.journal_events WHERE operation_id=$1 AND payload::text LIKE '%' || $2 || '%') OR EXISTS(SELECT 1 FROM rust_controller.outbox WHERE operation_id=$1 AND payload::text LIKE '%' || $2 || '%')")
+        .bind(op.as_uuid()).bind(g.lease_token().to_string()).fetch_one(&f.pool).await.unwrap();
+    assert!(!secret_in_history);
+}
+
+fn other_lifecycle_plan() -> osdeploy_adapter::OsDeployPlanV1 {
+    osdeploy_support::altered(|v| {
+        v["vm"]["target_vmid"] = json!(102);
+        v["vm"]["uuid"] = json!("33333333-3333-4333-8333-333333333302");
+        v["vm"]["mac"] = json!("02:00:00:00:01:02");
+        v["names"]["requested_name"] = json!("Another");
+        v["names"]["windows_name"] = json!("Another");
+        v["names"]["expected_agent_id"] = json!("agent-another");
+    })
+}
+
+#[tokio::test]
+async fn lifecycle_last_cap_race_counts_old_generation_leases() {
+    let f = Fixture::new().await;
+    let first = f
+        .store
+        .enqueue_osdeploy(controller_domain::RunId::new(), &plan())
+        .await
+        .unwrap();
+    let second = f
+        .store
+        .enqueue_osdeploy(controller_domain::RunId::new(), &other_lifecycle_plan())
+        .await
+        .unwrap();
+    let a = f.scheduler();
+    let b = f.other_scheduler();
+    let (left, right) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            a.claim_osdeploy_bound(
+                first.operation(osdeploy_adapter::OsDeployStage::Clone),
+                first.workflow_sha256(),
+                1
+            ),
+            b.claim_osdeploy_bound(
+                second.operation(osdeploy_adapter::OsDeployStage::Clone),
+                second.workflow_sha256(),
+                1
+            )
+        )
+    })
+    .await
+    .unwrap();
+    let (loser, winner_grant) = match (left.unwrap(), right.unwrap()) {
+        (Some(g), None) => (second, g),
+        (None, Some(g)) => (first, g),
+        _ => panic!("last cap slot must have one owner"),
+    };
+    sqlx::query("UPDATE rust_controller.orchestration_authority SET generation=2")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let current = postgres_store::Scheduler::new(
+        f.other.clone(),
+        postgres_store::ExecutorKind::Rust,
+        2,
+        "generation-two",
+    )
+    .unwrap();
+    let before = f.snapshot().await;
+    assert!(
+        current
+            .claim_osdeploy_bound(
+                loser.operation(osdeploy_adapter::OsDeployStage::Clone),
+                loser.workflow_sha256(),
+                1
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(f.snapshot().await, before);
+    assert_eq!(winner_grant.generation(), 1);
+}
+
+#[tokio::test]
+async fn lifecycle_heartbeat_refreshes_epoch_without_extending_scope() {
+    let f = Fixture::new().await;
+    let p = osdeploy_support::altered(|v| {
+        v["policy"]["mutation_seconds"] = json!(12);
+        v["policy"]["evidence_freshness_seconds"] = json!(1);
+    });
+    let ids = f
+        .store
+        .enqueue_osdeploy(controller_domain::RunId::new(), &p)
+        .await
+        .unwrap();
+    let op = ids.operation(osdeploy_adapter::OsDeployStage::Clone);
+    let scheduler = f.scheduler();
+    let g = scheduler
+        .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    scheduler
+        .start_osdeploy_bound(&g, ids.workflow_sha256())
+        .await
+        .unwrap();
+    assert_eq!(g.lease_expires_at(), g.deadline_at());
+    let before = f.snapshot().await;
+    let early = scheduler
+        .heartbeat_osdeploy_bound(&g, ids.workflow_sha256())
+        .await
+        .unwrap();
+    assert_eq!(early.revision(), 6);
+    assert_eq!(f.snapshot().await, before);
+    tokio::time::timeout(Duration::from_secs(13),sqlx::query("SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz + interval '10.05 seconds' - clock_timestamp()))))")
+        .bind(g.acquired_at()).execute(&f.pool)).await.unwrap().unwrap();
+    let refreshed = scheduler
+        .heartbeat_osdeploy_bound(&g, ids.workflow_sha256())
+        .await
+        .unwrap();
+    assert_eq!(refreshed.revision(), 7);
+    assert_eq!(refreshed.grant().deadline_at(), g.deadline_at());
+    assert_eq!(refreshed.grant().acquired_at(), g.acquired_at());
+    assert_eq!(refreshed.grant().attempt_id(), g.attempt_id());
+    assert_eq!(refreshed.grant().lease_token(), g.lease_token());
+    assert_eq!(refreshed.grant().lease_expires_at(), g.deadline_at());
+    assert!(refreshed.grant().heartbeat_at() > g.heartbeat_at());
+    assert!(refreshed.remaining() < Duration::from_secs(2));
+    let before = f.snapshot().await;
+    let observed = scheduler
+        .continuation_osdeploy_bound(&g, ids.workflow_sha256())
+        .await
+        .unwrap();
+    assert_eq!(observed.grant(), refreshed.grant());
+    assert!(observed.checked_at() >= refreshed.checked_at());
+    assert_eq!(f.snapshot().await, before);
+    assert_eq!(
+        f.store
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .revision(),
+        7
+    );
+}
+
+#[tokio::test]
+async fn lifecycle_heartbeat_extends_only_the_existing_short_lease() {
+    let f = Fixture::new().await;
+    let ids = f
+        .store
+        .enqueue_osdeploy(controller_domain::RunId::new(), &plan())
+        .await
+        .unwrap();
+    let op = ids.operation(osdeploy_adapter::OsDeployStage::Clone);
+    let scheduler = f.scheduler();
+    let g = scheduler
+        .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(13),sqlx::query("SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz + interval '10.05 seconds' - clock_timestamp()))))")
+        .bind(g.acquired_at()).execute(&f.pool)).await.unwrap().unwrap();
+    let refreshed = scheduler
+        .heartbeat_osdeploy_bound(&g, ids.workflow_sha256())
+        .await
+        .unwrap();
+    assert_eq!(refreshed.revision(), 4);
+    assert!(*refreshed.grant().lease_expires_at() > *g.lease_expires_at());
+    assert_eq!(
+        (*refreshed.grant().lease_expires_at() - *refreshed.grant().heartbeat_at()).num_seconds(),
+        30
+    );
+    assert_eq!(refreshed.grant().deadline_at(), g.deadline_at());
+    assert_eq!(refreshed.grant().attempt_id(), g.attempt_id());
+    assert_eq!(refreshed.grant().acquired_at(), g.acquired_at());
+    let before = f.snapshot().await;
+    let observed = scheduler
+        .continuation_osdeploy_bound(&g, ids.workflow_sha256())
+        .await
+        .unwrap();
+    assert_eq!(observed.grant(), refreshed.grant());
+    assert!(observed.checked_at() >= refreshed.checked_at());
+    assert!(
+        f.snapshot().await == before,
+        "continuation changed durable state"
+    );
+    scheduler
+        .start_osdeploy_bound(&g, ids.workflow_sha256())
+        .await
+        .unwrap();
+    assert_eq!(
+        f.store
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .revision(),
+        7
+    );
+}
+
+#[tokio::test]
+async fn lifecycle_fences_workers_hashes_generation_and_disabled_stages_without_writes() {
+    use postgres_store::OsDeployExecutionError as E;
+    let f = Fixture::new().await;
+    let ids = f
+        .store
+        .enqueue_osdeploy(controller_domain::RunId::new(), &plan())
+        .await
+        .unwrap();
+    let op = ids.operation(osdeploy_adapter::OsDeployStage::Clone);
+    let before = f.snapshot().await;
+    assert!(matches!(
+        f.scheduler()
+            .claim_osdeploy_bound(op, ids.workflow_sha256(), 0)
+            .await,
+        Err(E::Validation)
+    ));
+    assert!(matches!(
+        f.scheduler().claim_osdeploy_bound(op, "bad", 1).await,
+        Err(E::Validation)
+    ));
+    assert!(matches!(
+        f.scheduler()
+            .claim_osdeploy_bound(op, &"a".repeat(64), 1)
+            .await,
+        Err(E::FenceLost)
+    ));
+    for stage in osdeploy_adapter::OsDeployStage::ALL.into_iter().skip(3) {
+        assert!(
+            matches!(
+                f.scheduler()
+                    .claim_osdeploy_bound(ids.operation(stage), ids.workflow_sha256(), 1)
+                    .await,
+                Err(E::CapabilityUnavailable)
+            ),
+            "{stage:?}"
+        );
+    }
+    for stage in [
+        osdeploy_adapter::OsDeployStage::DiskCapacity,
+        osdeploy_adapter::OsDeployStage::ConfigurePe,
+    ] {
+        assert!(
+            f.scheduler()
+                .claim_osdeploy_bound(ids.operation(stage), ids.workflow_sha256(), 1)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert_eq!(f.snapshot().await, before);
+    let g = f
+        .scheduler()
+        .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    let before = f.snapshot().await;
+    assert!(matches!(
+        f.other_scheduler()
+            .start_osdeploy_bound(&g, ids.workflow_sha256())
+            .await,
+        Err(E::FenceLost)
+    ));
+    assert!(matches!(
+        f.other_scheduler()
+            .heartbeat_osdeploy_bound(&g, ids.workflow_sha256())
+            .await,
+        Err(E::FenceLost)
+    ));
+    assert!(matches!(
+        f.other_scheduler()
+            .continuation_osdeploy_bound(&g, ids.workflow_sha256())
+            .await,
+        Err(E::FenceLost)
+    ));
+    assert!(matches!(
+        f.scheduler()
+            .start_osdeploy_bound(&g, &"a".repeat(64))
+            .await,
+        Err(E::FenceLost)
+    ));
+    assert_eq!(f.snapshot().await, before);
+    sqlx::query("UPDATE rust_controller.orchestration_authority SET generation=2")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let before = f.snapshot().await;
+    assert!(matches!(
+        f.scheduler().osdeploy_authority_snapshot().await,
+        Err(E::FenceLost)
+    ));
+    assert!(matches!(
+        f.scheduler()
+            .start_osdeploy_bound(&g, ids.workflow_sha256())
+            .await,
+        Err(E::FenceLost)
+    ));
+    assert!(matches!(
+        f.scheduler()
+            .heartbeat_osdeploy_bound(&g, ids.workflow_sha256())
+            .await,
+        Err(E::FenceLost)
+    ));
+    assert!(matches!(
+        f.scheduler()
+            .continuation_osdeploy_bound(&g, ids.workflow_sha256())
+            .await,
+        Err(E::FenceLost)
+    ));
+    assert_eq!(f.snapshot().await, before);
+}
+
+#[tokio::test]
+async fn lifecycle_activation_rolls_back_at_every_write_and_commit_boundary() {
+    let f = Fixture::new().await;
+    let ids = f
+        .store
+        .enqueue_osdeploy(controller_domain::RunId::new(), &plan())
+        .await
+        .unwrap();
+    let op = ids.operation(osdeploy_adapter::OsDeployStage::Clone);
+    sqlx::raw_sql("CREATE SEQUENCE lifecycle_write_number; CREATE TABLE lifecycle_fault(target bigint); INSERT INTO lifecycle_fault VALUES(0); CREATE FUNCTION lifecycle_fail_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF nextval('lifecycle_write_number')=(SELECT target FROM lifecycle_fault) THEN RAISE EXCEPTION 'owned_lifecycle_fault'; END IF; RETURN NEW; END $$;").execute(&f.pool).await.unwrap();
+    for table in [
+        "attempts",
+        "journal_events",
+        "outbox",
+        "osdeploy_decisions",
+        "operations",
+        "operation_projection",
+        "osdeploy_deadlines",
+        "osdeploy_attempt_bindings",
+        "osdeploy_lease_epochs",
+        "worker_leases",
+    ] {
+        sqlx::query(&format!("CREATE TRIGGER lifecycle_write_fault BEFORE INSERT OR UPDATE ON rust_controller.{table} FOR EACH ROW EXECUTE FUNCTION lifecycle_fail_write()"))
+            .execute(&f.pool).await.unwrap();
+    }
+    let before = f.snapshot().await;
+    // Projection UPSERT fires its INSERT and UPDATE row triggers, so the two
+    // decision projections and final state projection each have two boundaries.
+    for boundary in 1..=22_i64 {
+        sqlx::query("UPDATE lifecycle_fault SET target=$1")
+            .bind(boundary)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        sqlx::query("SELECT setval('lifecycle_write_number',1,false)")
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                f.scheduler()
+                    .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+                    .await,
+                Err(postgres_store::OsDeployExecutionError::StorageUnavailable)
+            ),
+            "write boundary {boundary}"
+        );
+        assert_eq!(f.snapshot().await, before, "write boundary {boundary}");
+    }
+    sqlx::query("UPDATE lifecycle_fault SET target=0")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql("CREATE FUNCTION lifecycle_fail_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'owned_lifecycle_commit_fault'; END $$; CREATE CONSTRAINT TRIGGER lifecycle_commit_fault AFTER INSERT ON rust_controller.worker_leases DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION lifecycle_fail_commit();").execute(&f.pool).await.unwrap();
+    assert!(matches!(
+        f.scheduler()
+            .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+            .await,
+        Err(postgres_store::OsDeployExecutionError::StorageUnavailable)
+    ));
+    assert_eq!(f.snapshot().await, before);
+    sqlx::query("DROP TRIGGER lifecycle_commit_fault ON rust_controller.worker_leases")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert!(
+        f.scheduler()
+            .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    f.store.load_osdeploy_operation(op).await.unwrap();
+}
+
+#[tokio::test]
+async fn lifecycle_final_clock_check_rolls_back_expired_activation_and_start() {
+    let f = Fixture::new().await;
+    let p = osdeploy_support::altered(|v| {
+        v["policy"]["mutation_seconds"] = json!(1);
+        v["policy"]["evidence_freshness_seconds"] = json!(1);
+    });
+    let ids = f
+        .store
+        .enqueue_osdeploy(controller_domain::RunId::new(), &p)
+        .await
+        .unwrap();
+    let op = ids.operation(osdeploy_adapter::OsDeployStage::Clone);
+    sqlx::raw_sql("CREATE FUNCTION lifecycle_delay_state() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_kind='execution_state_changed' THEN PERFORM pg_sleep(1.05); END IF; RETURN NEW; END $$; CREATE TRIGGER lifecycle_delay BEFORE INSERT ON rust_controller.journal_events FOR EACH ROW EXECUTE FUNCTION lifecycle_delay_state();").execute(&f.pool).await.unwrap();
+    let before = f.snapshot().await;
+    assert!(matches!(
+        f.scheduler()
+            .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+            .await,
+        Err(postgres_store::OsDeployExecutionError::FenceLost)
+    ));
+    assert_eq!(f.snapshot().await, before);
+    sqlx::query("ALTER TABLE rust_controller.journal_events DISABLE TRIGGER lifecycle_delay")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let g = f
+        .scheduler()
+        .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query("ALTER TABLE rust_controller.journal_events ENABLE TRIGGER lifecycle_delay")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let before = f.snapshot().await;
+    assert!(matches!(
+        f.scheduler()
+            .start_osdeploy_bound(&g, ids.workflow_sha256())
+            .await,
+        Err(postgres_store::OsDeployExecutionError::FenceLost)
+    ));
+    assert_eq!(f.snapshot().await, before);
+    assert!(matches!(
+        f.scheduler()
+            .heartbeat_osdeploy_bound(&g, ids.workflow_sha256())
+            .await,
+        Err(postgres_store::OsDeployExecutionError::FenceLost)
+    ));
+    assert!(matches!(
+        f.scheduler()
+            .continuation_osdeploy_bound(&g, ids.workflow_sha256())
+            .await,
+        Err(postgres_store::OsDeployExecutionError::FenceLost)
+    ));
+    assert_eq!(f.snapshot().await, before);
+}
+
+#[tokio::test]
+async fn lifecycle_historical_generic_osdeploy_cannot_be_adopted() {
+    use controller_domain::{
+        CommandEnvelope, OperationId, RunId, SemanticOperationKey, WorkflowKind,
+    };
+    use postgres_store::OsDeployExecutionError as E;
+    let f = Fixture::new().await;
+    let op = OperationId::new();
+    let command = CommandEnvelope::new(
+        "historical-lifecycle",
+        SemanticOperationKey::new(
+            WorkflowKind::SyntheticLongSleep,
+            RunId::new(),
+            "historical",
+            1,
+        )
+        .unwrap(),
+        "a".repeat(64),
+    )
+    .unwrap();
+    f.store.append_command(op, &command).await.unwrap();
+    let g = f
+        .scheduler()
+        .claim_next(WorkflowKind::SyntheticLongSleep, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        "UPDATE rust_controller.operations SET workflow_kind='os_deploy' WHERE operation_id=$1",
+    )
+    .bind(op.as_uuid())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let before = f.snapshot().await;
+    assert!(matches!(
+        f.scheduler()
+            .claim_osdeploy_bound(op, &"a".repeat(64), 1)
+            .await,
+        Err(E::Validation)
+    ));
+    assert!(matches!(
+        f.scheduler()
+            .start_osdeploy_bound(&g, &"a".repeat(64))
+            .await,
+        Err(E::Validation)
+    ));
+    assert!(matches!(
+        f.scheduler()
+            .heartbeat_osdeploy_bound(&g, &"a".repeat(64))
+            .await,
+        Err(E::Validation)
+    ));
+    assert!(matches!(
+        f.scheduler()
+            .continuation_osdeploy_bound(&g, &"a".repeat(64))
+            .await,
+        Err(E::Validation)
+    ));
+    assert!(
+        f.snapshot().await == before,
+        "historical execution rejection wrote data"
+    );
+}
 
 #[tokio::test]
 async fn unactivated_reload_rejects_an_unbound_attempt() {

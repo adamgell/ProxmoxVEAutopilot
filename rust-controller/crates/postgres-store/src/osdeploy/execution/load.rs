@@ -15,6 +15,14 @@ use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
+/// Reuse declaration validation under the scheduler's existing run lock.
+pub(crate) async fn load_registration(
+    tx: &mut Transaction<'_, Postgres>,
+    run: controller_domain::RunId,
+) -> Result<OsDeployRegistrationV1, Error> {
+    Ok(records::load(tx, run).await?)
+}
+
 pub(crate) async fn load_execution(
     tx: &mut Transaction<'_, Postgres>,
     operation: OperationId,

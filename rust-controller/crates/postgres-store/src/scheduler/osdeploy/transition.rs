@@ -1,0 +1,1011 @@
+//! Private proof boundary. No public caller supplies a target state.
+use super::*;
+
+pub(super) struct LifecycleTransition {
+    decision: EventId,
+    operation: OperationId,
+    attempt: AttemptId,
+    revision: i64,
+    current: ExecutionState,
+    target: ExecutionState,
+    at: DateTime<Utc>,
+}
+
+pub(super) struct ExceptionalTransition {
+    event: EventId,
+    value: wire::DecisionEnvelope,
+    current: ExecutionState,
+    semantic_key: String,
+}
+
+// Reconciliation alone remains uninhabited until actual physical historical
+// replay (Task 4) and the original-dispatch reconciliation consumer (Task 7).
+#[allow(
+    dead_code,
+    reason = "private recovery constructors land before their Task 7 consumers"
+)]
+pub(super) enum OsDeployTransitionProof {
+    InitialLease(LifecycleTransition),
+    FirstStart(LifecycleTransition),
+    UnactivatedScopeExpired(ExceptionalTransition),
+    ActivatedScopeExpired(ExceptionalTransition),
+    ExpiredUnstartedSameAttempt(ExceptionalTransition),
+    ExpiredReadOnlyEvaluation(ExceptionalTransition),
+    CancelledUnexposed(ExceptionalTransition),
+    CancelledExposed(ExceptionalTransition),
+    OriginalDispatchReconciliation(std::convert::Infallible),
+}
+
+struct ExceptionalFacts {
+    snapshot: OsDeployOperationSnapshot,
+    generation: i64,
+    at: DateTime<Utc>,
+}
+
+impl ExceptionalFacts {
+    async fn locked(
+        scheduler: &Scheduler,
+        tx: &mut Transaction<'_, Postgres>,
+        operation: OperationId,
+        revision: i64,
+    ) -> Result<Self, Error> {
+        authority(scheduler, tx).await?;
+        let snapshot = locked_execution(tx, operation).await?;
+        if snapshot.revision() != revision {
+            return Err(Error::FenceLost);
+        }
+        Ok(Self {
+            snapshot,
+            generation: scheduler.generation,
+            at: now(tx).await?,
+        })
+    }
+
+    fn decision(
+        self,
+        detail: wire::Detail,
+        resolution: Option<pve_port::NativeDecision>,
+        semantic_key: String,
+    ) -> Result<ExceptionalTransition, Error> {
+        let value = wire::DecisionEnvelope {
+            contract_version: 1,
+            run_id: self.snapshot.run_id(),
+            operation_id: self.snapshot.operation_id(),
+            workflow_sha256: self.snapshot.plan().workflow_sha256().to_owned(),
+            stage_sha256: self.snapshot.plan().fingerprint()?,
+            attempt_id: self.snapshot.attempt_id(),
+            generation: self.generation,
+            before_revision: self.snapshot.revision(),
+            evaluated_at: self.at,
+            resolution,
+            detail,
+        };
+        value.validate()?;
+        Ok(ExceptionalTransition {
+            event: EventId::new(),
+            value,
+            current: self.snapshot.state(),
+            semantic_key,
+        })
+    }
+
+    async fn scope(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<(wire::Scope, OperationId, EventId, DateTime<Utc>), Error> {
+        let scope = load::stage_scope(self.snapshot.plan().stage());
+        let scope_name = serde_json::to_value(scope)?
+            .as_str()
+            .ok_or(Error::Validation)?
+            .to_owned();
+        let row = sqlx::query("SELECT anchor_operation_id,anchor_event_id,deadline_at FROM rust_controller.osdeploy_deadlines WHERE run_id=$1 AND scope_key=$2")
+            .bind(self.snapshot.run_id().as_uuid()).bind(scope_name).fetch_optional(&mut **tx).await?.ok_or(Error::Validation)?;
+        let deadline = row.try_get("deadline_at")?;
+        if self.snapshot.deadline_at().is_some_and(|v| v != deadline) {
+            return Err(Error::Validation);
+        }
+        Ok((
+            scope,
+            load::id(row.try_get("anchor_operation_id")?)?,
+            load::id(row.try_get("anchor_event_id")?)?,
+            deadline,
+        ))
+    }
+
+    async fn expired_epoch(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<(EventId, wire::Purpose), Error> {
+        let row = sqlx::query("SELECT e.acquisition_event_id,e.purpose,l.lease_expires_at FROM rust_controller.worker_leases l JOIN rust_controller.osdeploy_lease_epochs e ON e.operation_id=l.operation_id AND e.lease_token_sha256=encode(sha256(convert_to(l.lease_token,'UTF8')),'hex') WHERE l.operation_id=$1")
+            .bind(self.snapshot.operation_id().as_uuid()).fetch_optional(&mut **tx).await?.ok_or(Error::Validation)?;
+        if row.try_get::<DateTime<Utc>, _>("lease_expires_at")? > self.at {
+            return Err(Error::FenceLost);
+        }
+        Ok((
+            load::id(row.try_get("acquisition_event_id")?)?,
+            serde_json::from_value(json!(row.try_get::<String, _>("purpose")?))?,
+        ))
+    }
+
+    async fn cancellation(&self, tx: &mut Transaction<'_, Postgres>) -> Result<EventId, Error> {
+        if !self.snapshot.cancelled() || self.snapshot.state().is_terminal() {
+            return Err(Error::FenceLost);
+        }
+        // Existing terminal outcomes win; an elapsed opened scope must instead
+        // consume an expiry proof, even when cancellation was just recorded.
+        let scope = load::stage_scope(self.snapshot.plan().stage());
+        let name = serde_json::to_value(scope)?
+            .as_str()
+            .ok_or(Error::Validation)?
+            .to_owned();
+        let deadline: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT deadline_at FROM rust_controller.osdeploy_deadlines WHERE run_id=$1 AND scope_key=$2")
+            .bind(self.snapshot.run_id().as_uuid()).bind(name).fetch_optional(&mut **tx).await?;
+        if deadline.is_some_and(|d| self.at >= d) {
+            return Err(Error::FenceLost);
+        }
+        let event: Uuid = sqlx::query_scalar("SELECT decision_event_id FROM rust_controller.osdeploy_run_cancellations WHERE run_id=$1")
+            .bind(self.snapshot.run_id().as_uuid()).fetch_one(&mut **tx).await?;
+        load::id(event)
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "private locked proof constructors are consumed by Task 7 recovery"
+)]
+impl OsDeployTransitionProof {
+    pub(super) async fn unactivated_scope_expired(
+        s: &Scheduler,
+        tx: &mut Transaction<'_, Postgres>,
+        op: OperationId,
+        revision: i64,
+    ) -> Result<Self, Error> {
+        let f = ExceptionalFacts::locked(s, tx, op, revision).await?;
+        if f.snapshot.cancelled()
+            || f.snapshot.state() != ExecutionState::Pending
+            || f.snapshot.attempt_id().is_some()
+            || f.snapshot.dispatch().is_some()
+            || f.snapshot.plan().pve().is_some()
+        {
+            return Err(Error::FenceLost);
+        }
+        let (scope, anchor, anchor_event, deadline) = f.scope(tx).await?;
+        if f.at < deadline {
+            return Err(Error::FenceLost);
+        }
+        let detail = wire::Detail::ScopeExpiredBeforeActivation(wire::UnactivatedExpiry {
+            scope_key: scope,
+            anchor_operation_id: anchor,
+            anchor_event_id: anchor_event,
+            deadline_at: deadline,
+            reason: wire::Reason::InheritedScopeDeadlineExpired,
+        });
+        Ok(Self::UnactivatedScopeExpired(f.decision(
+            detail,
+            Some(pve_port::NativeDecision::Unknown),
+            format!("osdeploy:expire-before-activation:{}", scope_label(scope)?),
+        )?))
+    }
+
+    pub(super) async fn activated_scope_expired(
+        s: &Scheduler,
+        tx: &mut Transaction<'_, Postgres>,
+        op: OperationId,
+        revision: i64,
+    ) -> Result<Self, Error> {
+        let f = ExceptionalFacts::locked(s, tx, op, revision).await?;
+        if f.snapshot.state().is_terminal() && f.snapshot.state() != ExecutionState::Unknown {
+            return Err(Error::FenceLost);
+        }
+        let attempt = f.snapshot.attempt_id().ok_or(Error::Validation)?;
+        let (scope, anchor, anchor_event, deadline) = f.scope(tx).await?;
+        if f.at < deadline {
+            return Err(Error::FenceLost);
+        }
+        // Real parked grace activation is a future callback contract. The
+        // current loader rejects it; never invent the stop-enabling reason.
+        if scope == wire::Scope::ShutdownGrace {
+            return Err(Error::Validation);
+        }
+        let detail = wire::Detail::ActivatedScopeExpired(wire::ActivatedExpiry {
+            scope_key: scope,
+            anchor_operation_id: anchor,
+            anchor_event_id: anchor_event,
+            deadline_at: deadline,
+            pe_complete_operation_id: None,
+            pe_complete_decision_event_id: None,
+            reason: wire::Reason::PhaseDeadlineExpired,
+        });
+        Ok(Self::ActivatedScopeExpired(f.decision(
+            detail,
+            Some(pve_port::NativeDecision::Unknown),
+            format!(
+                "osdeploy:expire:{}:{}",
+                attempt.as_uuid(),
+                scope_label(scope)?
+            ),
+        )?))
+    }
+
+    pub(super) async fn expired_unstarted_same_attempt(
+        s: &Scheduler,
+        tx: &mut Transaction<'_, Postgres>,
+        op: OperationId,
+        revision: i64,
+    ) -> Result<Self, Error> {
+        let f = ExceptionalFacts::locked(s, tx, op, revision).await?;
+        if f.snapshot.cancelled()
+            || f.snapshot.state() != ExecutionState::Leased
+            || f.snapshot.dispatch().is_some()
+        {
+            return Err(Error::FenceLost);
+        }
+        let (scope, _, _, deadline) = f.scope(tx).await?;
+        if f.at >= deadline {
+            return Err(Error::FenceLost);
+        }
+        let (epoch, _) = f.expired_epoch(tx).await?;
+        let started:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='attempt_started')")
+            .bind(op.as_uuid()).fetch_one(&mut **tx).await?;
+        if started {
+            return Err(Error::Validation);
+        }
+        let detail = wire::Detail::LeaseReclaimedSameAttempt(wire::Reclaimed {
+            lease_acquisition_event_id: epoch,
+            scope_key: scope,
+            deadline_at: deadline,
+            reason: wire::Reason::LeaseExpiredBeforeStart,
+        });
+        Ok(Self::ExpiredUnstartedSameAttempt(f.decision(
+            detail,
+            None,
+            format!("osdeploy:reclaim:{}", epoch.as_uuid()),
+        )?))
+    }
+
+    pub(super) async fn expired_read_only_evaluation(
+        s: &Scheduler,
+        tx: &mut Transaction<'_, Postgres>,
+        op: OperationId,
+        revision: i64,
+    ) -> Result<Self, Error> {
+        let f = ExceptionalFacts::locked(s, tx, op, revision).await?;
+        if f.snapshot.cancelled()
+            || !matches!(
+                f.snapshot.state(),
+                ExecutionState::Running | ExecutionState::Waiting
+            )
+            || f.snapshot.dispatch().is_some()
+        {
+            return Err(Error::FenceLost);
+        }
+        let (scope, _, _, deadline) = f.scope(tx).await?;
+        if f.at >= deadline {
+            return Err(Error::FenceLost);
+        }
+        let (epoch, purpose) = f.expired_epoch(tx).await?;
+        let activity = if f.snapshot.state() == ExecutionState::Waiting {
+            if purpose != wire::Purpose::ResumeEvaluation {
+                return Err(Error::Validation);
+            }
+            epoch
+        } else {
+            let events:Vec<Uuid>=sqlx::query_scalar("SELECT event_id FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND action='evaluation_started' AND payload_canonical_json::jsonb->'detail'->>'lease_acquisition_event_id'=$2 AND payload_canonical_json::jsonb->'detail'->>'activity'='preflight_read'")
+                .bind(op.as_uuid()).bind(epoch.as_uuid().to_string()).fetch_all(&mut **tx).await?;
+            if events.len() != 1 {
+                return Err(Error::Validation);
+            }
+            load::id(events[0])?
+        };
+        let detail = wire::Detail::EvaluationReparked(wire::Reparked {
+            lease_acquisition_event_id: epoch,
+            activity_event_id: activity,
+            scope_key: scope,
+            deadline_at: deadline,
+            reason: wire::Reason::ReadOnlyEvaluatorLeaseExpired,
+            schedule: wire::Schedule {
+                mode: wire::ScheduleMode::Waiting,
+                next_check_at: Some((f.at + chrono::Duration::seconds(2)).min(deadline)),
+                unavailable_count: 0,
+            },
+        });
+        Ok(Self::ExpiredReadOnlyEvaluation(f.decision(
+            detail,
+            Some(pve_port::NativeDecision::Waiting),
+            format!("osdeploy:repark:{}", epoch.as_uuid()),
+        )?))
+    }
+
+    pub(super) async fn cancelled_unexposed(
+        s: &Scheduler,
+        tx: &mut Transaction<'_, Postgres>,
+        op: OperationId,
+        revision: i64,
+    ) -> Result<Self, Error> {
+        let f = ExceptionalFacts::locked(s, tx, op, revision).await?;
+        let cancellation = f.cancellation(tx).await?;
+        if f.snapshot.dispatch().is_some() {
+            return Err(Error::Validation);
+        }
+        let (scope, deadline) = if f.snapshot.attempt_id().is_some() {
+            let (scope, _, _, deadline) = f.scope(tx).await?;
+            (Some(scope), Some(deadline))
+        } else {
+            (None, None)
+        };
+        let detail = wire::Detail::StageCancelledUnexposed(wire::UnexposedCancellation {
+            cancellation_event_id: cancellation,
+            scope_key: scope,
+            deadline_at: deadline,
+            reason: wire::Reason::RunCancelledBeforeExposure,
+        });
+        Ok(Self::CancelledUnexposed(f.decision(
+            detail,
+            Some(pve_port::NativeDecision::Blocked),
+            format!("osdeploy:cancel:{}", cancellation.as_uuid()),
+        )?))
+    }
+
+    pub(super) async fn cancelled_exposed(
+        s: &Scheduler,
+        tx: &mut Transaction<'_, Postgres>,
+        op: OperationId,
+        revision: i64,
+    ) -> Result<Self, Error> {
+        let f = ExceptionalFacts::locked(s, tx, op, revision).await?;
+        let cancellation = f.cancellation(tx).await?;
+        if f.snapshot.dispatch().is_none()
+            || !matches!(
+                f.snapshot.state(),
+                ExecutionState::Leased
+                    | ExecutionState::Running
+                    | ExecutionState::Waiting
+                    | ExecutionState::Cancelling
+            )
+        {
+            return Err(Error::Validation);
+        }
+        let (scope, _, _, deadline) = f.scope(tx).await?;
+        let dispatch:Uuid=sqlx::query_scalar("SELECT dispatch_event_id FROM rust_controller.osdeploy_pve_dispatches WHERE operation_id=$1")
+            .bind(op.as_uuid()).fetch_one(&mut **tx).await?;
+        let detail = wire::Detail::StageCancelledExposed(wire::ExposedCancellation {
+            cancellation_event_id: cancellation,
+            scope_key: scope,
+            deadline_at: deadline,
+            dispatch_event_id: load::id(dispatch)?,
+            reason: wire::Reason::RunCancelledOutcomeUncertain,
+        });
+        Ok(Self::CancelledExposed(f.decision(
+            detail,
+            Some(pve_port::NativeDecision::Unknown),
+            format!("osdeploy:cancel:{}", cancellation.as_uuid()),
+        )?))
+    }
+}
+
+fn scope_label(scope: wire::Scope) -> Result<String, Error> {
+    serde_json::to_value(scope)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or(Error::Validation)
+}
+
+impl OsDeployTransitionProof {
+    pub(super) async fn initial_lease(
+        tx: &mut Transaction<'_, Postgres>,
+        event: EventId,
+    ) -> Result<Self, Error> {
+        let (proof, value) = lifecycle_facts(tx, event).await?;
+        let wire::Detail::LeaseAcquired(a) = value.detail else {
+            return Err(Error::Validation);
+        };
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='attempt_started'")
+            .bind(proof.operation.as_uuid()).fetch_one(&mut **tx).await?;
+        if proof.current != ExecutionState::Pending
+            || a.purpose != wire::Purpose::InitialEvaluation
+            || a.acquisition_event_id != event
+            || count != 0
+        {
+            return Err(Error::Validation);
+        }
+        let previous: String = sqlx::query_scalar("SELECT payload_canonical_json FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND decision_revision=$2")
+            .bind(proof.operation.as_uuid()).bind(proof.revision - 1).fetch_one(&mut **tx).await?;
+        let previous = wire::DecisionEnvelope::decode(&previous)?;
+        if previous.attempt_id != Some(proof.attempt)
+            || previous.evaluated_at != proof.at
+            || !matches!(previous.detail, wire::Detail::StageActivated(_))
+        {
+            return Err(Error::Validation);
+        }
+        validate_transition(
+            proof.current,
+            ExecutionState::Leased,
+            TransitionPolicy::Domain,
+        )
+        .map_err(|_| Error::Validation)?;
+        Ok(Self::InitialLease(LifecycleTransition {
+            target: ExecutionState::Leased,
+            ..proof
+        }))
+    }
+
+    pub(super) async fn first_start(
+        tx: &mut Transaction<'_, Postgres>,
+        event: EventId,
+    ) -> Result<Self, Error> {
+        let (proof, value) = lifecycle_facts(tx, event).await?;
+        let wire::Detail::EvaluationStarted(a) = value.detail else {
+            return Err(Error::Validation);
+        };
+        if proof.current != ExecutionState::Leased || a.activity != wire::Activity::PreflightRead {
+            return Err(Error::Validation);
+        }
+        let start = sqlx::query("SELECT aggregate_revision,attempt_id,observed_at,payload FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='attempt_started'")
+            .bind(proof.operation.as_uuid()).fetch_all(&mut **tx).await?;
+        if start.len() != 1 {
+            return Err(Error::Validation);
+        }
+        let start = &start[0];
+        if start.try_get::<i64, _>("aggregate_revision")? != proof.revision - 1
+            || start.try_get::<Uuid, _>("attempt_id")? != proof.attempt.as_uuid()
+            || start.try_get::<DateTime<Utc>, _>("observed_at")? != proof.at
+            || start.try_get::<serde_json::Value, _>("payload")?
+                != json!({"phase":"mutation_started"})
+        {
+            return Err(Error::Validation);
+        }
+        validate_transition(
+            proof.current,
+            ExecutionState::Running,
+            TransitionPolicy::Domain,
+        )
+        .map_err(|_| Error::Validation)?;
+        Ok(Self::FirstStart(LifecycleTransition {
+            target: ExecutionState::Running,
+            ..proof
+        }))
+    }
+}
+
+async fn lifecycle_facts(
+    tx: &mut Transaction<'_, Postgres>,
+    event: EventId,
+) -> Result<(LifecycleTransition, wire::DecisionEnvelope), Error> {
+    // Called only after authority/run/all-operation/attempt/lease locks. The
+    // constructor checks the actual persisted decision, CAS, binding and epoch;
+    // it accepts no snapshot, arbitrary target or caller-provided payload.
+    let row = sqlx::query("SELECT d.payload_canonical_json,d.decision_revision,o.state,o.revision,b.attempt_id,b.deadline_at,l.lease_expires_at,l.heartbeat_at,e.acquisition_event_id FROM rust_controller.osdeploy_decisions d JOIN rust_controller.operations o USING(operation_id) JOIN rust_controller.osdeploy_attempt_bindings b USING(operation_id) JOIN rust_controller.worker_leases l USING(operation_id) JOIN rust_controller.osdeploy_lease_epochs e ON e.operation_id=l.operation_id AND e.lease_token_sha256=encode(sha256(convert_to(l.lease_token,'UTF8')),'hex') WHERE d.event_id=$1 AND l.attempt_id=b.attempt_id AND e.attempt_id=b.attempt_id AND e.generation=d.generation AND e.worker_id=l.worker_id AND l.generation=e.generation AND l.executor_kind='rust' AND NOT EXISTS(SELECT 1 FROM rust_controller.osdeploy_run_cancellations c WHERE c.run_id=o.run_id) AND NOT EXISTS(SELECT 1 FROM rust_controller.osdeploy_pve_dispatches x WHERE x.operation_id=o.operation_id)")
+        .bind(event.as_uuid()).fetch_optional(&mut **tx).await?.ok_or(Error::Validation)?;
+    let d = wire::DecisionEnvelope::decode(&row.try_get::<String, _>("payload_canonical_json")?)?;
+    let attempt = d.attempt_id.ok_or(Error::Validation)?;
+    let epoch: EventId = load::id(row.try_get("acquisition_event_id")?)?;
+    let matches_epoch = match &d.detail {
+        wire::Detail::LeaseAcquired(a) => a.acquisition_event_id == epoch,
+        wire::Detail::EvaluationStarted(a) => a.lease_acquisition_event_id == epoch,
+        _ => false,
+    };
+    if !matches_epoch
+        || d.resolution.is_some()
+        || attempt.as_uuid() != row.try_get::<Uuid, _>("attempt_id")?
+        || d.before_revision.checked_add(1) != Some(row.try_get("revision")?)
+        || row.try_get::<i64, _>("decision_revision")? != row.try_get::<i64, _>("revision")?
+        || d.evaluated_at >= row.try_get::<DateTime<Utc>, _>("deadline_at")?
+        || d.evaluated_at >= row.try_get::<DateTime<Utc>, _>("lease_expires_at")?
+        || d.evaluated_at < row.try_get::<DateTime<Utc>, _>("heartbeat_at")?
+    {
+        return Err(Error::Validation);
+    }
+    let proof = LifecycleTransition {
+        decision: event,
+        operation: d.operation_id,
+        attempt,
+        revision: row.try_get("revision")?,
+        current: decode_execution_state(&row.try_get::<String, _>("state")?)
+            .map_err(|_| Error::Validation)?,
+        target: ExecutionState::Pending,
+        at: d.evaluated_at,
+    };
+    Ok((proof, d))
+}
+
+pub(super) async fn append_osdeploy_transition(
+    tx: &mut Transaction<'_, Postgres>,
+    proof: OsDeployTransitionProof,
+) -> Result<i64, Error> {
+    let p = match proof {
+        OsDeployTransitionProof::InitialLease(p) | OsDeployTransitionProof::FirstStart(p) => p,
+        OsDeployTransitionProof::UnactivatedScopeExpired(p)
+        | OsDeployTransitionProof::ActivatedScopeExpired(p)
+        | OsDeployTransitionProof::ExpiredUnstartedSameAttempt(p)
+        | OsDeployTransitionProof::ExpiredReadOnlyEvaluation(p)
+        | OsDeployTransitionProof::CancelledUnexposed(p)
+        | OsDeployTransitionProof::CancelledExposed(p) => return append_exception(tx, p).await,
+        OsDeployTransitionProof::OriginalDispatchReconciliation(never) => match never {},
+    };
+    let row: (String, i64) = sqlx::query_as(
+        "SELECT state,revision FROM rust_controller.operations WHERE operation_id=$1",
+    )
+    .bind(p.operation.as_uuid())
+    .fetch_one(&mut **tx)
+    .await?;
+    if row != (execution_state_name(p.current).to_owned(), p.revision) {
+        return Err(Error::FenceLost);
+    }
+    persist_state_event(
+        tx,
+        StateAppend {
+            operation_id: p.operation,
+            attempt_id: Some(p.attempt),
+            revision: p.revision,
+            current: p.current,
+            target: p.target,
+            semantic_key: format!("osdeploy:state:{}", p.decision.as_uuid()),
+            payload: json!({"state":p.target,"decision_event_id":p.decision}),
+            observed_at: p.at,
+            policy: TransitionPolicy::Domain,
+        },
+    )
+    .await
+    .map_err(scheduler_error)
+}
+
+async fn append_exception(
+    tx: &mut Transaction<'_, Postgres>,
+    p: ExceptionalTransition,
+) -> Result<i64, Error> {
+    let target = match p.value.detail {
+        wire::Detail::ScopeExpiredBeforeActivation(_)
+        | wire::Detail::ActivatedScopeExpired(_)
+        | wire::Detail::StageCancelledExposed(_) => ExecutionState::Unknown,
+        wire::Detail::LeaseReclaimedSameAttempt(_) => ExecutionState::Pending,
+        wire::Detail::EvaluationReparked(_) => ExecutionState::Waiting,
+        wire::Detail::StageCancelledUnexposed(_) => ExecutionState::Blocked,
+        _ => return Err(Error::Validation),
+    };
+    let revision = append_osdeploy_decision(tx, p.event, &p.semantic_key, &p.value).await?;
+    if target == p.current {
+        return Ok(revision);
+    }
+    persist_state_event(
+        tx,
+        StateAppend {
+            operation_id: p.value.operation_id,
+            attempt_id: p.value.attempt_id,
+            revision,
+            current: p.current,
+            target,
+            semantic_key: format!("osdeploy:state:{}", p.event.as_uuid()),
+            payload: json!({"state":target,"decision_event_id":p.event}),
+            observed_at: p.value.evaluated_at,
+            policy: TransitionPolicy::Domain,
+        },
+    )
+    .await
+    .map_err(scheduler_error)
+}
+
+#[cfg(test)]
+const LOCAL_DATABASE_NAME: &str = "osdeploy_private_lifecycle_test";
+#[cfg(test)]
+#[path = "../../../../../proof_support/mod.rs"]
+mod local_postgres;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    struct Database {
+        pool: sqlx::PgPool,
+        scheduler: Scheduler,
+        store: PgStore,
+        _container: local_postgres::Container,
+    }
+    impl Database {
+        async fn new() -> Self {
+            tokio::time::timeout(local_postgres::SETUP_BOUND,async {
+                let (container,dsn)=local_postgres::Container::start().await;
+                let pool=tokio::time::timeout(Duration::from_secs(15),async {
+                    loop {
+                        if let Ok(pool)=sqlx::postgres::PgPoolOptions::new().max_connections(4).acquire_timeout(Duration::from_secs(1)).connect(&dsn).await { break pool; }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }).await.expect("private_fixture_connect_timeout");
+                let store=PgStore::new(pool.clone()); store.migrate().await.unwrap();
+                sqlx::query("INSERT INTO rust_controller.orchestration_authority(singleton_key,executor_kind,generation,change_reference) VALUES(1,'rust',1,'osdeploy-private-tests')").execute(&pool).await.unwrap();
+                let scheduler=Scheduler::new(store.clone(),ExecutorKind::Rust,1,"private-proof-worker").unwrap();
+                Self {pool,scheduler,store,_container:container}
+            }).await.expect("private_fixture_setup_timeout")
+        }
+        async fn register(&self, seconds: u32, other: bool) -> crate::OsDeployWorkflowIds {
+            let mut value: serde_json::Value = serde_json::from_str(include_str!(
+                "../../../../osdeploy-adapter/tests/fixtures/plan-v1.json"
+            ))
+            .unwrap();
+            value["policy"]["mutation_seconds"] = json!(seconds);
+            value["policy"]["evidence_freshness_seconds"] = json!(1);
+            if other {
+                value["vm"]["target_vmid"] = json!(902);
+                value["vm"]["uuid"] = json!("88888888-8888-4888-8888-888888888888");
+                value["vm"]["mac"] = json!("02:00:00:00:00:02");
+                value["names"]["requested_name"] = json!("Another");
+                value["names"]["windows_name"] = json!("Another");
+                value["names"]["expected_agent_id"] = json!("agent-another");
+            }
+            let plan = osdeploy_adapter::restore_osdeploy_plan_v1(
+                &value.to_string(),
+                &wire::digest(&value).unwrap(),
+            )
+            .unwrap();
+            self.store
+                .enqueue_osdeploy(controller_domain::RunId::new(), &plan)
+                .await
+                .unwrap()
+        }
+    }
+
+    #[test]
+    fn private_clock_predicate_rejects_exact_lease_and_deadline_equality() {
+        let at = "2026-09-05T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let mut g = LeaseGrant::new(
+            OperationId::new(),
+            AttemptId::new(),
+            1,
+            ExecutorKind::Rust,
+            1,
+            "test".to_owned(),
+            Uuid::now_v7(),
+            at,
+            at,
+            at + chrono::Duration::seconds(30),
+            at + chrono::Duration::seconds(300),
+        );
+        assert!(active_at(&g, g.lease_expires_at - chrono::Duration::microseconds(1)).is_ok());
+        assert_eq!(active_at(&g, g.lease_expires_at), Err(Error::FenceLost));
+        g.deadline_at = at + chrono::Duration::seconds(10);
+        assert!(active_at(&g, g.deadline_at - chrono::Duration::microseconds(1)).is_ok());
+        assert_eq!(active_at(&g, g.deadline_at), Err(Error::FenceLost));
+        let status = OsDeployLeaseStatus {
+            checked_at: g.deadline_at,
+            grant: g.clone(),
+            revision: 6,
+        };
+        assert_eq!(status.remaining(), Duration::ZERO);
+        assert_eq!(
+            OsDeployLeaseStatus {
+                checked_at: g.deadline_at + chrono::Duration::seconds(1),
+                grant: g,
+                revision: 6
+            }
+            .remaining(),
+            Duration::ZERO
+        );
+    }
+
+    #[tokio::test]
+    async fn private_stale_token_cas_and_all_disabled_lifecycle_entries_write_nothing() {
+        let f = Database::new().await;
+        let ids = f.register(300, false).await;
+        let op = ids.operation(OsDeployStage::Clone);
+        let g = f
+            .scheduler
+            .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut stale = g.clone();
+        stale.lease_token = Uuid::now_v7();
+        assert!(matches!(
+            f.scheduler
+                .start_osdeploy_bound(&stale, ids.workflow_sha256())
+                .await,
+            Err(Error::FenceLost)
+        ));
+        assert!(matches!(
+            f.scheduler
+                .heartbeat_osdeploy_bound(&stale, ids.workflow_sha256())
+                .await,
+            Err(Error::FenceLost)
+        ));
+        assert!(matches!(
+            f.scheduler
+                .continuation_osdeploy_bound(&stale, ids.workflow_sha256())
+                .await,
+            Err(Error::FenceLost)
+        ));
+        for stage in OsDeployStage::ALL.into_iter().skip(3) {
+            let mut candidate = g.clone();
+            candidate.operation_id = ids.operation(stage);
+            assert!(matches!(
+                f.scheduler
+                    .start_osdeploy_bound(&candidate, ids.workflow_sha256())
+                    .await,
+                Err(Error::CapabilityUnavailable)
+            ));
+            assert!(matches!(
+                f.scheduler
+                    .heartbeat_osdeploy_bound(&candidate, ids.workflow_sha256())
+                    .await,
+                Err(Error::CapabilityUnavailable)
+            ));
+            assert!(matches!(
+                f.scheduler
+                    .continuation_osdeploy_bound(&candidate, ids.workflow_sha256())
+                    .await,
+                Err(Error::CapabilityUnavailable)
+            ));
+        }
+        let mut tx = f.pool.begin().await.unwrap();
+        authority(&f.scheduler, &mut tx).await.unwrap();
+        let snapshot = locked_execution(&mut tx, op).await.unwrap();
+        let (_, epoch) = current_grant(&mut tx, &f.scheduler, &g, &snapshot)
+            .await
+            .unwrap();
+        let stale = envelope(
+            &snapshot,
+            g.attempt_id(),
+            1,
+            2,
+            now(&mut tx).await.unwrap(),
+            wire::Detail::EvaluationStarted(wire::Started {
+                lease_acquisition_event_id: epoch,
+                activity: wire::Activity::PreflightRead,
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            append_osdeploy_decision(&mut tx, EventId::new(), "test-stale-cas", &stale).await,
+            Err(Error::FenceLost)
+        );
+        tx.commit().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.journal_events")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 3);
+        assert_eq!(
+            f.store.load_osdeploy_operation(op).await.unwrap().state(),
+            ExecutionState::Leased
+        );
+        // A closed cancellation-control fixture tests admission fencing only;
+        // this does not implement the Task 7 all-stage cancellation consumer.
+        let mut tx = f.pool.begin().await.unwrap();
+        authority(&f.scheduler, &mut tx).await.unwrap();
+        let snapshot = locked_execution(&mut tx, op).await.unwrap();
+        let at = now(&mut tx).await.unwrap();
+        let event = EventId::new();
+        let control = envelope(
+            &snapshot,
+            g.attempt_id(),
+            1,
+            3,
+            at,
+            wire::Detail::RunCancelled(wire::RunCancelled {
+                reason: wire::Reason::RunCancellationRequested,
+            }),
+        )
+        .unwrap();
+        append_osdeploy_decision(&mut tx, event, "private-run-cancellation-control", &control)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO rust_controller.osdeploy_run_cancellations(run_id,anchor_operation_id,decision_event_id,generation,requested_at) VALUES($1,$2,$3,1,$4)")
+            .bind(ids.run_id().as_uuid()).bind(op.as_uuid()).bind(event.as_uuid()).bind(at).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(
+            f.store
+                .load_osdeploy_operation(op)
+                .await
+                .unwrap()
+                .cancelled()
+        );
+        assert!(matches!(
+            f.scheduler
+                .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+                .await,
+            Err(Error::FenceLost)
+        ));
+        assert!(matches!(
+            f.scheduler
+                .start_osdeploy_bound(&g, ids.workflow_sha256())
+                .await,
+            Err(Error::FenceLost)
+        ));
+        assert!(matches!(
+            f.scheduler
+                .heartbeat_osdeploy_bound(&g, ids.workflow_sha256())
+                .await,
+            Err(Error::FenceLost)
+        ));
+        assert!(matches!(
+            f.scheduler
+                .continuation_osdeploy_bound(&g, ids.workflow_sha256())
+                .await,
+            Err(Error::FenceLost)
+        ));
+        let mut tx = f.pool.begin().await.unwrap();
+        let proof = OsDeployTransitionProof::cancelled_unexposed(&f.scheduler, &mut tx, op, 4)
+            .await
+            .unwrap();
+        let OsDeployTransitionProof::CancelledUnexposed(ref p) = proof else {
+            panic!("wrong closed cancellation proof");
+        };
+        assert_eq!(p.value.attempt_id, Some(g.attempt_id()));
+        assert_eq!(p.value.resolution, Some(pve_port::NativeDecision::Blocked));
+        assert_eq!(append_osdeploy_transition(&mut tx, proof).await.unwrap(), 6);
+        let state: String = sqlx::query_scalar(
+            "SELECT state FROM rust_controller.operations WHERE operation_id=$1",
+        )
+        .bind(op.as_uuid())
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(state, "blocked");
+        // Exercise the low-level append inside a rolled-back transaction only;
+        // full attempt/lease cleanup is still the owning Task 7 consumer.
+        tx.rollback().await.unwrap();
+        let mut tx = f.pool.begin().await.unwrap();
+        let proof = OsDeployTransitionProof::cancelled_unexposed(
+            &f.scheduler,
+            &mut tx,
+            ids.operation(OsDeployStage::VerifyOperational),
+            0,
+        )
+        .await
+        .unwrap();
+        let OsDeployTransitionProof::CancelledUnexposed(p) = proof else {
+            panic!("wrong unactivated cancellation proof");
+        };
+        assert!(p.value.attempt_id.is_none());
+        tx.rollback().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.journal_events")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 4);
+    }
+
+    #[tokio::test]
+    async fn private_expiry_requires_original_scope_and_current_locked_cas() {
+        let f = Database::new().await;
+        let ids = f.register(1, false).await;
+        let op = ids.operation(OsDeployStage::Clone);
+        let g = f
+            .scheduler
+            .claim_osdeploy_bound(op, ids.workflow_sha256(), 1)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut tx = f.pool.begin().await.unwrap();
+        assert!(matches!(
+            OsDeployTransitionProof::activated_scope_expired(&f.scheduler, &mut tx, op, 2).await,
+            Err(Error::FenceLost)
+        ));
+        tx.rollback().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3),sqlx::query("SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz-clock_timestamp()))))").bind(g.deadline_at()).execute(&f.pool)).await.unwrap().unwrap();
+        let mut tx = f.pool.begin().await.unwrap();
+        let proof = OsDeployTransitionProof::activated_scope_expired(&f.scheduler, &mut tx, op, 3)
+            .await
+            .unwrap();
+        let OsDeployTransitionProof::ActivatedScopeExpired(p) = proof else {
+            panic!("wrong closed proof");
+        };
+        assert_eq!(p.value.attempt_id, Some(g.attempt_id()));
+        assert!(p.value.evaluated_at >= *g.deadline_at());
+        assert!(
+            matches!(p.value.detail,wire::Detail::ActivatedScopeExpired(wire::ActivatedExpiry {deadline_at,reason:wire::Reason::PhaseDeadlineExpired,..}) if deadline_at==*g.deadline_at())
+        );
+        tx.rollback().await.unwrap();
+        let mut tx = f.pool.begin().await.unwrap();
+        assert!(
+            OsDeployTransitionProof::unactivated_scope_expired(
+                &f.scheduler,
+                &mut tx,
+                ids.operation(OsDeployStage::PeRegister),
+                0
+            )
+            .await
+            .is_err()
+        );
+        tx.rollback().await.unwrap();
+        for exposed in [false, true] {
+            let mut tx = f.pool.begin().await.unwrap();
+            let result = if exposed {
+                OsDeployTransitionProof::cancelled_exposed(&f.scheduler, &mut tx, op, 3).await
+            } else {
+                OsDeployTransitionProof::cancelled_unexposed(&f.scheduler, &mut tx, op, 3).await
+            };
+            assert!(matches!(result, Err(Error::FenceLost)));
+            tx.rollback().await.unwrap();
+        }
+        assert_eq!(
+            f.store.load_osdeploy_operation(op).await.unwrap().state(),
+            ExecutionState::Leased
+        );
+    }
+
+    #[tokio::test]
+    async fn private_reclaim_and_repark_require_expired_exact_epoch_and_original_budget() {
+        let f = Database::new().await;
+        let a = f.register(300, false).await;
+        let b = f.register(300, true).await;
+        let op = a.operation(OsDeployStage::Clone);
+        let running = b.operation(OsDeployStage::Clone);
+        let first = f
+            .scheduler
+            .claim_osdeploy_bound(op, a.workflow_sha256(), 2)
+            .await
+            .unwrap()
+            .unwrap();
+        let second = f
+            .scheduler
+            .claim_osdeploy_bound(running, b.workflow_sha256(), 2)
+            .await
+            .unwrap()
+            .unwrap();
+        f.scheduler
+            .start_osdeploy_bound(&second, b.workflow_sha256())
+            .await
+            .unwrap();
+        let mut tx = f.pool.begin().await.unwrap();
+        assert!(matches!(
+            OsDeployTransitionProof::expired_unstarted_same_attempt(&f.scheduler, &mut tx, op, 3)
+                .await,
+            Err(Error::FenceLost)
+        ));
+        tx.rollback().await.unwrap();
+        let mut tx = f.pool.begin().await.unwrap();
+        assert!(matches!(
+            OsDeployTransitionProof::expired_read_only_evaluation(
+                &f.scheduler,
+                &mut tx,
+                running,
+                6
+            )
+            .await,
+            Err(Error::FenceLost)
+        ));
+        tx.rollback().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(32),sqlx::query("SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz-clock_timestamp()))))").bind(second.lease_expires_at()).execute(&f.pool)).await.unwrap().unwrap();
+        let mut tx = f.pool.begin().await.unwrap();
+        let proof =
+            OsDeployTransitionProof::expired_unstarted_same_attempt(&f.scheduler, &mut tx, op, 3)
+                .await
+                .unwrap();
+        let OsDeployTransitionProof::ExpiredUnstartedSameAttempt(p) = proof else {
+            panic!("wrong closed proof");
+        };
+        assert_eq!(p.value.attempt_id, Some(first.attempt_id()));
+        assert!(
+            matches!(p.value.detail,wire::Detail::LeaseReclaimedSameAttempt(wire::Reclaimed {deadline_at,..}) if deadline_at==*first.deadline_at())
+        );
+        tx.rollback().await.unwrap();
+        let mut tx = f.pool.begin().await.unwrap();
+        let proof = OsDeployTransitionProof::expired_read_only_evaluation(
+            &f.scheduler,
+            &mut tx,
+            running,
+            6,
+        )
+        .await
+        .unwrap();
+        let OsDeployTransitionProof::ExpiredReadOnlyEvaluation(p) = proof else {
+            panic!("wrong closed proof");
+        };
+        assert_eq!(p.value.attempt_id, Some(second.attempt_id()));
+        assert!(
+            matches!(p.value.detail,wire::Detail::EvaluationReparked(wire::Reparked {deadline_at,..}) if deadline_at==*second.deadline_at())
+        );
+        tx.rollback().await.unwrap();
+        assert_eq!(
+            f.store.load_osdeploy_operation(op).await.unwrap().state(),
+            ExecutionState::Leased
+        );
+        assert_eq!(
+            f.store
+                .load_osdeploy_operation(running)
+                .await
+                .unwrap()
+                .state(),
+            ExecutionState::Running
+        );
+    }
+}

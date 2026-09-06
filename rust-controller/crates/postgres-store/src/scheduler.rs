@@ -1,6 +1,7 @@
 mod authority;
 mod lease;
 mod native;
+mod osdeploy;
 
 use crate::PgStore;
 use chrono::{DateTime, Utc};
@@ -18,6 +19,7 @@ use uuid::Uuid;
 
 pub use authority::{AuthoritySnapshot, ExecutorKind};
 pub use lease::{LeaseGrant, ReapSummary};
+pub use osdeploy::OsDeployLeaseStatus;
 
 const REAP_BATCH_LIMIT: i64 = 32;
 
@@ -1031,6 +1033,15 @@ async fn append_state_event(
     append: StateAppend,
 ) -> Result<i64, SchedulerError> {
     validate_transition(append.current, append.target, append.policy)?;
+    persist_state_event(transaction, append).await
+}
+
+// Callers must validate their family-specific transition before reaching this
+// persistence primitive. Existing domain/native policy checks remain above.
+async fn persist_state_event(
+    transaction: &mut Transaction<'_, Postgres>,
+    append: StateAppend,
+) -> Result<i64, SchedulerError> {
     let event_id = EventId::new();
     let next_revision = append
         .revision
