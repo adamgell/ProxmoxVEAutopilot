@@ -1,5 +1,11 @@
 //! Private owned local PostgreSQL lifecycle, included only by native tests and proof.
 #[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "read-only audit is used by the dedicated macOS storage harness"
+)]
+pub mod docker_storage_probe;
+#[cfg(test)]
 mod linux_postgres;
 mod process;
 use controller_domain::RunId;
@@ -31,6 +37,25 @@ enum Backend {
 pub struct Container {
     backend: Backend,
     cleanup_result: Option<Result<(), ()>>,
+}
+#[cfg(test)]
+impl Container {
+    #[allow(
+        dead_code,
+        reason = "only the dedicated storage harness obtains read-only audit handles"
+    )]
+    pub fn storage_audit(
+        &self,
+    ) -> Result<docker_storage_probe::DockerStorageAudit, docker_storage_probe::AuditError> {
+        if self.cleanup_result.is_some() {
+            return Err(docker_storage_probe::AuditError::Ownership);
+        }
+        match &self.backend {
+            Backend::Docker(owned) => docker_storage_probe::DockerStorageAudit::new(owned),
+            #[cfg(target_os = "linux")]
+            Backend::Linux(_) => Err(docker_storage_probe::AuditError::Ownership),
+        }
+    }
 }
 impl Drop for Container {
     fn drop(&mut self) {
@@ -304,6 +329,8 @@ impl Container {
         // container even when its response is lost or this future is cancelled.
         let mut guard = Container::pending(endpoint);
         let container = guard.docker_owned();
+        #[cfg(test)]
+        eprintln!("owned_fixture_pending {}", container.name);
         let args = container.run_args();
         let borrowed: Vec<_> = args.iter().map(String::as_str).collect();
         let out = process::docker(&borrowed)
@@ -331,6 +358,8 @@ impl Container {
             Some(id.as_str()),
             "local_ownership_unconfirmed"
         );
+        #[cfg(test)]
+        eprintln!("owned_fixture_created {} {}", container.name, id);
         let storage = process::docker(&[
             "--host",
             &container.endpoint,
