@@ -27,6 +27,26 @@ pub(crate) async fn load_execution(
     tx: &mut Transaction<'_, Postgres>,
     operation: OperationId,
 ) -> Result<OsDeployOperationSnapshot, Error> {
+    // Large typed proof values must not multiply every caller's future frame.
+    let records = Box::pin(load_records(tx, operation)).await?;
+    Box::pin(super::history::validate(tx, &records)).await?;
+    Ok(records.snapshot)
+}
+
+pub(super) struct Records {
+    pub(super) snapshot: OsDeployOperationSnapshot,
+    pub(super) registration: OsDeployRegistrationV1,
+    pub(super) journal: BTreeMap<Uuid, Event>,
+    pub(super) decisions: Vec<Decision>,
+    pub(super) evidence: BTreeMap<Uuid, Evidence>,
+    pub(super) receipt_revision: Option<i64>,
+    pub(super) cancelled_at: Option<DateTime<Utc>>,
+}
+
+pub(super) async fn load_records(
+    tx: &mut Transaction<'_, Postgres>,
+    operation: OperationId,
+) -> Result<Records, Error> {
     let run: Uuid =
         sqlx::query_scalar("SELECT run_id FROM rust_controller.operations WHERE operation_id=$1")
             .bind(operation.as_uuid())
@@ -172,7 +192,13 @@ pub(crate) async fn load_execution(
     validate_live_lease(tx, operation, attempt, deadline, &epochs, &own, current).await?;
     // Scheduling rows are disposable hints. Their absence/staleness is valid;
     // the snapshot's due time is always replayed from immutable decisions.
-    Ok(OsDeployOperationSnapshot {
+    let cancelled_at = decisions
+        .values()
+        .find(|d| matches!(d.value.detail, Detail::RunCancelled(_)))
+        .map(|d| d.value.evaluated_at);
+    let receipt_revision = receipt.as_ref().map(|r| r.revision);
+    let own = own.into_iter().cloned().collect();
+    let snapshot = OsDeployOperationSnapshot {
         operation_id: operation,
         run_id: id(run)?,
         revision,
@@ -185,6 +211,15 @@ pub(crate) async fn load_execution(
         next_check_at: next_check,
         dispatch: dispatch.map(|d| d.value),
         receipt: receipt.map(|r| r.value),
+    };
+    Ok(Records {
+        snapshot,
+        registration,
+        journal,
+        decisions: own,
+        evidence,
+        receipt_revision,
+        cancelled_at,
     })
 }
 
@@ -213,14 +248,14 @@ async fn rows(
     .fetch_all(&mut **tx)
     .await?)
 }
-struct Event {
-    id: EventId,
-    attempt: Option<AttemptId>,
-    revision: i64,
-    kind: String,
-    state: Option<ExecutionState>,
-    payload: Value,
-    at: DateTime<Utc>,
+pub(super) struct Event {
+    pub(super) id: EventId,
+    pub(super) attempt: Option<AttemptId>,
+    pub(super) revision: i64,
+    pub(super) kind: String,
+    pub(super) state: Option<ExecutionState>,
+    pub(super) payload: Value,
+    pub(super) at: DateTime<Utc>,
 }
 async fn load_journal(
     tx: &mut Transaction<'_, Postgres>,
@@ -260,10 +295,11 @@ async fn load_journal(
     }
     Ok(out)
 }
-struct Decision {
-    event: EventId,
-    revision: i64,
-    value: DecisionEnvelope,
+#[derive(Clone)]
+pub(super) struct Decision {
+    pub(super) event: EventId,
+    pub(super) revision: i64,
+    pub(super) value: DecisionEnvelope,
 }
 fn decision(
     ds: &BTreeMap<Uuid, Decision>,
@@ -585,10 +621,10 @@ async fn load_epochs(
     Ok(out)
 }
 
-struct Evidence {
-    revision: i64,
-    value: ProvisioningEvidenceV1,
-    hash: String,
+pub(super) struct Evidence {
+    pub(super) revision: i64,
+    pub(super) value: ProvisioningEvidenceV1,
+    pub(super) hash: String,
 }
 async fn load_evidence(
     tx: &mut Transaction<'_, Postgres>,

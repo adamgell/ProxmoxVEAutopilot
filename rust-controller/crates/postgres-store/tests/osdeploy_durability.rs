@@ -1,8 +1,605 @@
+mod osdeploy_execution_support;
 #[allow(
     dead_code,
     reason = "shared registration support has other harness consumers"
 )]
 mod osdeploy_support;
+
+#[tokio::test]
+async fn physical_clone_advice_uses_indexed_before_state_without_dispatch_authority() {
+    use pve_port::*;
+    let s = osdeploy_execution_support::Scenario::new(300, true).await;
+    let g = s.started(osdeploy_adapter::OsDeployStage::Clone).await;
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    let context =
+        s.db.store
+            .load_osdeploy_pve_context(
+                g.operation_id(),
+                snap.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let evidence = s.collect(&context).await;
+    assert_eq!(
+        evaluate_provisioning_preflight(&context, &evidence, chrono::Utc::now()).decision,
+        NativeDecision::Ready
+    );
+    let event = s
+        .db
+        .store
+        .record_osdeploy_pve_evidence(g.operation_id(), g.attempt_id(), snap.revision(), &evidence)
+        .await
+        .unwrap();
+    let current =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    let before = s.db.snapshot().await;
+    let request =
+        s.db.store
+            .prepare_osdeploy_pve_request(g.operation_id(), current.revision(), event)
+            .await
+            .unwrap();
+    assert_eq!(
+        request.expected_before().config(),
+        evidence
+            .facts()
+            .source_config
+            .as_ref()
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+    );
+    assert_eq!(
+        request.expected_before().power(),
+        evidence
+            .facts()
+            .source_power
+            .as_ref()
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+    );
+    assert_eq!(request.binding(), &evidence.facts().binding);
+    let ProvisioningMutationRequestV1::Clone(clone) = request else {
+        panic!("expected clone request");
+    };
+    let clone_wire = serde_json::to_value(clone.clone_request()).unwrap();
+    assert_eq!(
+        clone_wire["request_marker"],
+        json!(g.operation_id().as_uuid())
+    );
+    assert!(current.dispatch().is_none());
+    assert!(s.fake.recorded_provisioning_submissions().is_empty());
+    assert_eq!(s.db.snapshot().await, before);
+    assert!(matches!(
+        s.db.store
+            .prepare_osdeploy_pve_request(g.operation_id(), snap.revision(), event)
+            .await,
+        Err(postgres_store::OsDeployExecutionError::FenceLost)
+    ));
+}
+
+#[tokio::test]
+async fn typed_capture_rejects_foreign_binding_source_and_original_fence_without_writes() {
+    use pve_port::*;
+    let s = osdeploy_execution_support::Scenario::new(300, true).await;
+    let g = s.started(osdeploy_adapter::OsDeployStage::Clone).await;
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    let context =
+        s.db.store
+            .load_osdeploy_pve_context(
+                g.operation_id(),
+                snap.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let evidence = s.collect(&context).await;
+    let before = s.db.snapshot().await;
+    for case in 0..6 {
+        let mut f = evidence.facts().clone();
+        let plan = if case == 4 {
+            ProvisioningOperationPlanV1::new(
+                ProvisioningActionV1::EnsureCapacity,
+                f.plan.expected().clone(),
+            )
+        } else {
+            f.plan.clone()
+        };
+        f.binding = ProvisioningBindingV1::new(
+            if case == 0 {
+                controller_domain::RunId::new()
+            } else {
+                s.ids.run_id()
+            },
+            if case == 1 {
+                s.ids
+                    .operation(osdeploy_adapter::OsDeployStage::DiskCapacity)
+            } else {
+                g.operation_id()
+            },
+            if case == 2 {
+                controller_domain::AttemptId::new()
+            } else {
+                g.attempt_id()
+            },
+            if case == 3 {
+                osdeploy_support::SHA
+            } else {
+                s.ids.workflow_sha256()
+            },
+            &plan,
+            (snap.revision() + i64::from(case == 5)) as u64,
+        )
+        .unwrap();
+        f.plan = plan;
+        let changed = ProvisioningEvidenceV1::new(f).unwrap();
+        assert!(
+            s.db.store
+                .record_osdeploy_pve_evidence(
+                    g.operation_id(),
+                    g.attempt_id(),
+                    snap.revision(),
+                    &changed
+                )
+                .await
+                .is_err(),
+            "binding case {case}"
+        );
+        assert_eq!(s.db.snapshot().await, before);
+    }
+    let mut f = evidence.facts().clone();
+    f.source = NativeEvidenceSource::PveApi;
+    f.node = None;
+    f.storage = None;
+    f.bridges = None;
+    f.inventory = None;
+    f.inventory_coverage = ProvisioningCoverageV1::Partial;
+    f.identities.clear();
+    f.source_config = None;
+    f.source_power = None;
+    f.target_config = None;
+    f.target_power = None;
+    f.media.clear();
+    let changed = ProvisioningEvidenceV1::new(f).unwrap();
+    assert!(matches!(
+        s.db.store
+            .record_osdeploy_pve_evidence(
+                g.operation_id(),
+                g.attempt_id(),
+                snap.revision(),
+                &changed
+            )
+            .await,
+        Err(postgres_store::OsDeployExecutionError::Validation)
+    ));
+    assert_eq!(s.db.snapshot().await, before);
+    assert!(
+        s.db.store
+            .record_osdeploy_pve_evidence(
+                g.operation_id(),
+                controller_domain::AttemptId::new(),
+                snap.revision(),
+                &evidence
+            )
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        s.db.store
+            .load_osdeploy_pve_context(
+                s.ids.operation(osdeploy_adapter::OsDeployStage::StartPe),
+                0,
+                ProvisioningEvaluationModeV1::Preflight
+            )
+            .await,
+        Err(postgres_store::OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    assert!(
+        s.db.store
+            .load_osdeploy_pve_context(
+                s.ids
+                    .operation(osdeploy_adapter::OsDeployStage::DiskCapacity),
+                0,
+                ProvisioningEvaluationModeV1::Preflight
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(s.db.snapshot().await, before);
+}
+
+#[tokio::test]
+async fn typed_evidence_semantic_replay_conflicts_and_generic_spoof_is_never_advice() {
+    use pve_port::*;
+    let s = osdeploy_execution_support::Scenario::new(300, true).await;
+    let g = s.started(osdeploy_adapter::OsDeployStage::Clone).await;
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    let context =
+        s.db.store
+            .load_osdeploy_pve_context(
+                g.operation_id(),
+                snap.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let evidence = s.collect(&context).await;
+    let event = s
+        .db
+        .store
+        .record_osdeploy_pve_evidence(g.operation_id(), g.attempt_id(), snap.revision(), &evidence)
+        .await
+        .unwrap();
+    let before = s.db.snapshot().await;
+    let mut changed = evidence.facts().clone();
+    changed.collected_at += chrono::Duration::microseconds(1);
+    let changed = ProvisioningEvidenceV1::new(changed).unwrap();
+    assert!(matches!(
+        s.db.store
+            .record_osdeploy_pve_evidence(
+                g.operation_id(),
+                g.attempt_id(),
+                snap.revision(),
+                &changed
+            )
+            .await,
+        Err(postgres_store::OsDeployExecutionError::Conflict)
+    ));
+    assert_eq!(s.db.snapshot().await, before);
+    let current =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    assert!(
+        s.db.store
+            .prepare_osdeploy_pve_request(
+                g.operation_id(),
+                current.revision(),
+                controller_domain::EventId::new()
+            )
+            .await
+            .is_err()
+    );
+    let next =
+        s.db.store
+            .load_osdeploy_pve_context(
+                g.operation_id(),
+                current.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let other = s.collect(&next).await;
+    let other_event = s
+        .db
+        .store
+        .record_osdeploy_pve_evidence(g.operation_id(), g.attempt_id(), current.revision(), &other)
+        .await
+        .unwrap();
+    assert_ne!(event, other_event);
+    let before = s.db.snapshot().await;
+    assert_eq!(
+        s.db.store
+            .record_osdeploy_pve_evidence(
+                g.operation_id(),
+                g.attempt_id(),
+                snap.revision(),
+                &evidence
+            )
+            .await
+            .unwrap(),
+        event
+    );
+    assert!(matches!(
+        s.db.store
+            .prepare_osdeploy_pve_request(g.operation_id(), current.revision(), event)
+            .await,
+        Err(postgres_store::OsDeployExecutionError::FenceLost)
+    ));
+    assert_eq!(s.db.snapshot().await, before);
+    // A same-shape observation without the typed provenance index remains generic.
+    let mut tx = s.db.pool.begin().await.unwrap();
+    sqlx::raw_sql(
+        "ALTER TABLE rust_controller.osdeploy_pve_evidence DISABLE TRIGGER osdeploy_no_mutation",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM rust_controller.osdeploy_pve_evidence WHERE event_id=$1")
+        .bind(other_event.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "ALTER TABLE rust_controller.osdeploy_pve_evidence ENABLE TRIGGER osdeploy_no_mutation",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let current =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    assert!(
+        s.db.store
+            .prepare_osdeploy_pve_request(g.operation_id(), current.revision(), other_event)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn physical_advice_rejects_template_mismatch_and_reload_hash_corruption() {
+    use pve_port::*;
+    let s = osdeploy_execution_support::Scenario::new(300, true).await;
+    let g = s.started(osdeploy_adapter::OsDeployStage::Clone).await;
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    let context =
+        s.db.store
+            .load_osdeploy_pve_context(
+                g.operation_id(),
+                snap.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let mut facts = s.collect(&context).await.facts().clone();
+    let source = facts
+        .source_config
+        .as_ref()
+        .unwrap()
+        .result
+        .as_ref()
+        .unwrap();
+    let mut changed = serde_json::to_value(source).unwrap();
+    // Name is part of the immutable source fingerprint.
+    changed["name"] = json!("different-template");
+    let changed: ProvisioningVmConfigV1 = serde_json::from_value(changed).unwrap();
+    facts.source_config = Some(NativeRead::new(chrono::Utc::now(), Ok(changed)));
+    let evidence = ProvisioningEvidenceV1::new(facts).unwrap();
+    let event = s
+        .db
+        .store
+        .record_osdeploy_pve_evidence(g.operation_id(), g.attempt_id(), snap.revision(), &evidence)
+        .await
+        .unwrap();
+    let current =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    assert!(
+        s.db.store
+            .prepare_osdeploy_pve_request(g.operation_id(), current.revision(), event)
+            .await
+            .is_err()
+    );
+    let before = s.db.snapshot().await;
+    s.db.corrupt_immutable("osdeploy_pve_evidence", &format!("UPDATE rust_controller.osdeploy_pve_evidence SET evidence_sha256=repeat('a',64) WHERE event_id='{}'",event.as_uuid())).await;
+    assert!(matches!(
+        s.db.store.load_osdeploy_operation(g.operation_id()).await,
+        Err(postgres_store::OsDeployExecutionError::Validation)
+    ));
+    assert!(
+        s.db.store
+            .prepare_osdeploy_pve_request(g.operation_id(), current.revision(), event)
+            .await
+            .is_err()
+    );
+    assert!(
+        before["osdeploy_pve_dispatches"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn typed_evidence_keeps_original_event_fence() {
+    use osdeploy_adapter::OsDeployStage;
+    use pve_port::ProvisioningEvaluationModeV1;
+    let s = osdeploy_execution_support::Scenario::new(300, true).await;
+    let g = s.started(OsDeployStage::Clone).await;
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    let c =
+        s.db.store
+            .load_osdeploy_pve_context(
+                g.operation_id(),
+                snap.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let e = s.collect(&c).await;
+    let event =
+        s.db.store
+            .record_osdeploy_pve_evidence(g.operation_id(), g.attempt_id(), snap.revision(), &e)
+            .await
+            .unwrap();
+    let saved: i64 = sqlx::query_scalar(
+        "SELECT aggregate_revision FROM rust_controller.journal_events WHERE event_id=$1",
+    )
+    .bind(event.as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(e.facts().binding.evidence_fence(), (saved - 1) as u64);
+    let again =
+        s.db.store
+            .record_osdeploy_pve_evidence(g.operation_id(), g.attempt_id(), snap.revision(), &e)
+            .await
+            .unwrap();
+    assert_eq!(again, event);
+}
+
+#[tokio::test]
+async fn typed_capture_is_atomic_at_each_table_and_duplicate_collectors_share_one_event() {
+    let s = osdeploy_execution_support::Scenario::new(300, true).await;
+    let g = s.started(osdeploy_adapter::OsDeployStage::Clone).await;
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    let c =
+        s.db.store
+            .load_osdeploy_pve_context(
+                g.operation_id(),
+                snap.revision(),
+                pve_port::ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let evidence = s.collect(&c).await;
+    sqlx::raw_sql("CREATE FUNCTION owned_evidence_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'owned_evidence_fault'; END $$")
+        .execute(&s.db.pool).await.unwrap();
+    let before = s.db.snapshot().await;
+    for table in [
+        "journal_events",
+        "outbox",
+        "osdeploy_pve_evidence",
+        "operations",
+        "operation_projection",
+    ] {
+        sqlx::query(&format!("CREATE TRIGGER owned_evidence_fault BEFORE INSERT OR UPDATE ON rust_controller.{table} FOR EACH ROW EXECUTE FUNCTION owned_evidence_fail()"))
+            .execute(&s.db.pool).await.unwrap();
+        assert!(
+            s.db.store
+                .record_osdeploy_pve_evidence(
+                    g.operation_id(),
+                    g.attempt_id(),
+                    snap.revision(),
+                    &evidence
+                )
+                .await
+                .is_err(),
+            "{table}"
+        );
+        assert_eq!(s.db.snapshot().await, before, "{table}");
+        sqlx::query(&format!(
+            "DROP TRIGGER owned_evidence_fault ON rust_controller.{table}"
+        ))
+        .execute(&s.db.pool)
+        .await
+        .unwrap();
+    }
+    let (first, second) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            s.db.store.record_osdeploy_pve_evidence(
+                g.operation_id(),
+                g.attempt_id(),
+                snap.revision(),
+                &evidence
+            ),
+            s.db.other.record_osdeploy_pve_evidence(
+                g.operation_id(),
+                g.attempt_id(),
+                snap.revision(),
+                &evidence
+            )
+        )
+    })
+    .await
+    .expect("duplicate_evidence_collectors_timeout");
+    let event = first.unwrap();
+    assert_eq!(second.unwrap(), event);
+    let after = s.db.snapshot().await;
+    assert_eq!(after["osdeploy_pve_evidence"].as_array().unwrap().len(), 1);
+    let current =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    assert_eq!(current.revision(), snap.revision() + 1);
+    let outbox: Value =
+        sqlx::query_scalar("SELECT payload FROM rust_controller.outbox WHERE event_id=$1")
+            .bind(event.as_uuid())
+            .fetch_one(&s.db.pool)
+            .await
+            .unwrap();
+    assert_eq!(outbox["payload"], serde_json::to_value(evidence).unwrap());
+    let projection: (i64, Uuid) = sqlx::query_as("SELECT revision,last_event_id FROM rust_controller.operation_projection WHERE operation_id=$1")
+        .bind(g.operation_id().as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(projection, (current.revision(), event.as_uuid()));
+}
+
+#[tokio::test]
+async fn physical_reload_rejects_rehashed_request_marker_and_before_state_substitution() {
+    let f = Fixture::new().await;
+    let source = reload_source();
+    let p = osdeploy_support::altered(|v| {
+        v["template_config_sha256"] = json!(source.template_fingerprint().unwrap())
+    });
+    let h = ReloadHistory::with_plan(&f, p).await;
+    let (event, _, original) = h.dispatched(&f, source).await;
+    assert!(f.store.load_osdeploy_operation(h.operation).await.is_ok());
+    let decision: Value =
+        sqlx::query_scalar("SELECT payload FROM rust_controller.journal_events WHERE event_id=$1")
+            .bind(event.as_uuid())
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    for case in ["marker", "before"] {
+        let mut request = serde_json::to_value(original.request()).unwrap();
+        if case == "marker" {
+            request["request"]["clone"]["request_marker"] = json!(Uuid::now_v7());
+        } else {
+            request["request"]["expected_before"]["config"]["digest"] =
+                json!("substituted-before-digest");
+        }
+        let request: pve_port::ProvisioningMutationRequestV1 =
+            serde_json::from_value(request).unwrap();
+        let hash = request.request_digest().unwrap();
+        let mut changed = decision.clone();
+        changed["detail"]["request_sha256"] = json!(hash);
+        let mut tx = f.pool.begin().await.unwrap();
+        sqlx::raw_sql("ALTER TABLE rust_controller.osdeploy_pve_dispatches DISABLE TRIGGER osdeploy_no_mutation; ALTER TABLE rust_controller.osdeploy_decisions DISABLE TRIGGER osdeploy_no_mutation").execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE rust_controller.osdeploy_pve_dispatches SET request_sha256=$2,request_canonical_json=$3 WHERE operation_id=$1")
+            .bind(h.operation.as_uuid()).bind(&hash).bind(String::from_utf8(event_journal::canonical_json_bytes(&serde_json::to_value(request).unwrap()).unwrap()).unwrap()).execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE rust_controller.osdeploy_decisions SET payload_canonical_json=$2 WHERE event_id=$1")
+            .bind(event.as_uuid()).bind(String::from_utf8(event_journal::canonical_json_bytes(&changed).unwrap()).unwrap()).execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE rust_controller.journal_events SET payload=$2,payload_digest=$3 WHERE event_id=$1")
+            .bind(event.as_uuid()).bind(&changed).bind(event_journal::payload_digest(&changed).unwrap()).execute(&mut *tx).await.unwrap();
+        sqlx::raw_sql("ALTER TABLE rust_controller.osdeploy_pve_dispatches ENABLE TRIGGER osdeploy_no_mutation; ALTER TABLE rust_controller.osdeploy_decisions ENABLE TRIGGER osdeploy_no_mutation").execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(
+            matches!(
+                f.store.load_osdeploy_operation(h.operation).await,
+                Err(postgres_store::OsDeployExecutionError::Validation)
+            ),
+            "{case}"
+        );
+    }
+}
 
 #[tokio::test]
 async fn activation_creates_one_attempt_with_policy_deadline() {
@@ -883,28 +1480,56 @@ impl ReloadHistory {
             self.at,
         )
         .unwrap();
+        // Structural corruption fixture only: complete this owned historical
+        // world at its original time. It is never a successful predecessor.
+        let node = p.expected().vm().node().clone();
+        let media = [
+            p.expected().deployment_iso_volid(),
+            p.expected().driver_iso_volid(),
+        ]
+        .into_iter()
+        .map(|volid| {
+            NativeRead::new(
+                self.at,
+                Ok(ProvisioningMediaInventoryV1::new(
+                    node.clone(),
+                    StorageName::parse(volid.split_once(':').unwrap().0).unwrap(),
+                    vec![volid.to_owned()],
+                    ProvisioningCoverageV1::Complete,
+                    self.at,
+                )
+                .unwrap()),
+            )
+        })
+        .collect();
         let facts = ProvisioningEvidenceV1::new(ProvisioningEvidenceInputV1 {
             binding: binding.clone(),
             plan: p.clone(),
             source: NativeEvidenceSource::FakePve,
             collected_at: self.at,
-            node: None,
-            storage: None,
-            bridges: None,
-            inventory: None,
-            inventory_coverage: ProvisioningCoverageV1::Partial,
-            identities: vec![],
+            node: Some(NativeRead::new(self.at, Ok(NodeStatus::from_wire(node.clone(), json!({"uptime":100}), self.at).unwrap()))),
+            storage: Some(NativeRead::new(self.at, Ok(StorageStatus::from_wire(node.clone(),
+                p.expected().vm().storage().clone(), json!({"active":1,"enabled":1,"content":"images","avail":999999999999_u64}), self.at).unwrap()))),
+            bridges: Some(NativeRead::new(self.at, Ok(BridgeInventory::from_wire(node.clone(),
+                json!([{"type":"bridge","iface":"vmbr0","active":1}]), self.at).unwrap()))),
+            inventory: Some(NativeRead::new(self.at, Ok(ClusterVmInventory::from_wire(
+                json!([{"node":"node-a","vmid":900,"name":"blank-template","template":1,"status":"stopped","type":"qemu"}]), self.at).unwrap()))),
+            inventory_coverage: ProvisioningCoverageV1::Complete,
+            identities: vec![ProvisioningIdentityReadV1::new(node.clone(), source.vmid(),
+                NativeRead::new(self.at, Ok(ProvisioningIdentitySnapshotV1::from_provisioning(&source)))).unwrap()],
             source_config: Some(NativeRead::new(self.at, Ok(source.clone()))),
             source_power: Some(NativeRead::new(self.at, Ok(power.clone()))),
-            target_config: None,
-            target_power: None,
-            media: vec![],
+            target_config: Some(NativeRead::new(self.at, Err(PveReadError::NotFound))),
+            target_power: Some(NativeRead::new(self.at, Err(PveReadError::NotFound))),
+            media,
             qga: None,
             task: None,
             receipt: None,
         })
         .unwrap();
-        let clone = CloneRequest::new(p.expected().vm().clone(), self.operation);
+        let clone: CloneRequest = serde_json::from_value(json!({"vm":p.expected().vm(),
+            "operation_id":self.operation,"request_marker":self.operation.as_uuid()}))
+        .unwrap();
         let request = ProvisioningMutationRequestV1::Clone(
             CloneProvisioningRequestV1::new(
                 binding,
@@ -1056,13 +1681,14 @@ async fn first_start_reload_rejects_interleaved_history() {
 
 #[tokio::test]
 async fn ordinary_lease_reload_park_resume_and_later_start() {
+    use pve_port::*;
     let f = Fixture::new().await;
     let source = reload_source();
     let p = osdeploy_support::altered(|v| {
         v["template_config_sha256"] = json!(source.template_fingerprint().unwrap())
     });
     let h = ReloadHistory::with_plan(&f, p).await;
-    let (_, evidence, _) = h.dispatched(&f, source).await;
+    let (dispatch_event, preflight, dispatch) = h.dispatched(&f, source).await;
     let old_lease: Value = sqlx::query_scalar(
         "SELECT to_jsonb(l) FROM rust_controller.worker_leases l WHERE operation_id=$1",
     )
@@ -1070,24 +1696,77 @@ async fn ordinary_lease_reload_park_resume_and_later_start() {
     .fetch_one(&f.pool)
     .await
     .unwrap();
-    let evidence_hash: String = sqlx::query_scalar(
-        "SELECT evidence_sha256 FROM rust_controller.osdeploy_pve_evidence WHERE event_id=$1",
-    )
-    .bind(evidence.as_uuid())
-    .fetch_one(&f.pool)
-    .await
-    .unwrap();
+    // This remains a structural lease-history fixture, not a writer proof.
+    // A task-running park needs its original receipt and actual task evidence.
+    let receipt_event = controller_domain::EventId::new();
+    let evidence = controller_domain::EventId::new();
+    let upid = Upid::parse("UPID:node-a:00000001:00000001:00000001:qmclone:900:root@pam:").unwrap();
+    let receipt =
+        ProvisioningReceiptV1::new(dispatch.clone(), h.at, MutationReceipt::Task(upid.clone()))
+            .unwrap();
+    let preflight_json: Value =
+        sqlx::query_scalar("SELECT payload FROM rust_controller.journal_events WHERE event_id=$1")
+            .bind(preflight.as_uuid())
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    let preflight: ProvisioningEvidenceV1 = serde_json::from_value(preflight_json).unwrap();
+    let mut facts = preflight.facts().clone();
+    facts.binding =
+        ProvisioningBindingV1::new(h.run, h.operation, h.attempt, &h.workflow, &facts.plan, 9)
+            .unwrap();
+    facts.receipt = Some(receipt);
+    facts.task = Some(NativeRead::new(
+        h.at,
+        Ok(TaskStatus::running(upid.clone(), h.at)),
+    ));
+    let facts = ProvisioningEvidenceV1::new(facts).unwrap();
+    let evidence_payload = serde_json::to_value(&facts).unwrap();
+    let evidence_hash = event_journal::payload_digest(&evidence_payload).unwrap();
     let park = controller_domain::EventId::new();
     let resumed_at = h.at + chrono::Duration::seconds(2);
     let mut tx = f.pool.begin().await.unwrap();
-    h.decision(&mut tx, park, h.envelope("pve_evaluated",8,json!("waiting"),json!({"mode":"outcome","advice":"waiting",
+    let receipt_payload = json!({"contract_version":1,"action":"pve_receipt_captured","dispatch_event_id":dispatch_event,
+        "request_sha256":dispatch.request_sha256(),"receipt_kind":"task","upid":upid,"accepted_at":h.at});
+    h.event(
+        &mut tx,
+        receipt_event,
+        9,
+        "evidence_recorded",
+        None,
+        receipt_payload,
+        h.at,
+    )
+    .await;
+    insert_row(
+        &mut tx,
+        "osdeploy_pve_receipts",
+        &json!({"operation_id":h.operation,"receipt_event_id":receipt_event,
+        "receipt_kind":"task","upid":upid,"accepted_at":h.at,"recorded_at":h.at}),
+    )
+    .await
+    .unwrap();
+    h.event(
+        &mut tx,
+        evidence,
+        10,
+        "evidence_recorded",
+        None,
+        evidence_payload.clone(),
+        h.at,
+    )
+    .await;
+    insert_row(&mut tx, "osdeploy_pve_evidence", &json!({"event_id":evidence,"operation_id":h.operation,"run_id":h.run,
+        "attempt_id":h.attempt,"evidence_revision":10,"evidence_sha256":evidence_hash,"source":"fake_pve",
+        "evidence_canonical_json":String::from_utf8(event_journal::canonical_json_bytes(&evidence_payload).unwrap()).unwrap()})).await.unwrap();
+    h.decision(&mut tx, park, h.envelope("pve_evaluated",10,json!("waiting"),json!({"mode":"outcome","advice":"waiting",
         "evidence_event_id":evidence,"evidence_sha256":evidence_hash,"scope_key":"mutation_clone","deadline_at":h.deadline,
         "reason":"task_running","lease_acquisition_event_id":h.acquisition,
         "schedule":{"mode":"waiting","next_check_at":resumed_at,"unavailable_count":0}}))).await;
     h.event(
         &mut tx,
         controller_domain::EventId::new(),
-        10,
+        12,
         "execution_state_changed",
         Some("waiting"),
         json!({"state":"waiting","decision_event_id":park}),
@@ -1129,7 +1808,7 @@ async fn ordinary_lease_reload_park_resume_and_later_start() {
             .await
             .unwrap();
     let expires = resumed_at + chrono::Duration::seconds(30);
-    let mut payload = h.envelope("lease_acquired",10,Value::Null,json!({"purpose":"resume_evaluation","acquisition_event_id":resume,
+    let mut payload = h.envelope("lease_acquired",12,Value::Null,json!({"purpose":"resume_evaluation","acquisition_event_id":resume,
         "token_sha256":token_hash,"worker_id":"reload-only-resumed-worker","acquired_at":resumed_at,"expires_at":expires,
         "deadline_at":h.deadline,"prior_schedule_event_id":park}));
     payload["evaluated_at"] = json!(resumed_at);
@@ -1148,11 +1827,11 @@ async fn ordinary_lease_reload_park_resume_and_later_start() {
     let resumed = f.store.load_osdeploy_operation(h.operation).await.unwrap();
     assert_eq!(resumed.state(), controller_domain::ExecutionState::Waiting);
     assert_eq!(resumed.next_check_at(), None);
-    assert_eq!(resumed.revision(), 11);
+    assert_eq!(resumed.revision(), 13);
     let evaluation = controller_domain::EventId::new();
     let mut payload = h.envelope(
         "evaluation_started",
-        11,
+        13,
         Value::Null,
         json!({"lease_acquisition_event_id":resume,"activity":"outcome_read"}),
     );
@@ -1162,7 +1841,7 @@ async fn ordinary_lease_reload_park_resume_and_later_start() {
     h.event(
         &mut tx,
         controller_domain::EventId::new(),
-        13,
+        15,
         "execution_state_changed",
         Some("running"),
         json!({"state":"running","decision_event_id":evaluation}),

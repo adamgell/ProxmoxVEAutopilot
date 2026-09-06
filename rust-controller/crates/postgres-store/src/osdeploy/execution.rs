@@ -4,6 +4,7 @@ use crate::PgStore;
 use chrono::{DateTime, Utc};
 use controller_domain::{AttemptId, ExecutionState, OperationId, RunId};
 use pve_port::{ProvisioningDispatchV1, ProvisioningReceiptV1};
+pub(crate) mod history;
 pub(crate) mod load;
 pub(crate) mod wire;
 

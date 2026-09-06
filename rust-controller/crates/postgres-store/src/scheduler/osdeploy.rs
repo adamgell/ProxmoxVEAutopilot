@@ -7,6 +7,7 @@ use osdeploy_adapter::OsDeployStage;
 use sqlx::Row;
 
 mod lifecycle;
+mod pve;
 mod transaction;
 mod transition;
 use transaction::*;
