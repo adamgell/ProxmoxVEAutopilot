@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Main-reviewed implementation plan. Code proof remains `f412f2c9d577081985ce503773dfa8226567f099`; main reported the Linux artifact checkpoint closed and subsequent evidence-only commits `4db345e` then `1fb97f7`. Dispatch baseline is the full exact current HEAD resolved by main at dispatch (expected `1fb97f7`), not the older source-only SHA. Main owns task dispatch and acceptance. No command below has been executed by this planning task.
-- User already selected Astra subagent execution. Main dispatches one source owner at a time and fresh independent spec/code reviews after each task; this draft does not ask an execution-mode question or spawn anyone.
+- User already selected Astra subagent execution. Main dispatches one source owner at a time and independent spec/code reviews after each task; when new-agent allocation is refused, apply the explicit existing-uninvolved-Astra fallback in the planning decisions' Task8 dispatch clarifications. Do not claim a reused agent is newly spawned or empty-context. This draft does not ask an execution-mode question or spawn anyone.
 - Workspace: `/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-design`; code commands run in its `rust-controller` directory. Verify the dispatch-time HEAD and dirty state before editing; preserve unrelated work and all existing assertions.
 - “The first enabled execution stages are exactly Clone, DiskCapacity, ConfigurePe.” Preserve all sixteen `OsDeployStage::ALL` entries and seven PVE mappings. Fourth/later execution entry returns `CapabilityUnavailable` before execution writes; declaration reads and all-stage cancellation are not stage execution admission.
 - “Historical generic OSDeploy rows are readable history, not adoptable execution records.” Preserve registration errors, generic guards, `NativeController`, `NativeDispatchPermit`, `ProvisioningFakePort`, `DomainSignal` and existing native/generic semantics.
@@ -46,7 +46,7 @@ All paths below are relative to `rust-controller/` unless prefixed `docs/`. Keep
 | `crates/operation-controller/tests/postgres_osdeploy.rs`; `Cargo.toml` | Real family integration; add existing `osdeploy-adapter` as a dev-only path dependency for registration fixture / Task 8 |
 | `evidence/poc-readiness-tracker.md` | Exact milestone/evidence and remaining full-goal gates / Task 9 |
 
-Do not change Cargo.lock or registry dependency versions. `operation-controller` already depends on Tokio, store and pve-port; postgres-store already depends on pve-port and needs no production Tokio dependency. `crates/scheduler/src/lib.rs` already re-exports the real Scheduler, so inherent new methods require no facade implementation.
+Do not change Cargo.lock or registry dependency versions except Task8's explicitly selected single existing-package dependency edge: add osdeploy-adapter to operation-controller's lock dependency list alongside the required dev-only local path dependency. No new package/version/checksum/source/feature or network resolution. `operation-controller` already depends on Tokio, store and pve-port; postgres-store already depends on pve-port and needs no production Tokio dependency. `crates/scheduler/src/lib.rs` already re-exports the real Scheduler, so inherent new methods require no facade implementation.
 
 ## Cross-task interface ledger
 
@@ -586,7 +586,9 @@ async fn cancellation_fences_all_sixteen_without_manufactured_attempts() {
 
 ### Task 8: Existing-controller integration and owned send/drain lifecycle
 
-**Files:** Create operation-controller OSDeploy modules/tests; modify its `lib.rs` and dev-dependencies only. Reuse the store test support by path with both `osdeploy_support` and `osdeploy_execution_support` modules in the integration harness; no test helpers enter production libraries.
+**Prerequisite now accepted:** local Docker storage A/B, Bsource f7c9000 and main acceptance bf0fc82. Apply the complete Task8 dispatch clarifications in `next-durable-planning-decisions.md` before implementing. In particular, awaited authority/drain stay serialized by lifecycle, but synchronous closure publication at close entry/timeout must not await it. Open captures an unconsumed watch-version marker under state mutex before lifecycle wait, checks it atomically with opening after fresh authority/zero activity, and never refreshes invalidated work. Close always publishes true even when already true; timeout drops owned work, republishes closure and never proves quiescence. Require all three named deterministic lifecycle race cases there, in addition to the tests below. This precise ruling controls the broader lifecycle sentence below.
+
+**Files:** Create operation-controller OSDeploy modules/tests; modify its `lib.rs` and dev-dependencies, plus only the explicitly allowed existing osdeploy-adapter lock dependency edge. Reuse the store test support by path with both `osdeploy_support` and `osdeploy_execution_support` modules in the integration harness; no test helpers enter production libraries.
 
 **Interfaces:** Produces controller API in ledger. Private types: `OsDeploySendObservation::{ReceiptCaptured,Uncertain}`, `OsDeploySendAdmission`, `OsDeployAdmissionGuard`. Private helper has the exact selected signature:
 
