@@ -28,8 +28,8 @@ pub use osdeploy::{
 };
 
 pub use scheduler::{
-    AuthoritySnapshot, ExecutorKind, LeaseGrant, OsDeployLeaseStatus, ReapSummary, Scheduler,
-    SchedulerError,
+    AuthoritySnapshot, ExecutorKind, LeaseGrant, OsDeployDispatchPermit, OsDeployLeaseStatus,
+    OsDeployResponseCapture, ReapSummary, Scheduler, SchedulerError,
 };
 pub use store::{
     CommandAppend, EventAppend, OperationProjection, OutboxMessage, PgStore, StoreError,

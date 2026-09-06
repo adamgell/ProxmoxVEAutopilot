@@ -11,8 +11,66 @@ pub struct Scenario {
     pub ids: OsDeployWorkflowIds,
     pub fake: Arc<NativeFakePve>,
 }
+pub struct Ready {
+    pub grant: postgres_store::LeaseGrant,
+    pub event: controller_domain::EventId,
+    pub revision: i64,
+    pub request: ProvisioningMutationRequestV1,
+}
 impl Scenario {
+    pub async fn ready(&self, stage: osdeploy_adapter::OsDeployStage) -> Ready {
+        let grant = self.started(stage).await;
+        let snapshot = self
+            .db
+            .store
+            .load_osdeploy_operation(grant.operation_id())
+            .await
+            .unwrap();
+        let context = self
+            .db
+            .store
+            .load_osdeploy_pve_context(
+                grant.operation_id(),
+                snapshot.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+        let evidence = self.collect(&context).await;
+        let event = self
+            .db
+            .store
+            .record_osdeploy_pve_evidence(
+                grant.operation_id(),
+                grant.attempt_id(),
+                snapshot.revision(),
+                &evidence,
+            )
+            .await
+            .unwrap();
+        let current = self
+            .db
+            .store
+            .load_osdeploy_operation(grant.operation_id())
+            .await
+            .unwrap();
+        let request = self
+            .db
+            .store
+            .prepare_osdeploy_pve_request(grant.operation_id(), current.revision(), event)
+            .await
+            .unwrap();
+        Ready {
+            grant,
+            event,
+            revision: current.revision(),
+            request,
+        }
+    }
     pub async fn new(mutation_seconds: u32, grow: bool) -> Self {
+        Self::with_freshness(mutation_seconds, grow, mutation_seconds.min(30)).await
+    }
+    pub async fn with_freshness(mutation_seconds: u32, grow: bool, freshness_seconds: u32) -> Self {
         let db = osdeploy_support::Fixture::new().await;
         let node = NodeName::parse("node-a").unwrap();
         let source = ProvisioningVmConfigV1::from_wire(
@@ -33,7 +91,7 @@ impl Scenario {
         let plan = osdeploy_support::altered(|v| {
             v["template_config_sha256"] = json!(hash);
             v["policy"]["mutation_seconds"] = json!(mutation_seconds);
-            v["policy"]["evidence_freshness_seconds"] = json!(mutation_seconds.min(30));
+            v["policy"]["evidence_freshness_seconds"] = json!(freshness_seconds);
             v["disk"]["requested_gib"] = json!(if grow { 120 } else { 80 });
             v["disk"]["effective_bytes"] = json!(if grow {
                 128849018880_u64

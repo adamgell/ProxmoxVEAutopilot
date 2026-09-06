@@ -1,10 +1,65 @@
-//! Typed physical observations and request advice; no dispatch authority.
+//! Typed physical observations, request advice, and locked dispatch admission.
 use super::*;
 use crate::osdeploy::execution::history;
 use pve_port::{
-    NativeEvidenceSource, ProvisioningEvaluationContextV1, ProvisioningEvaluationModeV1,
-    ProvisioningEvidenceV1, ProvisioningMutationRequestV1,
+    NativeDecision, NativeEvidenceSource, ProvisioningDispatchInputV1, ProvisioningDispatchV1,
+    ProvisioningEvaluationContextV1, ProvisioningEvaluationModeV1, ProvisioningEvidenceV1,
+    ProvisioningMutationRequestV1,
 };
+
+impl Scheduler {
+    pub async fn begin_osdeploy_pve_dispatch(
+        &self,
+        grant: &LeaseGrant,
+        expected_revision: i64,
+        preflight_event: EventId,
+        request: &ProvisioningMutationRequestV1,
+    ) -> Result<(OsDeployDispatchPermit, OsDeployResponseCapture), Error> {
+        Box::pin(async move {
+            let mut tx = self.store.pool().begin().await?;
+            authority(self, &mut tx).await?;
+            let snapshot = locked_execution(&mut tx, grant.operation_id()).await?;
+            admit(&snapshot, request.binding().workflow_sha256())?;
+            let (current, epoch) = current_grant(&mut tx, self, grant, &snapshot).await?;
+            if snapshot.revision() != expected_revision || snapshot.state() != ExecutionState::Running {
+                return Err(Error::FenceLost);
+            }
+            if snapshot.dispatch().is_some() { return Err(Error::Conflict); }
+            let (context, evidence) = history::preflight(&mut tx, grant.operation_id(), expected_revision, preflight_event).await?;
+            let at = now(&mut tx).await?;
+            active_at(&current, at)?;
+            let reconstructed = history::request(&context, &evidence, at)?;
+            wire::require(&reconstructed == request && reconstructed.request_digest().map_err(|_| Error::Validation)? == request.request_digest().map_err(|_| Error::Validation)?)?;
+            let revision = expected_revision.checked_add(1).ok_or(Error::Validation)?;
+            let dispatch = ProvisioningDispatchV1::new(ProvisioningDispatchInputV1 {
+                request: reconstructed, source: NativeEvidenceSource::FakePve, preflight_event_id: preflight_event,
+                original_generation: self.generation, dispatch_revision: revision.try_into().map_err(|_| Error::Validation)?, dispatched_at: at,
+            }).map_err(|_| Error::Validation)?;
+            let text = wire::canonical(dispatch.request())?;
+            let restored: ProvisioningMutationRequestV1 = wire::decode_exact(&text, wire::EVIDENCE_LIMIT)?;
+            wire::require(&restored == dispatch.request())?;
+            let event = EventId::new();
+            let mut decision = envelope(&snapshot, grant.attempt_id(), self.generation, expected_revision, at,
+                wire::Detail::PveDispatchCommitted(wire::Dispatch {
+                    preflight_event_id: preflight_event, pve_plan_sha256: request.binding().operation_plan_sha256().to_owned(),
+                    request_sha256: dispatch.request_sha256().to_owned(), dispatched_at: at, lease_acquisition_event_id: epoch,
+                }))?;
+            decision.resolution = Some(NativeDecision::Ready);
+            append_osdeploy_decision(&mut tx, event, "osdeploy:dispatch", &decision).await?;
+            sqlx::query("INSERT INTO rust_controller.osdeploy_pve_dispatches(operation_id,run_id,attempt_id,dispatch_event_id,dispatch_revision,preflight_event_id,workflow_sha256,pve_plan_sha256,request_sha256,request_canonical_json,source,original_generation,dispatched_at,lease_acquisition_event_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'fake_pve',$11,$12,$13)")
+                .bind(grant.operation_id().as_uuid()).bind(snapshot.run_id().as_uuid()).bind(grant.attempt_id().as_uuid())
+                .bind(event.as_uuid()).bind(revision).bind(preflight_event.as_uuid()).bind(snapshot.plan().workflow_sha256())
+                .bind(request.binding().operation_plan_sha256()).bind(dispatch.request_sha256()).bind(text)
+                .bind(self.generation).bind(at).bind(epoch.as_uuid()).execute(&mut *tx).await?;
+            load::load_execution(&mut tx, grant.operation_id()).await?;
+            let final_at = now(&mut tx).await?;
+            active_at(&current, final_at)?;
+            wire::require(history::request(&context, &evidence, final_at)? == *request)?;
+            tx.commit().await?;
+            Ok(receipt::committed(dispatch, event))
+        }).await
+    }
+}
 
 impl PgStore {
     pub async fn load_osdeploy_pve_context(

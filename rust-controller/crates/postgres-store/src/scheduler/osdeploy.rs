@@ -8,6 +8,8 @@ use sqlx::Row;
 
 mod lifecycle;
 mod pve;
+mod receipt;
+pub use receipt::{OsDeployDispatchPermit, OsDeployResponseCapture};
 mod transaction;
 mod transition;
 use transaction::*;

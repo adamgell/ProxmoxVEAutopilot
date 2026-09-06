@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 pub use authority::{AuthoritySnapshot, ExecutorKind};
 pub use lease::{LeaseGrant, ReapSummary};
-pub use osdeploy::OsDeployLeaseStatus;
+pub use osdeploy::{OsDeployDispatchPermit, OsDeployLeaseStatus, OsDeployResponseCapture};
 
 const REAP_BATCH_LIMIT: i64 = 32;
 
