@@ -21,7 +21,8 @@ pub use native::{
     NativeDispatchPermit, NativeOperationSnapshot, NativeStoreError, NativeWorkflowIds,
 };
 pub use osdeploy::execution::{
-    OsDeployExecutionError, OsDeployOperationSnapshot, OsDeployProgress,
+    OsDeployDue, OsDeployDueKind, OsDeployExecutionError, OsDeployExpiryCursor,
+    OsDeployOperationSnapshot, OsDeployProgress, OsDeployRepairCursor,
 };
 pub use osdeploy::{
     OsDeployOperationPlanV1, OsDeployRegistrationV1, OsDeployStoreError, OsDeployWorkflowIds,
@@ -29,7 +30,7 @@ pub use osdeploy::{
 
 pub use scheduler::{
     AuthoritySnapshot, ExecutorKind, LeaseGrant, OsDeployDispatchPermit, OsDeployLeaseStatus,
-    OsDeployResponseCapture, ReapSummary, Scheduler, SchedulerError,
+    OsDeployMaintenanceSummary, OsDeployResponseCapture, ReapSummary, Scheduler, SchedulerError,
 };
 pub use store::{
     CommandAppend, EventAppend, OperationProjection, OutboxMessage, PgStore, StoreError,

@@ -18,6 +18,50 @@ pub struct Ready {
     pub request: ProvisioningMutationRequestV1,
 }
 impl Scenario {
+    pub async fn reconciliation_observation(
+        &self,
+        grant: &postgres_store::LeaseGrant,
+    ) -> (controller_domain::EventId, i64) {
+        let snap = self
+            .db
+            .store
+            .load_osdeploy_operation(grant.operation_id())
+            .await
+            .unwrap();
+        let context = self
+            .db
+            .store
+            .load_osdeploy_pve_context(
+                grant.operation_id(),
+                snap.revision(),
+                ProvisioningEvaluationModeV1::Reconciliation,
+            )
+            .await
+            .unwrap();
+        let evidence = self.collect(&context).await;
+        let event = self
+            .db
+            .store
+            .record_osdeploy_pve_evidence(
+                grant.operation_id(),
+                grant.attempt_id(),
+                snap.revision(),
+                &evidence,
+            )
+            .await
+            .unwrap();
+        let revision = self
+            .db
+            .store
+            .load_osdeploy_operation(grant.operation_id())
+            .await
+            .unwrap()
+            .revision();
+        (event, revision)
+    }
+    pub async fn wait_until(&self, at: chrono::DateTime<Utc>) {
+        tokio::time::timeout(std::time::Duration::from_secs(35), sqlx::query("SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz-clock_timestamp()))))").bind(at).execute(&self.db.pool)).await.expect("owned DB-time wait exceeded 35 seconds").unwrap();
+    }
     pub async fn finish_stage(
         &self,
         stage: osdeploy_adapter::OsDeployStage,

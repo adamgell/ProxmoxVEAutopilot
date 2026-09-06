@@ -122,6 +122,11 @@ impl Scheduler {
         authority(self, &mut tx).await?;
         let snapshot = locked_execution_with_cap(&mut tx, operation, true).await?;
         admit(&snapshot, workflow_sha256)?;
+        if snapshot.state() == ExecutionState::Pending && snapshot.attempt_id().is_some() {
+            let grant = reclaim_lease(self, &mut tx, &snapshot, cap).await?;
+            tx.commit().await?;
+            return Ok(grant);
+        }
         if snapshot.state() != ExecutionState::Pending
             || snapshot.attempt_id().is_some()
             || snapshot.dispatch().is_some()
@@ -395,4 +400,87 @@ impl Scheduler {
             checked_at,
         })
     }
+}
+
+async fn reclaim_lease(
+    s: &Scheduler,
+    tx: &mut Transaction<'_, Postgres>,
+    snapshot: &OsDeployOperationSnapshot,
+    cap: u32,
+) -> Result<Option<LeaseGrant>, Error> {
+    let operation = snapshot.operation_id();
+    let attempt = snapshot.attempt_id().ok_or(Error::Validation)?;
+    let deadline = snapshot.deadline_at().ok_or(Error::Validation)?;
+    let reclaimed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND action='lease_reclaimed_same_attempt') AND NOT EXISTS(SELECT 1 FROM rust_controller.worker_leases WHERE operation_id=$1) AND NOT EXISTS(SELECT 1 FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='attempt_started')")
+        .bind(operation.as_uuid()).fetch_one(&mut **tx).await?;
+    if !reclaimed || snapshot.dispatch().is_some() {
+        return Err(Error::Validation);
+    }
+    let at = now(tx).await?;
+    if at >= deadline {
+        return Err(Error::FenceLost);
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.worker_leases l JOIN rust_controller.operations o USING(operation_id) WHERE o.workflow_kind='os_deploy' AND l.lease_expires_at>clock_timestamp()").fetch_one(&mut **tx).await?;
+    if count >= i64::from(cap) {
+        return Ok(None);
+    }
+    let at = now(tx).await?;
+    if at >= deadline {
+        return Err(Error::FenceLost);
+    }
+    let expiry = (at + chrono::Duration::seconds(30)).min(deadline);
+    let event = EventId::new();
+    let token = Uuid::now_v7();
+    let token_hash: String =
+        sqlx::query_scalar("SELECT encode(sha256(convert_to($1,'UTF8')),'hex')")
+            .bind(token.to_string())
+            .fetch_one(&mut **tx)
+            .await?;
+    let value = envelope(
+        snapshot,
+        attempt,
+        s.generation,
+        snapshot.revision(),
+        at,
+        wire::Detail::LeaseAcquired(wire::Acquisition {
+            purpose: wire::Purpose::ReclaimedEvaluation,
+            acquisition_event_id: event,
+            token_sha256: token_hash.clone(),
+            worker_id: s.worker_id.clone(),
+            acquired_at: at,
+            expires_at: expiry,
+            deadline_at: deadline,
+            prior_schedule_event_id: None,
+        }),
+    )?;
+    append_osdeploy_decision(
+        tx,
+        event,
+        &format!("osdeploy:acquire:{}", event.as_uuid()),
+        &value,
+    )
+    .await?;
+    sqlx::query("INSERT INTO rust_controller.osdeploy_lease_epochs(acquisition_event_id,operation_id,run_id,attempt_id,executor_kind,generation,worker_id,lease_token_sha256,acquired_at,initial_expires_at,deadline_at,purpose) VALUES($1,$2,$3,$4,'rust',$5,$6,$7,$8,$9,$10,'reclaimed_evaluation')")
+        .bind(event.as_uuid()).bind(operation.as_uuid()).bind(snapshot.run_id().as_uuid()).bind(attempt.as_uuid()).bind(s.generation).bind(&s.worker_id).bind(token_hash).bind(at).bind(expiry).bind(deadline).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO rust_controller.worker_leases(operation_id,attempt_id,executor_kind,generation,worker_id,lease_token,acquired_at,heartbeat_at,lease_expires_at,deadline_at) VALUES($1,$2,'rust',$3,$4,$5,$6,$6,$7,$8)")
+        .bind(operation.as_uuid()).bind(attempt.as_uuid()).bind(s.generation).bind(&s.worker_id).bind(token.to_string()).bind(at).bind(expiry).bind(deadline).execute(&mut **tx).await?;
+    let proof = OsDeployTransitionProof::reclaimed_lease(tx, event).await?;
+    append_osdeploy_transition(tx, proof).await?;
+    sqlx::query("UPDATE rust_controller.attempts SET state='leased' WHERE operation_id=$1 AND attempt_id=$2").bind(operation.as_uuid()).bind(attempt.as_uuid()).execute(&mut **tx).await?;
+    let grant = LeaseGrant::new(
+        operation,
+        attempt,
+        1,
+        ExecutorKind::Rust,
+        s.generation,
+        s.worker_id.clone(),
+        token,
+        at,
+        at,
+        expiry,
+        deadline,
+    );
+    Box::pin(load::load_execution(tx, operation)).await?;
+    active_at(&grant, now(tx).await?)?;
+    Ok(Some(grant))
 }

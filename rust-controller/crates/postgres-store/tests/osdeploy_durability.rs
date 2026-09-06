@@ -5271,3 +5271,1823 @@ async fn task6_scope_crossing_during_decision_rolls_back_then_retries_original_e
     assert_eq!(actions, vec!["activated_scope_expired"]);
     assert_eq!(s.fake.recorded_provisioning_submissions().len(), 1);
 }
+#[tokio::test]
+async fn cancellation_fences_all_sixteen_without_manufactured_attempts() {
+    let s = osdeploy_execution_support::Scenario::new(300, true).await;
+    let g = s.started(osdeploy_adapter::OsDeployStage::Clone).await;
+    s.db.scheduler()
+        .cancel_osdeploy_run(s.ids.run_id())
+        .await
+        .unwrap();
+    for stage in osdeploy_adapter::OsDeployStage::ALL {
+        let snap =
+            s.db.store
+                .load_osdeploy_operation(s.ids.operation(stage))
+                .await
+                .unwrap();
+        assert!(snap.cancelled());
+        assert_eq!(snap.state(), controller_domain::ExecutionState::Blocked);
+        assert_eq!(
+            snap.attempt_id(),
+            (stage == osdeploy_adapter::OsDeployStage::Clone).then_some(g.attempt_id())
+        );
+    }
+    let before = s.db.snapshot().await;
+    s.db.scheduler()
+        .cancel_osdeploy_run(s.ids.run_id())
+        .await
+        .unwrap();
+    assert_eq!(s.db.snapshot().await, before);
+}
+#[tokio::test]
+async fn recovery_reclaims_twice_without_replacing_original_attempt_or_budget() {
+    use osdeploy_adapter::OsDeployStage;
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    let op = s.ids.operation(OsDeployStage::Clone);
+    let original =
+        s.db.scheduler()
+            .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+            .await
+            .unwrap()
+            .unwrap();
+    let activation =
+        s.db.store
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .activated_at();
+    let mut grant = original.clone();
+    for _ in 0..2 {
+        s.wait_until(*grant.lease_expires_at()).await;
+        let result = s.db.scheduler().reap_osdeploy_expired().await.unwrap();
+        assert_eq!(
+            (result.examined(), result.changed(), result.rejected()),
+            (1, 1, 0)
+        );
+        let snap = s.db.store.load_osdeploy_operation(op).await.unwrap();
+        assert_eq!(snap.state(), controller_domain::ExecutionState::Pending);
+        assert_eq!(snap.attempt_id(), Some(original.attempt_id()));
+        assert_eq!(snap.activated_at(), activation);
+        assert_eq!(snap.deadline_at(), Some(*original.deadline_at()));
+        grant =
+            s.db.other_scheduler()
+                .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(grant.attempt_id(), original.attempt_id());
+        assert_eq!(grant.attempt_number(), 1);
+        assert_eq!(grant.deadline_at(), original.deadline_at());
+    }
+    s.db.other_scheduler()
+        .start_osdeploy_bound(&grant, s.ids.workflow_sha256())
+        .await
+        .unwrap();
+    let starts: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='attempt_started'").bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(starts, 1);
+}
+
+#[tokio::test]
+async fn recovery_reparks_actual_read_only_running_and_resumed_waiting() {
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    let grant = s.started(osdeploy_adapter::OsDeployStage::Clone).await;
+    s.wait_until(*grant.lease_expires_at()).await;
+    let result = s.db.scheduler().reap_osdeploy_expired().await.unwrap();
+    assert_eq!(
+        (result.examined(), result.changed(), result.rejected()),
+        (1, 1, 0)
+    );
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(grant.operation_id())
+            .await
+            .unwrap();
+    assert_eq!(snap.state(), controller_domain::ExecutionState::Waiting);
+    s.wait_until(snap.next_check_at().unwrap()).await;
+    let resumed =
+        s.db.scheduler()
+            .resume_osdeploy_bound(
+                grant.operation_id(),
+                grant.attempt_id(),
+                snap.revision(),
+                s.ids.workflow_sha256(),
+                1,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+    s.wait_until(*resumed.lease_expires_at()).await;
+    assert_eq!(
+        s.db.scheduler()
+            .reap_osdeploy_expired()
+            .await
+            .unwrap()
+            .changed(),
+        1
+    );
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(grant.operation_id())
+            .await
+            .unwrap();
+    assert_eq!(snap.state(), controller_domain::ExecutionState::Waiting);
+    assert_eq!(snap.attempt_id(), Some(grant.attempt_id()));
+    assert_eq!(snap.deadline_at(), Some(*grant.deadline_at()));
+    assert!(snap.next_check_at().is_some());
+}
+
+#[tokio::test]
+async fn recovery_dispatched_expired_observer_becomes_unknown_without_resend() {
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+    let (permit, _capture) =
+        s.db.scheduler()
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+    drop(permit);
+    s.wait_until(*r.grant.lease_expires_at()).await;
+    assert_eq!(
+        s.db.scheduler()
+            .reap_osdeploy_expired()
+            .await
+            .unwrap()
+            .changed(),
+        1
+    );
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(r.grant.operation_id())
+            .await
+            .unwrap();
+    assert_eq!(snap.state(), controller_domain::ExecutionState::Unknown);
+    assert!(snap.dispatch().is_some());
+    assert!(snap.receipt().is_none());
+    assert!(snap.next_check_at().is_none());
+    assert!(s.fake.recorded_provisioning_submissions().is_empty());
+    assert!(
+        s.db.scheduler()
+            .claim_osdeploy_bound(r.grant.operation_id(), s.ids.workflow_sha256(), 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+#[tokio::test]
+async fn task7_original_unknown_reconciles_actual_success_and_failure_without_new_lease() {
+    use pve_port::*;
+    for failed in [false, true] {
+        let s = osdeploy_execution_support::Scenario::new(120, true).await;
+        if failed {
+            s.fake
+                .enqueue_provisioning_outcome(
+                    ProvisioningFaultSelectorV1::new(ProvisioningActionV1::Clone, None),
+                    FakeMutationOutcome::AcceptedTaskFails,
+                )
+                .unwrap();
+        }
+        let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+        let scheduler = s.db.scheduler();
+        let (permit, capture) = scheduler
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+        let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+        assert_eq!(
+            s.observe_and_decide(&r.grant).await,
+            controller_domain::ExecutionState::Unknown
+        );
+        scheduler
+            .record_osdeploy_pve_receipt(&capture, &receipt)
+            .await
+            .unwrap();
+        let (event, revision) = s.reconciliation_observation(&r.grant).await;
+        assert_eq!(
+            scheduler
+                .reconcile_osdeploy_unknown(
+                    r.grant.operation_id(),
+                    r.grant.attempt_id(),
+                    revision,
+                    event,
+                    s.ids.workflow_sha256()
+                )
+                .await
+                .unwrap(),
+            postgres_store::OsDeployProgress::Decided(if failed {
+                controller_domain::ExecutionState::Failed
+            } else {
+                controller_domain::ExecutionState::Satisfied
+            })
+        );
+        let snap =
+            s.db.store
+                .load_osdeploy_operation(r.grant.operation_id())
+                .await
+                .unwrap();
+        assert_eq!(snap.attempt_id(), Some(r.grant.attempt_id()));
+        assert_eq!(snap.deadline_at(), Some(*r.grant.deadline_at()));
+        let leases: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.worker_leases")
+            .fetch_one(&s.db.pool)
+            .await
+            .unwrap();
+        assert_eq!(leases, 0);
+        assert_eq!(s.fake.recorded_provisioning_submissions().len(), 1);
+        if !failed {
+            assert_eq!(
+                s.finish_stage(osdeploy_adapter::OsDeployStage::DiskCapacity)
+                    .await,
+                controller_domain::ExecutionState::Satisfied
+            );
+            assert_eq!(
+                s.finish_stage(osdeploy_adapter::OsDeployStage::ConfigurePe)
+                    .await,
+                controller_domain::ExecutionState::Satisfied
+            );
+            assert_eq!(s.fake.recorded_provisioning_submissions().len(), 3);
+        }
+    }
+}
+
+#[tokio::test]
+async fn task7_expiry_without_projection_records_once_at_original_deadline() {
+    let s = osdeploy_execution_support::Scenario::new(1, true).await;
+    let g = s.started(osdeploy_adapter::OsDeployStage::Clone).await;
+    s.wait_until(*g.deadline_at()).await;
+    let mut cursor = postgres_store::OsDeployExpiryCursor::default();
+    let result =
+        s.db.scheduler()
+            .expire_osdeploy_scopes(&mut cursor)
+            .await
+            .unwrap();
+    assert_eq!(
+        (result.examined(), result.changed(), result.rejected()),
+        (1, 1, 0)
+    );
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(g.operation_id())
+            .await
+            .unwrap();
+    assert_eq!(snap.state(), controller_domain::ExecutionState::Unknown);
+    assert_eq!(snap.attempt_id(), Some(g.attempt_id()));
+    let before = s.db.snapshot().await;
+    assert_eq!(
+        s.db.scheduler()
+            .expire_osdeploy_scopes(&mut postgres_store::OsDeployExpiryCursor::default())
+            .await
+            .unwrap()
+            .changed(),
+        0
+    );
+    assert_eq!(before, s.db.snapshot().await);
+}
+
+#[tokio::test]
+async fn task7_repair_and_due_restore_genuine_waiting_without_creating_authority() {
+    use pve_port::*;
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    s.fake
+        .enqueue_provisioning_outcome(
+            ProvisioningFaultSelectorV1::new(ProvisioningActionV1::Clone, None),
+            FakeMutationOutcome::AcceptedTaskDelayed,
+        )
+        .unwrap();
+    let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+    let (permit, capture) =
+        s.db.scheduler()
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    s.db.scheduler()
+        .record_osdeploy_pve_receipt(&capture, &receipt)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.observe_and_decide(&r.grant).await,
+        controller_domain::ExecutionState::Waiting
+    );
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(r.grant.operation_id())
+            .await
+            .unwrap();
+    sqlx::query("DELETE FROM rust_controller.osdeploy_schedule_projection WHERE operation_id=$1")
+        .bind(r.grant.operation_id().as_uuid())
+        .execute(&s.db.pool)
+        .await
+        .unwrap();
+    let mut cursor = postgres_store::OsDeployRepairCursor::default();
+    assert_eq!(
+        s.db.scheduler()
+            .repair_osdeploy_schedules(&mut cursor)
+            .await
+            .unwrap()
+            .changed(),
+        1
+    );
+    s.wait_until(snap.next_check_at().unwrap()).await;
+    let before = s.db.snapshot().await;
+    let due = s.db.scheduler().discover_osdeploy_due().await.unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].operation_id(), r.grant.operation_id());
+    assert_eq!(due[0].kind(), postgres_store::OsDeployDueKind::Waiting);
+    assert_eq!(due[0].attempt_id(), r.grant.attempt_id());
+    assert_eq!(before, s.db.snapshot().await);
+    assert_eq!(s.fake.recorded_provisioning_submissions().len(), 1);
+}
+#[tokio::test]
+async fn task7_terminal_residual_reaper_preserves_selected_outcome_and_original_attempt() {
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+    let lease: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(l) FROM rust_controller.worker_leases l WHERE operation_id=$1",
+    )
+    .bind(r.grant.operation_id().as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    let (permit, _capture) =
+        s.db.scheduler()
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+    drop(permit);
+    assert_eq!(
+        s.observe_and_decide(&r.grant).await,
+        controller_domain::ExecutionState::Unknown
+    );
+    let attempts: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(a) FROM rust_controller.attempts a WHERE attempt_id=$1",
+    )
+    .bind(r.grant.attempt_id().as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO rust_controller.worker_leases SELECT * FROM jsonb_populate_record(NULL::rust_controller.worker_leases,$1)").bind(lease).execute(&s.db.pool).await.unwrap();
+    let summary = s.db.scheduler().reap_osdeploy_expired().await.unwrap();
+    assert_eq!(
+        (summary.examined(), summary.changed(), summary.rejected()),
+        (1, 1, 0)
+    );
+    let after: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(a) FROM rust_controller.attempts a WHERE attempt_id=$1",
+    )
+    .bind(r.grant.attempt_id().as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(attempts, after);
+    assert_eq!(
+        s.db.store
+            .load_osdeploy_operation(r.grant.operation_id())
+            .await
+            .unwrap()
+            .state(),
+        controller_domain::ExecutionState::Unknown
+    );
+    let count:i64=sqlx::query_scalar("SELECT count(*) FROM rust_controller.osdeploy_decisions WHERE action='residual_lease_revoked'").fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(count, 1);
+}
+#[tokio::test]
+async fn task7_unauthorized_unknown_reconciliation_is_validation_without_writes() {
+    use pve_port::*;
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+    let (permit, capture) =
+        s.db.scheduler()
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    assert_eq!(
+        s.observe_and_decide(&r.grant).await,
+        controller_domain::ExecutionState::Unknown
+    );
+    s.db.scheduler()
+        .record_osdeploy_pve_receipt(&capture, &receipt)
+        .await
+        .unwrap();
+    s.fake.enqueue_provisioning_config_read(
+        NodeName::parse("node-a").unwrap(),
+        Vmid::new(900).unwrap(),
+        FakeProvisioningConfigReadV1::Error(PveReadError::Unauthorized),
+    );
+    let (event, revision) = s.reconciliation_observation(&r.grant).await;
+    let before = s.db.snapshot().await;
+    assert_eq!(
+        s.db.scheduler()
+            .reconcile_osdeploy_unknown(
+                r.grant.operation_id(),
+                r.grant.attempt_id(),
+                revision,
+                event,
+                s.ids.workflow_sha256()
+            )
+            .await,
+        Err(postgres_store::OsDeployExecutionError::Validation)
+    );
+    assert_eq!(before, s.db.snapshot().await);
+    assert_eq!(s.fake.recorded_provisioning_submissions().len(), 1);
+}
+#[tokio::test]
+async fn task7_cancel_terminal_unknown_clears_schedule_and_matching_future_lease() {
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+    let lease: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(l) FROM rust_controller.worker_leases l WHERE operation_id=$1",
+    )
+    .bind(r.grant.operation_id().as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    let (permit, capture) =
+        s.db.scheduler()
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    assert_eq!(
+        s.observe_and_decide(&r.grant).await,
+        controller_domain::ExecutionState::Unknown
+    );
+    s.db.scheduler()
+        .record_osdeploy_pve_receipt(&capture, &receipt)
+        .await
+        .unwrap();
+    s.db.scheduler()
+        .repair_osdeploy_schedules(&mut postgres_store::OsDeployRepairCursor::default())
+        .await
+        .unwrap();
+    assert!(
+        s.db.store
+            .load_osdeploy_operation(r.grant.operation_id())
+            .await
+            .unwrap()
+            .next_check_at()
+            .is_some()
+    );
+    let selected:uuid::Uuid=sqlx::query_scalar("SELECT event_id FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND resolution='unknown' ORDER BY decision_revision DESC LIMIT 1").bind(r.grant.operation_id().as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    let attempt: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(a) FROM rust_controller.attempts a WHERE attempt_id=$1",
+    )
+    .bind(r.grant.attempt_id().as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO rust_controller.worker_leases SELECT * FROM jsonb_populate_record(NULL::rust_controller.worker_leases,$1)").bind(lease).execute(&s.db.pool).await.unwrap();
+    s.db.scheduler()
+        .cancel_osdeploy_run(s.ids.run_id())
+        .await
+        .unwrap();
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(r.grant.operation_id())
+            .await
+            .unwrap();
+    assert!(snap.cancelled());
+    assert_eq!(snap.state(), controller_domain::ExecutionState::Unknown);
+    assert!(snap.next_check_at().is_none());
+    let after: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(a) FROM rust_controller.attempts a WHERE attempt_id=$1",
+    )
+    .bind(r.grant.attempt_id().as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(attempt, after);
+    let same:uuid::Uuid=sqlx::query_scalar("SELECT event_id FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND resolution='unknown' ORDER BY decision_revision DESC LIMIT 1").bind(r.grant.operation_id().as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(selected, same);
+    let leases: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.worker_leases")
+        .fetch_one(&s.db.pool)
+        .await
+        .unwrap();
+    let schedules: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rust_controller.osdeploy_schedule_projection")
+            .fetch_one(&s.db.pool)
+            .await
+            .unwrap();
+    assert_eq!((leases, schedules), (0, 0));
+}
+
+#[tokio::test]
+async fn task7_expiry_cursor_crosses_poison_pages_and_wraps_without_starvation() {
+    use osdeploy_adapter::OsDeployStage;
+    let f = osdeploy_support::Fixture::new().await;
+    let mut grants = Vec::new();
+    for index in 0..35_u32 {
+        let p = osdeploy_support::altered(|v| {
+            v["policy"]["mutation_seconds"] = serde_json::json!(1);
+            v["policy"]["evidence_freshness_seconds"] = serde_json::json!(1);
+            v["vm"]["target_vmid"] = serde_json::json!(1000 + index);
+            v["vm"]["uuid"] = serde_json::json!(format!("88888888-8888-4888-8888-{index:012}"));
+            v["vm"]["mac"] = serde_json::json!(format!("02:00:00:01:{index:02X}:01"));
+            v["names"]["requested_name"] = serde_json::json!(format!("Fleet{index}"));
+            v["names"]["windows_name"] = serde_json::json!(format!("Fleet{index}"));
+            v["names"]["expected_agent_id"] = serde_json::json!(format!("agent-fleet{index}"));
+        });
+        let ids = f
+            .store
+            .enqueue_osdeploy(controller_domain::RunId::new(), &p)
+            .await
+            .unwrap();
+        let grant = f
+            .scheduler()
+            .claim_osdeploy_bound(
+                ids.operation(OsDeployStage::Clone),
+                ids.workflow_sha256(),
+                40,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        grants.push(grant);
+    }
+    // Extra attempt is an owned corruption input, never a successful predecessor.
+    sqlx::query("INSERT INTO rust_controller.attempts(attempt_id,operation_id,attempt_number,state) VALUES($1,$2,2,'pending')").bind(controller_domain::AttemptId::new().as_uuid()).bind(grants[0].operation_id().as_uuid()).execute(&f.pool).await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        sqlx::query(
+            "SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz-clock_timestamp()))))",
+        )
+        .bind(grants.last().unwrap().deadline_at())
+        .execute(&f.pool),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let mut cursor = postgres_store::OsDeployExpiryCursor::default();
+    let first = f
+        .scheduler()
+        .expire_osdeploy_scopes(&mut cursor)
+        .await
+        .unwrap();
+    assert_eq!(
+        (first.examined(), first.changed(), first.rejected()),
+        (32, 31, 1)
+    );
+    let second = f
+        .scheduler()
+        .expire_osdeploy_scopes(&mut cursor)
+        .await
+        .unwrap();
+    assert_eq!(
+        (second.examined(), second.changed(), second.rejected()),
+        (3, 3, 0)
+    );
+    for grant in grants.iter().skip(1) {
+        let snap = f
+            .store
+            .load_osdeploy_operation(grant.operation_id())
+            .await
+            .unwrap();
+        assert_eq!(snap.state(), controller_domain::ExecutionState::Unknown);
+        assert_eq!(snap.attempt_id(), Some(grant.attempt_id()));
+    }
+    let before = f.snapshot().await;
+    let restarted = f
+        .scheduler()
+        .expire_osdeploy_scopes(&mut postgres_store::OsDeployExpiryCursor::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            restarted.examined(),
+            restarted.changed(),
+            restarted.rejected()
+        ),
+        (1, 0, 1)
+    );
+    assert_eq!(before, f.snapshot().await);
+    let wrapped = f
+        .scheduler()
+        .expire_osdeploy_scopes(&mut cursor)
+        .await
+        .unwrap();
+    assert_eq!(
+        (wrapped.examined(), wrapped.changed(), wrapped.rejected()),
+        (1, 0, 1)
+    );
+}
+fn task7_fleet_plan(index: u32, seconds: u32) -> osdeploy_adapter::OsDeployPlanV1 {
+    osdeploy_support::altered(|v| {
+        v["policy"]["mutation_seconds"] = serde_json::json!(seconds);
+        v["policy"]["evidence_freshness_seconds"] = serde_json::json!(seconds.min(30));
+        v["vm"]["target_vmid"] = serde_json::json!(2000 + index);
+        v["vm"]["uuid"] = serde_json::json!(format!("99999999-9999-4999-8999-{index:012}"));
+        v["vm"]["mac"] = serde_json::json!(format!("02:00:00:02:{index:02X}:01"));
+        v["names"]["requested_name"] = serde_json::json!(format!("Repair{index}"));
+        v["names"]["windows_name"] = serde_json::json!(format!("Repair{index}"));
+        v["names"]["expected_agent_id"] = serde_json::json!(format!("agent-repair{index}"));
+    })
+}
+
+#[tokio::test]
+async fn task7_projection_repair_pages_real_reparked_history_and_bounds_combined_due() {
+    let f = osdeploy_support::Fixture::new().await;
+    let mut grants = Vec::new();
+    for index in 0..35 {
+        let ids = f
+            .store
+            .enqueue_osdeploy(
+                controller_domain::RunId::new(),
+                &task7_fleet_plan(index, 300),
+            )
+            .await
+            .unwrap();
+        let grant = f
+            .scheduler()
+            .claim_osdeploy_bound(
+                ids.operation(osdeploy_adapter::OsDeployStage::Clone),
+                ids.workflow_sha256(),
+                40,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        f.scheduler()
+            .start_osdeploy_bound(&grant, ids.workflow_sha256())
+            .await
+            .unwrap();
+        grants.push(grant);
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(35),
+        sqlx::query(
+            "SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz-clock_timestamp()))))",
+        )
+        .bind(grants.last().unwrap().lease_expires_at())
+        .execute(&f.pool),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        f.scheduler()
+            .reap_osdeploy_expired()
+            .await
+            .unwrap()
+            .changed(),
+        32
+    );
+    assert_eq!(
+        f.scheduler()
+            .reap_osdeploy_expired()
+            .await
+            .unwrap()
+            .changed(),
+        3
+    );
+    sqlx::query("DELETE FROM rust_controller.osdeploy_schedule_projection")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let mut cursor = postgres_store::OsDeployRepairCursor::default();
+    let first = f
+        .scheduler()
+        .repair_osdeploy_schedules(&mut cursor)
+        .await
+        .unwrap();
+    assert_eq!(
+        (first.examined(), first.changed(), first.rejected()),
+        (32, 32, 0)
+    );
+    let second = f
+        .scheduler()
+        .repair_osdeploy_schedules(&mut cursor)
+        .await
+        .unwrap();
+    assert_eq!(
+        (second.examined(), second.changed(), second.rejected()),
+        (3, 3, 0)
+    );
+    for grant in &grants {
+        assert_eq!(
+            f.store
+                .load_osdeploy_operation(grant.operation_id())
+                .await
+                .unwrap()
+                .state(),
+            controller_domain::ExecutionState::Waiting
+        );
+    }
+    let due_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "SELECT max(next_check_at) FROM rust_controller.osdeploy_schedule_projection",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        sqlx::query(
+            "SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz-clock_timestamp()))))",
+        )
+        .bind(due_at)
+        .execute(&f.pool),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let before = f.snapshot().await;
+    let due = f.scheduler().discover_osdeploy_due().await.unwrap();
+    assert_eq!(due.len(), 32);
+    let expected:Vec<uuid::Uuid>=sqlx::query_scalar("SELECT operation_id FROM rust_controller.osdeploy_schedule_projection ORDER BY next_check_at,operation_id LIMIT 32").fetch_all(&f.pool).await.unwrap();
+    assert_eq!(
+        due.iter()
+            .map(|d| d.operation_id().as_uuid())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert!(
+        due.iter()
+            .all(|d| d.kind() == postgres_store::OsDeployDueKind::Waiting)
+    );
+    assert_eq!(f.snapshot().await, before);
+    assert_eq!(
+        f.scheduler()
+            .repair_osdeploy_schedules(&mut cursor)
+            .await
+            .unwrap()
+            .changed(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn task7_missing_receipt_repair_only_enables_original_bounded_observation() {
+    use pve_port::*;
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    s.fake
+        .enqueue_provisioning_outcome(
+            ProvisioningFaultSelectorV1::new(ProvisioningActionV1::Clone, None),
+            FakeMutationOutcome::AcceptedTaskDelayed,
+        )
+        .unwrap();
+    let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+    let (permit, capture) =
+        s.db.scheduler()
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    assert_eq!(
+        s.observe_and_decide(&r.grant).await,
+        controller_domain::ExecutionState::Unknown
+    );
+    let mut cursor = postgres_store::OsDeployRepairCursor::default();
+    assert_eq!(
+        s.db.scheduler()
+            .repair_osdeploy_schedules(&mut cursor)
+            .await
+            .unwrap()
+            .changed(),
+        1
+    );
+    assert!(
+        s.db.scheduler()
+            .discover_osdeploy_due()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let (event, revision) = s.reconciliation_observation(&r.grant).await;
+    let before = s.db.snapshot().await;
+    assert_eq!(
+        s.db.scheduler()
+            .reconcile_osdeploy_unknown(
+                r.grant.operation_id(),
+                r.grant.attempt_id(),
+                revision,
+                event,
+                s.ids.workflow_sha256()
+            )
+            .await
+            .unwrap(),
+        postgres_store::OsDeployProgress::Idle
+    );
+    assert_eq!(before, s.db.snapshot().await);
+    s.db.scheduler()
+        .record_osdeploy_pve_receipt(&capture, &receipt)
+        .await
+        .unwrap();
+    assert!(
+        s.db.store
+            .load_osdeploy_operation(r.grant.operation_id())
+            .await
+            .unwrap()
+            .next_check_at()
+            .is_none()
+    );
+    assert_eq!(
+        s.db.scheduler()
+            .repair_osdeploy_schedules(&mut cursor)
+            .await
+            .unwrap()
+            .changed(),
+        1
+    );
+    let snap =
+        s.db.store
+            .load_osdeploy_operation(r.grant.operation_id())
+            .await
+            .unwrap();
+    s.wait_until(snap.next_check_at().unwrap()).await;
+    let due = s.db.scheduler().discover_osdeploy_due().await.unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(
+        due[0].kind(),
+        postgres_store::OsDeployDueKind::UnknownReconciliation
+    );
+    let (event, revision) = s.reconciliation_observation(&r.grant).await;
+    assert_eq!(
+        s.db.scheduler()
+            .reconcile_osdeploy_unknown(
+                r.grant.operation_id(),
+                r.grant.attempt_id(),
+                revision,
+                event,
+                s.ids.workflow_sha256()
+            )
+            .await
+            .unwrap(),
+        postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Unknown)
+    );
+    let states:i64=sqlx::query_scalar("SELECT count(*) FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='execution_state_changed' AND execution_state='waiting'").bind(r.grant.operation_id().as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(states, 0);
+    let MutationReceipt::Task(upid) = receipt else {
+        panic!("actual Clone task required")
+    };
+    s.fake.complete_provisioning_task(&upid).unwrap();
+    let (event, revision) = s.reconciliation_observation(&r.grant).await;
+    assert_eq!(
+        s.db.scheduler()
+            .reconcile_osdeploy_unknown(
+                r.grant.operation_id(),
+                r.grant.attempt_id(),
+                revision,
+                event,
+                s.ids.workflow_sha256()
+            )
+            .await
+            .unwrap(),
+        postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Satisfied)
+    );
+    assert_eq!(s.fake.recorded_provisioning_submissions().len(), 1);
+}
+#[tokio::test]
+async fn task7_reconciliation_preserves_synchronous_loss_and_actual_conflict() {
+    use pve_port::*;
+    for conflict in [false, true] {
+        let s = osdeploy_execution_support::Scenario::new(120, false).await;
+        s.finish_stage(osdeploy_adapter::OsDeployStage::Clone).await;
+        s.finish_stage(osdeploy_adapter::OsDeployStage::DiskCapacity)
+            .await;
+        let r = s.ready(osdeploy_adapter::OsDeployStage::ConfigurePe).await;
+        s.fake
+            .enqueue_provisioning_outcome(
+                ProvisioningFaultSelectorV1::new(ProvisioningActionV1::ConfigurePe, None),
+                FakeMutationOutcome::AppliedResponseLost,
+            )
+            .unwrap();
+        let (permit, _capture) =
+            s.db.scheduler()
+                .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+                .await
+                .unwrap();
+        assert_eq!(
+            permit.submit_fake_once(&s.fake).await,
+            Err(PveWriteError::OutcomeUnknown)
+        );
+        assert_eq!(
+            s.observe_and_decide(&r.grant).await,
+            controller_domain::ExecutionState::Unknown
+        );
+        if conflict {
+            let vm = r.request.plan().expected().vm();
+            let config = s
+                .fake
+                .provisioning_vm_config(vm.node(), vm.target_vmid())
+                .await
+                .unwrap();
+            let mut value = serde_json::to_value(config).unwrap();
+            value["cores"] = serde_json::json!(12);
+            s.fake
+                .replace_provisioning_vm(
+                    serde_json::from_value(value).unwrap(),
+                    PowerState::Stopped,
+                )
+                .unwrap();
+        }
+        let (event, revision) = s.reconciliation_observation(&r.grant).await;
+        assert_eq!(
+            s.db.scheduler()
+                .reconcile_osdeploy_unknown(
+                    r.grant.operation_id(),
+                    r.grant.attempt_id(),
+                    revision,
+                    event,
+                    s.ids.workflow_sha256()
+                )
+                .await
+                .unwrap(),
+            postgres_store::OsDeployProgress::Decided(if conflict {
+                controller_domain::ExecutionState::Conflicted
+            } else {
+                controller_domain::ExecutionState::Satisfied
+            })
+        );
+        assert!(
+            s.db.store
+                .load_osdeploy_operation(r.grant.operation_id())
+                .await
+                .unwrap()
+                .receipt()
+                .is_none()
+        );
+        assert_eq!(s.fake.recorded_provisioning_submissions().len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn task7_late_unknown_success_cannot_pass_deadline_and_expiry_has_no_second_state_event() {
+    let s = osdeploy_execution_support::Scenario::new(2, true).await;
+    let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+    let (permit, capture) =
+        s.db.scheduler()
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    assert_eq!(
+        s.observe_and_decide(&r.grant).await,
+        controller_domain::ExecutionState::Unknown
+    );
+    s.wait_until(*r.grant.deadline_at()).await;
+    s.db.scheduler()
+        .record_osdeploy_pve_receipt(&capture, &receipt)
+        .await
+        .unwrap();
+    let (event, revision) = s.reconciliation_observation(&r.grant).await;
+    let before = s.db.snapshot().await;
+    assert_eq!(
+        s.db.scheduler()
+            .reconcile_osdeploy_unknown(
+                r.grant.operation_id(),
+                r.grant.attempt_id(),
+                revision,
+                event,
+                s.ids.workflow_sha256()
+            )
+            .await,
+        Err(postgres_store::OsDeployExecutionError::FenceLost)
+    );
+    assert_eq!(before, s.db.snapshot().await);
+    let states:i64=sqlx::query_scalar("SELECT count(*) FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='execution_state_changed'").bind(r.grant.operation_id().as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(
+        s.db.scheduler()
+            .expire_osdeploy_scopes(&mut postgres_store::OsDeployExpiryCursor::default())
+            .await
+            .unwrap()
+            .changed(),
+        1
+    );
+    let after:i64=sqlx::query_scalar("SELECT count(*) FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='execution_state_changed'").bind(r.grant.operation_id().as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(states, after);
+    let saved = s.db.snapshot().await;
+    assert_eq!(
+        s.db.scheduler()
+            .expire_osdeploy_scopes(&mut postgres_store::OsDeployExpiryCursor::default())
+            .await
+            .unwrap()
+            .examined(),
+        0
+    );
+    assert_eq!(saved, s.db.snapshot().await);
+}
+
+#[tokio::test]
+async fn task7_reclaimed_pending_expires_with_original_attempt() {
+    let s = osdeploy_execution_support::Scenario::new(31, true).await;
+    let op = s.ids.operation(osdeploy_adapter::OsDeployStage::Clone);
+    let g =
+        s.db.scheduler()
+            .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+            .await
+            .unwrap()
+            .unwrap();
+    s.wait_until(*g.lease_expires_at()).await;
+    assert_eq!(
+        s.db.scheduler()
+            .reap_osdeploy_expired()
+            .await
+            .unwrap()
+            .changed(),
+        1
+    );
+    assert_eq!(
+        s.db.store
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .state(),
+        controller_domain::ExecutionState::Pending
+    );
+    s.wait_until(*g.deadline_at()).await;
+    assert_eq!(
+        s.db.scheduler()
+            .expire_osdeploy_scopes(&mut postgres_store::OsDeployExpiryCursor::default())
+            .await
+            .unwrap()
+            .changed(),
+        1
+    );
+    let snap = s.db.store.load_osdeploy_operation(op).await.unwrap();
+    assert_eq!(snap.state(), controller_domain::ExecutionState::Unknown);
+    assert_eq!(snap.attempt_id(), Some(g.attempt_id()));
+    assert_eq!(snap.deadline_at(), Some(*g.deadline_at()));
+}
+
+#[tokio::test]
+async fn task7_foreign_residual_attempt_rejects_reaping_and_atomic_cancellation() {
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+    let lease: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(l) FROM rust_controller.worker_leases l WHERE operation_id=$1",
+    )
+    .bind(r.grant.operation_id().as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    let (permit, _) =
+        s.db.scheduler()
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+    drop(permit);
+    assert_eq!(
+        s.observe_and_decide(&r.grant).await,
+        controller_domain::ExecutionState::Unknown
+    );
+    let foreign = controller_domain::AttemptId::new();
+    sqlx::query("INSERT INTO rust_controller.attempts(attempt_id,operation_id,attempt_number,state) VALUES($1,$2,2,'pending')").bind(foreign.as_uuid()).bind(r.grant.operation_id().as_uuid()).execute(&s.db.pool).await.unwrap();
+    let mut lease = lease;
+    lease["attempt_id"] = serde_json::json!(foreign);
+    sqlx::query("INSERT INTO rust_controller.worker_leases SELECT * FROM jsonb_populate_record(NULL::rust_controller.worker_leases,$1)").bind(lease).execute(&s.db.pool).await.unwrap();
+    let before = s.db.snapshot().await;
+    let result = s.db.scheduler().reap_osdeploy_expired().await.unwrap();
+    assert_eq!(
+        (result.examined(), result.changed(), result.rejected()),
+        (1, 0, 1)
+    );
+    assert_eq!(before, s.db.snapshot().await);
+    assert_eq!(
+        s.db.scheduler().cancel_osdeploy_run(s.ids.run_id()).await,
+        Err(postgres_store::OsDeployExecutionError::Validation)
+    );
+    assert_eq!(before, s.db.snapshot().await);
+}
+#[tokio::test]
+async fn task7_expiry_cursor_finds_late_visible_original_scope_after_wrap() {
+    let f = osdeploy_support::Fixture::new().await;
+    let mut grants = Vec::new();
+    for index in 0..33 {
+        let ids = f
+            .store
+            .enqueue_osdeploy(
+                controller_domain::RunId::new(),
+                &task7_fleet_plan(index, 12),
+            )
+            .await
+            .unwrap();
+        grants.push(
+            f.scheduler()
+                .claim_osdeploy_bound(
+                    ids.operation(osdeploy_adapter::OsDeployStage::Clone),
+                    ids.workflow_sha256(),
+                    40,
+                )
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    let late = f
+        .store
+        .enqueue_osdeploy(controller_domain::RunId::new(), &task7_fleet_plan(40, 1))
+        .await
+        .unwrap();
+    let op = late.operation(osdeploy_adapter::OsDeployStage::Clone);
+    let mut gate = f.pool.acquire().await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock(781337)")
+        .execute(&mut *gate)
+        .await
+        .unwrap();
+    sqlx::raw_sql(&format!("CREATE FUNCTION late_activation_visibility() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation_id='{}'::uuid THEN PERFORM pg_advisory_xact_lock(781337); END IF; RETURN NEW; END $$; CREATE CONSTRAINT TRIGGER late_activation_visibility AFTER INSERT ON rust_controller.osdeploy_lease_epochs DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION late_activation_visibility();",op.as_uuid())).execute(&f.pool).await.unwrap();
+    let scheduler = f.scheduler();
+    let hash = late.workflow_sha256().to_owned();
+    let mut worker = Box::pin(scheduler.claim_osdeploy_bound(op, &hash, 40));
+    tokio::time::timeout(std::time::Duration::from_secs(3),async {
+        loop {
+            tokio::select! {
+                _=&mut worker=>panic!("activation completed before visibility barrier"),
+                result=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=781337 AND NOT granted)").fetch_one(&f.pool)=>if result.unwrap(){break},
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.unwrap();
+    let last = *grants.last().unwrap().deadline_at();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        sqlx::query(
+            "SELECT pg_sleep(GREATEST(0,extract(epoch FROM ($1::timestamptz-clock_timestamp()))))",
+        )
+        .bind(last)
+        .execute(&f.pool),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let invisible:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM rust_controller.osdeploy_attempt_bindings WHERE operation_id=$1)").bind(op.as_uuid()).fetch_one(&f.pool).await.unwrap();
+    assert!(invisible);
+    let mut cursor = postgres_store::OsDeployExpiryCursor::default();
+    let first = f
+        .scheduler()
+        .expire_osdeploy_scopes(&mut cursor)
+        .await
+        .unwrap();
+    assert_eq!(
+        (first.examined(), first.changed(), first.rejected()),
+        (32, 32, 0)
+    );
+    sqlx::query("SELECT pg_advisory_unlock(781337)")
+        .execute(&mut *gate)
+        .await
+        .unwrap();
+    let late_grant = tokio::time::timeout(std::time::Duration::from_secs(3), worker)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    // This delayed commit makes history visible; the stale grant is never used
+    // to start or send. Its original deadline sorts behind the retained cursor.
+    assert!(late_grant.deadline_at() < grants[31].deadline_at());
+    let snap = f.store.load_osdeploy_operation(op).await.unwrap();
+    assert_eq!(snap.state(), controller_domain::ExecutionState::Leased);
+    assert_eq!(snap.deadline_at(), Some(*late_grant.deadline_at()));
+    let second = f
+        .scheduler()
+        .expire_osdeploy_scopes(&mut cursor)
+        .await
+        .unwrap();
+    assert_eq!(
+        (second.examined(), second.changed(), second.rejected()),
+        (1, 1, 0)
+    );
+    assert_eq!(
+        f.store.load_osdeploy_operation(op).await.unwrap().state(),
+        controller_domain::ExecutionState::Leased
+    );
+    let wrapped = f
+        .scheduler()
+        .expire_osdeploy_scopes(&mut cursor)
+        .await
+        .unwrap();
+    assert_eq!(
+        (wrapped.examined(), wrapped.changed(), wrapped.rejected()),
+        (1, 1, 0)
+    );
+    assert_eq!(
+        f.store.load_osdeploy_operation(op).await.unwrap().state(),
+        controller_domain::ExecutionState::Unknown
+    );
+    sqlx::raw_sql("DROP TRIGGER late_activation_visibility ON rust_controller.osdeploy_lease_epochs; DROP FUNCTION late_activation_visibility();").execute(&f.pool).await.unwrap();
+}
+async fn task7_fault_invoke(
+    s: &osdeploy_execution_support::Scenario,
+    r: &osdeploy_execution_support::Ready,
+    kind: &str,
+    evidence: Option<(controller_domain::EventId, i64)>,
+) -> Result<(), postgres_store::OsDeployExecutionError> {
+    match kind {
+        "cancel" => s.db.scheduler().cancel_osdeploy_run(s.ids.run_id()).await,
+        "expire" => {
+            s.db.scheduler()
+                .expire_osdeploy_scopes(&mut postgres_store::OsDeployExpiryCursor::default())
+                .await
+                .map(|_| ())
+        }
+        "repair" => {
+            s.db.scheduler()
+                .repair_osdeploy_schedules(&mut postgres_store::OsDeployRepairCursor::default())
+                .await
+                .map(|_| ())
+        }
+        "reap" => s.db.scheduler().reap_osdeploy_expired().await.map(|_| ()),
+        "reconcile" => {
+            let (event, revision) = evidence.unwrap();
+            s.db.scheduler()
+                .reconcile_osdeploy_unknown(
+                    r.grant.operation_id(),
+                    r.grant.attempt_id(),
+                    revision,
+                    event,
+                    s.ids.workflow_sha256(),
+                )
+                .await
+                .map(|_| ())
+        }
+        _ => panic!("unknown owned fault case"),
+    }
+}
+
+#[tokio::test]
+async fn task7_new_mutations_rollback_every_actual_row_write_and_deferred_commit() {
+    use pve_port::*;
+    for kind in ["cancel", "expire", "repair", "reap", "reconcile"] {
+        let s =
+            osdeploy_execution_support::Scenario::new(if kind == "expire" { 2 } else { 300 }, true)
+                .await;
+        if kind == "repair" {
+            s.fake
+                .enqueue_provisioning_outcome(
+                    ProvisioningFaultSelectorV1::new(ProvisioningActionV1::Clone, None),
+                    FakeMutationOutcome::AcceptedTaskDelayed,
+                )
+                .unwrap();
+        }
+        let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+        let mut evidence = None;
+        if kind == "expire" {
+            s.wait_until(*r.grant.deadline_at()).await;
+        }
+        if matches!(kind, "repair" | "reap" | "reconcile") {
+            let lease: serde_json::Value = sqlx::query_scalar(
+                "SELECT to_jsonb(l) FROM rust_controller.worker_leases l WHERE operation_id=$1",
+            )
+            .bind(r.grant.operation_id().as_uuid())
+            .fetch_one(&s.db.pool)
+            .await
+            .unwrap();
+            let (permit, capture) =
+                s.db.scheduler()
+                    .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+                    .await
+                    .unwrap();
+            let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+            if kind == "repair" {
+                s.db.scheduler()
+                    .record_osdeploy_pve_receipt(&capture, &receipt)
+                    .await
+                    .unwrap();
+            }
+            let outcome = s.observe_and_decide(&r.grant).await;
+            assert_eq!(
+                outcome,
+                if kind == "repair" {
+                    controller_domain::ExecutionState::Waiting
+                } else {
+                    controller_domain::ExecutionState::Unknown
+                }
+            );
+            if kind == "repair" {
+                sqlx::query("DELETE FROM rust_controller.osdeploy_schedule_projection")
+                    .execute(&s.db.pool)
+                    .await
+                    .unwrap();
+            }
+            if kind == "reap" {
+                sqlx::query("INSERT INTO rust_controller.worker_leases SELECT * FROM jsonb_populate_record(NULL::rust_controller.worker_leases,$1)").bind(lease).execute(&s.db.pool).await.unwrap();
+            }
+            if kind == "reconcile" {
+                s.db.scheduler()
+                    .record_osdeploy_pve_receipt(&capture, &receipt)
+                    .await
+                    .unwrap();
+                evidence = Some(s.reconciliation_observation(&r.grant).await);
+            }
+        }
+        sqlx::raw_sql("CREATE FUNCTION task7_fail_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'owned_task7_commit_fault'; END $$;").execute(&s.db.pool).await.unwrap();
+        let commit_table = if kind == "repair" {
+            "osdeploy_schedule_projection"
+        } else {
+            "osdeploy_decisions"
+        };
+        sqlx::query(&format!("CREATE CONSTRAINT TRIGGER task7_commit_fault AFTER INSERT ON rust_controller.{commit_table} DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION task7_fail_commit()")).execute(&s.db.pool).await.unwrap();
+        let before = s.db.snapshot().await;
+        assert_eq!(
+            task7_fault_invoke(&s, &r, kind, evidence).await,
+            Err(postgres_store::OsDeployExecutionError::StorageUnavailable),
+            "kind={kind} deferred commit"
+        );
+        assert!(
+            s.db.snapshot().await == before,
+            "kind={kind} deferred commit changed snapshot"
+        );
+        sqlx::query(&format!(
+            "DROP TRIGGER task7_commit_fault ON rust_controller.{commit_table}"
+        ))
+        .execute(&s.db.pool)
+        .await
+        .unwrap();
+        sqlx::raw_sql("CREATE SEQUENCE task7_write_number; CREATE TABLE task7_fault(target bigint); INSERT INTO task7_fault VALUES(0); CREATE FUNCTION task7_fail_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF nextval('task7_write_number')=(SELECT target FROM task7_fault) THEN RAISE EXCEPTION 'owned_task7_write_fault'; END IF; IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW; END $$;").execute(&s.db.pool).await.unwrap();
+        let tables = [
+            "journal_events",
+            "outbox",
+            "osdeploy_decisions",
+            "operations",
+            "operation_projection",
+            "attempts",
+            "osdeploy_schedule_projection",
+            "worker_leases",
+            "osdeploy_run_cancellations",
+        ];
+        for table in tables {
+            sqlx::query(&format!("CREATE TRIGGER task7_write_fault BEFORE INSERT OR UPDATE OR DELETE ON rust_controller.{table} FOR EACH ROW EXECUTE FUNCTION task7_fail_write()")).execute(&s.db.pool).await.unwrap();
+        }
+        let mut writes = None;
+        for boundary in 1..=256_i64 {
+            sqlx::query("UPDATE task7_fault SET target=$1")
+                .bind(boundary)
+                .execute(&s.db.pool)
+                .await
+                .unwrap();
+            sqlx::query("SELECT setval('task7_write_number',1,false)")
+                .execute(&s.db.pool)
+                .await
+                .unwrap();
+            match task7_fault_invoke(&s, &r, kind, evidence).await {
+                Err(postgres_store::OsDeployExecutionError::StorageUnavailable) => assert!(
+                    s.db.snapshot().await == before,
+                    "kind={kind} boundary={boundary} changed snapshot"
+                ),
+                Ok(()) => {
+                    writes = Some(boundary - 1);
+                    break;
+                }
+                Err(error) => {
+                    panic!("unexpected fixed error kind={kind} boundary={boundary}: {error:?}")
+                }
+            }
+        }
+        let writes = writes.expect("owned writer exceeded256 row mutations");
+        assert!(writes > 0);
+        println!("task7_atomic_writes kind={kind} verified={writes} plus deferred_commit");
+        for table in tables {
+            sqlx::query(&format!(
+                "DROP TRIGGER task7_write_fault ON rust_controller.{table}"
+            ))
+            .execute(&s.db.pool)
+            .await
+            .unwrap();
+        }
+        let snap =
+            s.db.store
+                .load_osdeploy_operation(r.grant.operation_id())
+                .await
+                .unwrap();
+        assert_eq!(
+            snap.state(),
+            match kind {
+                "cancel" => controller_domain::ExecutionState::Blocked,
+                "repair" => controller_domain::ExecutionState::Waiting,
+                "reconcile" => controller_domain::ExecutionState::Satisfied,
+                _ => controller_domain::ExecutionState::Unknown,
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn task7_cancellation_races_actual_dispatch_parking_receipt_and_collection() {
+    use postgres_store::OsDeployExecutionError as E;
+    use pve_port::*;
+    for kind in ["dispatch", "park", "receipt", "collect"] {
+        let s = osdeploy_execution_support::Scenario::new(300, true).await;
+        if kind == "park" {
+            s.fake
+                .enqueue_provisioning_outcome(
+                    ProvisioningFaultSelectorV1::new(ProvisioningActionV1::Clone, None),
+                    FakeMutationOutcome::AcceptedTaskDelayed,
+                )
+                .unwrap();
+        }
+        let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+        let scheduler = s.db.scheduler();
+        let other = postgres_store::Scheduler::new(
+            s.db.other.clone(),
+            postgres_store::ExecutorKind::Rust,
+            1,
+            "osdeploy-worker",
+        )
+        .unwrap();
+        let expected = match kind {
+            "dispatch" => {
+                let (cancel, dispatch) =
+                    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                        tokio::join!(
+                            scheduler.cancel_osdeploy_run(s.ids.run_id()),
+                            other.begin_osdeploy_pve_dispatch(
+                                &r.grant, r.revision, r.event, &r.request
+                            )
+                        )
+                    })
+                    .await
+                    .unwrap();
+                cancel.unwrap();
+                match dispatch {
+                    Ok(handles) => {
+                        drop(handles);
+                        controller_domain::ExecutionState::Unknown
+                    }
+                    Err(E::FenceLost) => controller_domain::ExecutionState::Blocked,
+                    Err(error) => panic!("unexpected dispatch race error: {error:?}"),
+                }
+            }
+            "collect" => {
+                let snap =
+                    s.db.store
+                        .load_osdeploy_operation(r.grant.operation_id())
+                        .await
+                        .unwrap();
+                let context =
+                    s.db.store
+                        .load_osdeploy_pve_context(
+                            r.grant.operation_id(),
+                            snap.revision(),
+                            ProvisioningEvaluationModeV1::Preflight,
+                        )
+                        .await
+                        .unwrap();
+                let (cancel, collection) =
+                    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                        tokio::join!(scheduler.cancel_osdeploy_run(s.ids.run_id()), async {
+                            let evidence = s.collect(&context).await;
+                            s.db.store
+                                .record_osdeploy_pve_evidence(
+                                    r.grant.operation_id(),
+                                    r.grant.attempt_id(),
+                                    snap.revision(),
+                                    &evidence,
+                                )
+                                .await
+                        })
+                    })
+                    .await
+                    .unwrap();
+                cancel.unwrap();
+                assert!(matches!(collection, Ok(_) | Err(E::FenceLost)));
+                controller_domain::ExecutionState::Blocked
+            }
+            _ => {
+                let (permit, capture) = scheduler
+                    .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+                    .await
+                    .unwrap();
+                let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+                if kind == "receipt" {
+                    let (cancel, captured) =
+                        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                            tokio::join!(
+                                scheduler.cancel_osdeploy_run(s.ids.run_id()),
+                                other.record_osdeploy_pve_receipt(&capture, &receipt)
+                            )
+                        })
+                        .await
+                        .unwrap();
+                    cancel.unwrap();
+                    captured.unwrap();
+                    assert!(
+                        s.db.store
+                            .load_osdeploy_operation(r.grant.operation_id())
+                            .await
+                            .unwrap()
+                            .receipt()
+                            .is_some()
+                    );
+                } else {
+                    scheduler
+                        .record_osdeploy_pve_receipt(&capture, &receipt)
+                        .await
+                        .unwrap();
+                    let (event, revision) = s.observation(&r.grant).await;
+                    let (cancel, parked) =
+                        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                            tokio::join!(
+                                scheduler.cancel_osdeploy_run(s.ids.run_id()),
+                                scheduler.decide_osdeploy_pve(&r.grant, revision, event)
+                            )
+                        })
+                        .await
+                        .unwrap();
+                    cancel.unwrap();
+                    assert!(matches!(
+                        parked,
+                        Ok(postgres_store::OsDeployProgress::Waiting) | Err(E::FenceLost)
+                    ));
+                }
+                controller_domain::ExecutionState::Unknown
+            }
+        };
+        let snap =
+            s.db.store
+                .load_osdeploy_operation(r.grant.operation_id())
+                .await
+                .unwrap();
+        assert!(snap.cancelled());
+        assert_eq!(snap.state(), expected);
+        assert!(snap.next_check_at().is_none());
+        assert_eq!(
+            s.fake.recorded_provisioning_submissions().len(),
+            usize::from(matches!(kind, "park" | "receipt"))
+        );
+        let before = s.db.snapshot().await;
+        scheduler.cancel_osdeploy_run(s.ids.run_id()).await.unwrap();
+        assert_eq!(before, s.db.snapshot().await);
+    }
+}
+#[tokio::test]
+async fn task7_already_elapsed_scope_wins_inside_atomic_cancellation() {
+    let s = osdeploy_execution_support::Scenario::new(1, true).await;
+    let grant = s.started(osdeploy_adapter::OsDeployStage::Clone).await;
+    s.wait_until(*grant.deadline_at()).await;
+    s.db.scheduler()
+        .cancel_osdeploy_run(s.ids.run_id())
+        .await
+        .unwrap();
+    for stage in osdeploy_adapter::OsDeployStage::ALL {
+        let snap =
+            s.db.store
+                .load_osdeploy_operation(s.ids.operation(stage))
+                .await
+                .unwrap();
+        assert!(snap.cancelled());
+        assert_eq!(
+            snap.state(),
+            if stage == osdeploy_adapter::OsDeployStage::Clone {
+                controller_domain::ExecutionState::Unknown
+            } else {
+                controller_domain::ExecutionState::Blocked
+            }
+        );
+    }
+    let actions:Vec<String>=sqlx::query_scalar("SELECT action FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND resolution='unknown'").bind(grant.operation_id().as_uuid()).fetch_all(&s.db.pool).await.unwrap();
+    assert_eq!(actions, vec!["activated_scope_expired"]);
+}
+
+#[tokio::test]
+async fn task7_unavailable_reconciliation_backoff_is_bounded_and_usable_read_resets_it() {
+    use pve_port::*;
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    s.fake
+        .enqueue_provisioning_outcome(
+            ProvisioningFaultSelectorV1::new(ProvisioningActionV1::Clone, None),
+            FakeMutationOutcome::AcceptedTaskDelayed,
+        )
+        .unwrap();
+    let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+    let (permit, capture) =
+        s.db.scheduler()
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    assert_eq!(
+        s.observe_and_decide(&r.grant).await,
+        controller_domain::ExecutionState::Unknown
+    );
+    s.db.scheduler()
+        .record_osdeploy_pve_receipt(&capture, &receipt)
+        .await
+        .unwrap();
+    for (count, seconds) in [(1_i16, 2_i64), (2, 4), (3, 8), (4, 10), (4, 10), (0, 5)] {
+        if count > 0 {
+            s.fake.enqueue_provisioning_config_read(
+                NodeName::parse("node-a").unwrap(),
+                Vmid::new(900).unwrap(),
+                FakeProvisioningConfigReadV1::Error(PveReadError::TimedOut),
+            );
+        }
+        let (event, revision) = s.reconciliation_observation(&r.grant).await;
+        assert_eq!(
+            s.db.scheduler()
+                .reconcile_osdeploy_unknown(
+                    r.grant.operation_id(),
+                    r.grant.attempt_id(),
+                    revision,
+                    event,
+                    s.ids.workflow_sha256()
+                )
+                .await
+                .unwrap(),
+            postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Unknown)
+        );
+        let (actual,delay):(i16,i64)=sqlx::query_as("SELECT p.unavailable_count,extract(epoch FROM (p.next_check_at-d.evaluated_at))::bigint FROM rust_controller.osdeploy_schedule_projection p JOIN rust_controller.osdeploy_decisions d ON d.event_id=p.basis_event_id WHERE p.operation_id=$1").bind(r.grant.operation_id().as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+        assert_eq!((actual, delay), (count, seconds));
+    }
+    assert_eq!(s.fake.recorded_provisioning_submissions().len(), 1);
+}
+#[tokio::test]
+async fn task7_projection_repair_does_not_repair_poisoned_immutable_epoch() {
+    use pve_port::*;
+    let s = osdeploy_execution_support::Scenario::new(120, true).await;
+    s.fake
+        .enqueue_provisioning_outcome(
+            ProvisioningFaultSelectorV1::new(ProvisioningActionV1::Clone, None),
+            FakeMutationOutcome::AcceptedTaskDelayed,
+        )
+        .unwrap();
+    let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+    let (permit, capture) =
+        s.db.scheduler()
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    s.db.scheduler()
+        .record_osdeploy_pve_receipt(&capture, &receipt)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.observe_and_decide(&r.grant).await,
+        controller_domain::ExecutionState::Waiting
+    );
+    sqlx::query("DELETE FROM rust_controller.osdeploy_schedule_projection")
+        .execute(&s.db.pool)
+        .await
+        .unwrap();
+    let mut tx = s.db.pool.begin().await.unwrap();
+    sqlx::query(
+        "ALTER TABLE rust_controller.osdeploy_lease_epochs DISABLE TRIGGER osdeploy_no_mutation",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE rust_controller.osdeploy_lease_epochs SET worker_id='owned-poison' WHERE operation_id=$1").bind(r.grant.operation_id().as_uuid()).execute(&mut *tx).await.unwrap();
+    sqlx::query(
+        "ALTER TABLE rust_controller.osdeploy_lease_epochs ENABLE TRIGGER osdeploy_no_mutation",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let before = s.db.snapshot().await;
+    let result =
+        s.db.scheduler()
+            .repair_osdeploy_schedules(&mut postgres_store::OsDeployRepairCursor::default())
+            .await
+            .unwrap();
+    assert_eq!(
+        (result.examined(), result.changed(), result.rejected()),
+        (1, 0, 1)
+    );
+    assert_eq!(before, s.db.snapshot().await);
+    let enabled:bool=sqlx::query_scalar("SELECT tgenabled='O' FROM pg_trigger WHERE tgrelid='rust_controller.osdeploy_lease_epochs'::regclass AND tgname='osdeploy_no_mutation'").fetch_one(&s.db.pool).await.unwrap();
+    assert!(enabled);
+}
+
+#[tokio::test]
+async fn task7_reconciliation_rechecks_original_fences_and_final_scope_before_commit() {
+    use postgres_store::OsDeployExecutionError as E;
+    for final_scope in [false, true] {
+        let s = osdeploy_execution_support::Scenario::new(if final_scope { 5 } else { 120 }, true)
+            .await;
+        let r = s.ready(osdeploy_adapter::OsDeployStage::Clone).await;
+        let scheduler = s.db.scheduler();
+        let (permit, capture) = scheduler
+            .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
+            .await
+            .unwrap();
+        let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+        assert_eq!(
+            s.observe_and_decide(&r.grant).await,
+            controller_domain::ExecutionState::Unknown
+        );
+        scheduler
+            .record_osdeploy_pve_receipt(&capture, &receipt)
+            .await
+            .unwrap();
+        let (event, revision) = s.reconciliation_observation(&r.grant).await;
+        let before = s.db.snapshot().await;
+        if final_scope {
+            sqlx::query("CREATE SEQUENCE task7_reconciliation_entered")
+                .execute(&s.db.pool)
+                .await
+                .unwrap();
+            sqlx::query("CREATE FUNCTION task7_delay_reconciliation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='pve_evaluated' AND NEW.payload_canonical_json::jsonb->'detail'->>'mode'='reconciliation' THEN PERFORM nextval('task7_reconciliation_entered'); PERFORM pg_sleep(5); END IF; RETURN NEW; END $$").execute(&s.db.pool).await.unwrap();
+            sqlx::query("CREATE TRIGGER task7_delay_reconciliation BEFORE INSERT ON rust_controller.osdeploy_decisions FOR EACH ROW EXECUTE FUNCTION task7_delay_reconciliation()").execute(&s.db.pool).await.unwrap();
+            let unexpired: bool = sqlx::query_scalar("SELECT clock_timestamp()<$1")
+                .bind(r.grant.deadline_at())
+                .fetch_one(&s.db.pool)
+                .await
+                .unwrap();
+            assert!(unexpired);
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                scheduler.reconcile_osdeploy_unknown(
+                    r.grant.operation_id(),
+                    r.grant.attempt_id(),
+                    revision,
+                    event,
+                    s.ids.workflow_sha256(),
+                ),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result, Err(E::FenceLost));
+            let entered: (i64, bool) =
+                sqlx::query_as("SELECT last_value,is_called FROM task7_reconciliation_entered")
+                    .fetch_one(&s.db.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                entered,
+                (1, true),
+                "must reach the actual reconciliation write before final expiry"
+            );
+            assert_eq!(before, s.db.snapshot().await);
+            sqlx::query(
+                "DROP TRIGGER task7_delay_reconciliation ON rust_controller.osdeploy_decisions",
+            )
+            .execute(&s.db.pool)
+            .await
+            .unwrap();
+            sqlx::query("DROP FUNCTION task7_delay_reconciliation()")
+                .execute(&s.db.pool)
+                .await
+                .unwrap();
+            sqlx::query("DROP SEQUENCE task7_reconciliation_entered")
+                .execute(&s.db.pool)
+                .await
+                .unwrap();
+        } else {
+            for (attempt, cas, hash) in [
+                (
+                    controller_domain::AttemptId::new(),
+                    revision,
+                    s.ids.workflow_sha256(),
+                ),
+                (r.grant.attempt_id(), revision - 1, s.ids.workflow_sha256()),
+                (
+                    r.grant.attempt_id(),
+                    revision,
+                    "0000000000000000000000000000000000000000000000000000000000000000",
+                ),
+            ] {
+                assert_eq!(
+                    scheduler
+                        .reconcile_osdeploy_unknown(
+                            r.grant.operation_id(),
+                            attempt,
+                            cas,
+                            event,
+                            hash
+                        )
+                        .await,
+                    Err(E::FenceLost)
+                );
+                assert_eq!(before, s.db.snapshot().await);
+            }
+            sqlx::query("UPDATE rust_controller.orchestration_authority SET generation=2")
+                .execute(&s.db.pool)
+                .await
+                .unwrap();
+            let before = s.db.snapshot().await;
+            assert_eq!(
+                scheduler
+                    .reconcile_osdeploy_unknown(
+                        r.grant.operation_id(),
+                        r.grant.attempt_id(),
+                        revision,
+                        event,
+                        s.ids.workflow_sha256()
+                    )
+                    .await,
+                Err(E::FenceLost)
+            );
+            assert_eq!(before, s.db.snapshot().await);
+            let current = postgres_store::Scheduler::new(
+                s.db.other.clone(),
+                postgres_store::ExecutorKind::Rust,
+                2,
+                "current-observer",
+            )
+            .unwrap();
+            current.cancel_osdeploy_run(s.ids.run_id()).await.unwrap();
+            let before = s.db.snapshot().await;
+            assert_eq!(
+                current
+                    .reconcile_osdeploy_unknown(
+                        r.grant.operation_id(),
+                        r.grant.attempt_id(),
+                        revision,
+                        event,
+                        s.ids.workflow_sha256()
+                    )
+                    .await,
+                Err(E::FenceLost)
+            );
+            assert_eq!(before, s.db.snapshot().await);
+        }
+        assert_eq!(s.fake.recorded_provisioning_submissions().len(), 1);
+    }
+}

@@ -208,7 +208,9 @@ pub(super) async fn load_records(
         attempt_id: attempt,
         activated_at: activated,
         deadline_at: deadline,
-        next_check_at: next_check,
+        // A run fence cancels future checks even when an earlier terminal
+        // Unknown decision and its original scheduling history are preserved.
+        next_check_at: if cancelled { None } else { next_check },
         dispatch: dispatch.map(|d| d.value),
         receipt: receipt.map(|r| r.value),
     };

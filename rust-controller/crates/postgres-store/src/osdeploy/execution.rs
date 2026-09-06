@@ -2,7 +2,7 @@
 use super::OsDeployOperationPlanV1;
 use crate::PgStore;
 use chrono::{DateTime, Utc};
-use controller_domain::{AttemptId, ExecutionState, OperationId, RunId};
+use controller_domain::{AttemptId, EventId, ExecutionState, OperationId, RunId};
 use pve_port::{ProvisioningDispatchV1, ProvisioningReceiptV1};
 pub(crate) mod history;
 pub(crate) mod load;
@@ -26,6 +26,48 @@ pub enum OsDeployProgress {
     Idle,
     Waiting,
     Decided(ExecutionState),
+}
+
+#[derive(Default)]
+pub struct OsDeployRepairCursor {
+    pub(crate) after: Option<OperationId>,
+}
+#[derive(Default)]
+pub struct OsDeployExpiryCursor {
+    pub(crate) after: Option<(DateTime<Utc>, RunId, String, OperationId)>,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OsDeployDueKind {
+    Waiting,
+    UnknownReconciliation,
+}
+pub struct OsDeployDue {
+    pub(crate) operation: OperationId,
+    pub(crate) attempt: AttemptId,
+    pub(crate) revision: i64,
+    pub(crate) workflow_sha256: String,
+    pub(crate) basis_event: EventId,
+    pub(crate) kind: OsDeployDueKind,
+}
+impl OsDeployDue {
+    pub fn operation_id(&self) -> OperationId {
+        self.operation
+    }
+    pub fn attempt_id(&self) -> AttemptId {
+        self.attempt
+    }
+    pub fn revision(&self) -> i64 {
+        self.revision
+    }
+    pub fn workflow_sha256(&self) -> &str {
+        &self.workflow_sha256
+    }
+    pub fn basis_event_id(&self) -> EventId {
+        self.basis_event
+    }
+    pub fn kind(&self) -> OsDeployDueKind {
+        self.kind
+    }
 }
 /// A validated observation, never a dispatch permit.
 /// ```compile_fail

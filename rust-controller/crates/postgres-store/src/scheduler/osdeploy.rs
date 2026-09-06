@@ -7,14 +7,34 @@ use osdeploy_adapter::OsDeployStage;
 use sqlx::Row;
 
 mod decision;
+mod discovery;
 mod lifecycle;
 mod pve;
 mod receipt;
+mod recovery;
 pub use receipt::{OsDeployDispatchPermit, OsDeployResponseCapture};
 mod transaction;
 mod transition;
 use transaction::*;
 use transition::*;
+
+#[derive(Default, Debug)]
+pub struct OsDeployMaintenanceSummary {
+    examined: u32,
+    changed: u32,
+    rejected: u32,
+}
+impl OsDeployMaintenanceSummary {
+    pub fn examined(&self) -> u32 {
+        self.examined
+    }
+    pub fn changed(&self) -> u32 {
+        self.changed
+    }
+    pub fn rejected(&self) -> u32 {
+        self.rejected
+    }
+}
 
 /// A DB-time observation, never a transition or dispatch capability.
 ///

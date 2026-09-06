@@ -336,13 +336,15 @@ pub(crate) async fn preflight(
     revision: i64,
     event: EventId,
 ) -> Result<(ProvisioningEvaluationContextV1, ProvisioningEvidenceV1), Error> {
-    indexed_context(
+    // Keep the complete predecessor/evidence future off the dispatch caller's
+    // frame; the recovered three-stage prefix exercises this nested reload.
+    Box::pin(indexed_context(
         tx,
         operation,
         revision,
         event,
         ProvisioningEvaluationModeV1::Preflight,
-    )
+    ))
     .await
 }
 
