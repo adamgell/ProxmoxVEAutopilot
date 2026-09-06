@@ -143,6 +143,11 @@ impl PgStore {
         sqlx::raw_sql(include_str!("../migrations/0004_osdeploy_registration.sql"))
             .execute(&self.pool)
             .await?;
+        let mut osdeploy_migration = self.pool.begin().await?;
+        sqlx::raw_sql(include_str!("../migrations/0005_osdeploy_durability.sql"))
+            .execute(&mut *osdeploy_migration)
+            .await?;
+        osdeploy_migration.commit().await?;
         Ok(())
     }
 

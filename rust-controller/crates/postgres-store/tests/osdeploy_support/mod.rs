@@ -27,16 +27,22 @@ pub struct Fixture {
 }
 impl Fixture {
     pub async fn new() -> Self {
-        tokio::time::timeout(local_postgres::SETUP_BOUND, Self::setup())
+        tokio::time::timeout(local_postgres::SETUP_BOUND, Self::setup(false))
             .await
             .expect("local_fixture_setup_timeout")
     }
-    async fn setup() -> Self {
+    #[allow(dead_code, reason = "used only by migration atomicity tests")]
+    pub async fn new_before_durability() -> Self {
+        tokio::time::timeout(local_postgres::SETUP_BOUND, Self::setup(true))
+            .await
+            .expect("local_fixture_setup_timeout")
+    }
+    async fn setup(before_durability: bool) -> Self {
         let (container, dsn) = local_postgres::Container::start().await;
         let pool = tokio::time::timeout(Duration::from_secs(15), async {
             loop {
                 if let Ok(pool) = PgPoolOptions::new()
-                    .max_connections(6)
+                    .max_connections(if before_durability { 1 } else { 6 })
                     .acquire_timeout(Duration::from_secs(1))
                     .connect(&dsn)
                     .await
@@ -57,7 +63,18 @@ impl Fixture {
                 .unwrap(),
         );
         let store = PgStore::new(pool.clone());
-        store.migrate().await.unwrap();
+        if before_durability {
+            for migration in [
+                include_str!("../../migrations/0001_foundation.sql"),
+                include_str!("../../migrations/0002_scheduler.sql"),
+                include_str!("../../migrations/0003_native_pve.sql"),
+                include_str!("../../migrations/0004_osdeploy_registration.sql"),
+            ] {
+                sqlx::raw_sql(migration).execute(&pool).await.unwrap();
+            }
+        } else {
+            store.migrate().await.unwrap();
+        }
         sqlx::query("INSERT INTO rust_controller.orchestration_authority(singleton_key,executor_kind,generation,change_reference) VALUES(1,'rust',1,'osdeploy-test')").execute(&pool).await.unwrap();
         Self {
             pool,
@@ -98,6 +115,15 @@ impl Fixture {
             "native_receipts",
             "native_decisions",
             "native_run_cancellations",
+            "osdeploy_decisions",
+            "osdeploy_deadlines",
+            "osdeploy_attempt_bindings",
+            "osdeploy_lease_epochs",
+            "osdeploy_pve_evidence",
+            "osdeploy_pve_dispatches",
+            "osdeploy_pve_receipts",
+            "osdeploy_run_cancellations",
+            "osdeploy_schedule_projection",
         ] {
             let value: serde_json::Value = sqlx::query_scalar(&format!("SELECT COALESCE(jsonb_agg(row_to_json(t)::jsonb ORDER BY row_to_json(t)::text),'[]'::jsonb) FROM rust_controller.{table} t")).fetch_one(&self.pool).await.unwrap();
             values.insert(table.to_owned(), value);
@@ -121,6 +147,15 @@ impl Fixture {
             ("orchestration_authority", 1),
             ("native_operation_plans", 0),
             ("native_dispatches", 0),
+            ("osdeploy_decisions", 0),
+            ("osdeploy_deadlines", 0),
+            ("osdeploy_attempt_bindings", 0),
+            ("osdeploy_lease_epochs", 0),
+            ("osdeploy_pve_evidence", 0),
+            ("osdeploy_pve_dispatches", 0),
+            ("osdeploy_pve_receipts", 0),
+            ("osdeploy_run_cancellations", 0),
+            ("osdeploy_schedule_projection", 0),
         ] {
             assert_eq!(snapshot[table].as_array().unwrap().len(), count, "{table}");
         }
@@ -129,9 +164,17 @@ impl Fixture {
     // This is a test corruption helper, not a library repair API.
     pub async fn corrupt_immutable(&self, table: &str, query: &str) {
         let trigger = match table {
-            "osdeploy_runs" | "osdeploy_operation_plans" | "osdeploy_agent_reservations" => {
-                "osdeploy_no_mutation"
-            }
+            "osdeploy_runs"
+            | "osdeploy_operation_plans"
+            | "osdeploy_agent_reservations"
+            | "osdeploy_decisions"
+            | "osdeploy_deadlines"
+            | "osdeploy_attempt_bindings"
+            | "osdeploy_lease_epochs"
+            | "osdeploy_pve_evidence"
+            | "osdeploy_pve_dispatches"
+            | "osdeploy_pve_receipts"
+            | "osdeploy_run_cancellations" => "osdeploy_no_mutation",
             "native_vm_reservations" => "native_no_mutation",
             _ => panic!("unowned corruption table"),
         };
