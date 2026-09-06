@@ -1,0 +1,50 @@
+# Main durable-phase planning decisions
+
+Main re-read the complete transaction-boundary note, its amendment, the selected main decisions, and the complete schema/send-API proposal after the successful Linux runtime checkpoint. Current source remains frozen at `f412f2c9d577081985ce503773dfa8226567f099`; these decisions do not change it or authorize an overlapping source implementer.
+
+## Selected policies for the implementation plan
+
+- Reuse the existing `PgStore` and re-exported `Scheduler`, their singleton authority, journal/outbox, operation/attempt/lease tables, and immutable sixteen-stage registration. Preserve all existing generic/native behavior and registration errors. No new daemon or second executor.
+- Select the proposal's fixed scheduling policy: one-second sweeps, batches of 32, two-second normal Waiting checks, five-second Unknown reconciliation checks, and 2/4/8/10-second unavailable backoff with counter capped at four. Absolute next checks never extend the original scope. Missing original task receipts produce no guessed task lookup or resend.
+- Select 30-second evaluator leases capped at the original scope and heartbeats no more frequently than ten seconds. Keep one logical attempt, original activation time and deadline across safe reclaim/repark/resume. No generic five-minute claim path for this family.
+- Select the separate payload-free `OsDeployExecutionError` variants Validation, Conflict, FenceLost, CapabilityUnavailable and StorageUnavailable. Preserve existing registration and native error contracts.
+- Select the consuming, non-clone/non-serde `OsDeployDispatchPermit::submit_fake_once(self, &NativeFakePve)` and separate opaque `OsDeployResponseCapture` from the schema proposal's amendment. Construct both only after dispatch commit; expose no request getter or conversion back into a permit. Capture retry is persistence retry only.
+- Select cooperative send admission in operation-controller/service composition, initially closed, tracking every send-capable task through capture/loss classification. Close and drain/join before coordinated local handoff; failure to drain means quiescence is unproven. This does not claim remote acceptance-time fencing or stopped legacy Python writers.
+- Select family-private, validated history-driven transition helpers; do not broaden generic `DomainSignal` or existing native transition permissions. Use the existing atomic persistence primitives where compatible, and add narrowly scoped private helpers where the current policy type cannot represent the selected OSDeploy proof.
+
+## Schema and task boundaries to resolve against the gap audit
+
+Use additive migration `crates/postgres-store/migrations/0005_osdeploy_durability.sql`, not a root-level migrations directory. Existing registration lives in private `src/osdeploy/{registration,records,stage}.rs`; the scheduler facade re-exports the store's actual Scheduler implementation. New storage value/reload modules belong beneath that private OSDeploy module; transactional scheduler behavior belongs beneath `src/scheduler/osdeploy/`, and controller orchestration beneath operation-controller. Avoid placing the full phase into an additional monolithic native module.
+
+The nine-table proposal is the schema basis, subject to concrete corrections from the source-backed gap audit before the final plan is dispatched. Pin exact FK creation/insertion order, nullable/action constraints, canonical payload restoration and transactional rollback checks in that plan. Do not treat an accepted table-name list as an implemented or validated migration.
+
+The planned reviewable deliverables are: durable schema/value restoration; actual family activation/lease lifecycle; typed evidence/one-shot dispatch/original receipt and evaluation; due reconstruction/reconciliation/cancellation/reaping; and existing-controller integration with cooperative send lifecycle. Each deliverable must include a behavioral failing test, implementation, focused green proof and independent review. The plan must specify exact cross-task signatures rather than leaving implementers to invent incompatible interfaces.
+
+The initial reachable Clone → DiskCapacity → ConfigurePe prefix is an intermediate implementation boundary, not the goal. StartPe cannot become reachable until real server-session preparation and atomic arming exist. The continuing programme must then implement compatible callbacks, truthful atomic grace activation, guarded stop, disk boot, guest actions, persistent heartbeat/QGA proof, and the full sixteen-stage service workflow with process-level recovery and production-candidate readiness evidence.
+
+## Current gates
+
+Linux runtime is passed, but exported diagnostics, independent OCI metadata verification, cleanup/inventory and final evidence sealing are still pending. Main will not edit frozen tracked source or the four candidate gate scripts before that checkpoint closes. The gap-audit agent is read-only for source; the evidence agent owns only separate ignored verifier/test files. No production/PVE mutation, deployment, publication or cutover is authorized.
+
+## Gap-audit disposition and final initial-schema selection
+
+Main read the complete `next-durable-gap-audit.md` and verified the current store transition policy plus the provisioning no-change preflight branch. Accept the complete initial schema and closed wire payloads in `next-durable-schema-proposal.md`, including its consuming-send amendment, with the following clarifications controlling older provisional wording. This is design acceptance for the next plan, not source implementation or verification.
+
+1. Include `lease_expired_uncertain` in the initial action set. The required null-attempt variants are unactivated scope expiry, genuinely unactivated cancellation, and the run-cancellation control event. `run_cancelled` must not be accidentally excluded by the earlier two-variant amendment. Do not enable the future grace action before callback integration.
+2. Insert initial activation in the concrete order: existing attempt row; activation journal/outbox/decision; deadline; attempt binding; lease-acquisition journal/outbox/decision; epoch; worker lease; state event/projections, in one transaction. Dispatch and receipt journal rows precede their immutable indexes. Each immediate EV/AT/OP FK must already resolve at its insertion; deferred typed FKs never excuse a missing immediate target. Name and test each deferred constraint rather than assuming every reference is deferred.
+3. Add the family-private `OriginalDispatchReconciliation` proof for Unknown to Satisfied/Failed/Conflicted. Construct it only under current authority/run/operation locks after validating the original dispatch/attempt, selected Unknown, typed evidence, expected CAS, no cancellation/residual lease, and strictly unexpired original deadline. Do not use NativeReconciliation as an OSDeploy bypass, expose a target-state argument, or broaden DomainSignal. Unknown-to-Unknown expiry records no redundant state event.
+4. Preserve preflight capacity Satisfied/ObservedNoChange as a real no-dispatch success. Its historical baseline must feed ConfigurePe without inventing request/receipt/permit rows. Undispatched ObservationUnavailable remains Unknown without automatic recovery/send; unavailable backoff cannot override the requirement for an original dispatch in the selected reconciliation path.
+
+### Bounded immutable-scope expiry scan
+
+Use one separate in-memory keyset cursor over `(deadline_at, run_id, scope_key, operation_id)`, in that ascending order, with at most **32 operation candidates examined per sweep**. This is separate from the Waiting/Unknown repair cursor. Enumerate members through the existing closed stage-to-scope mapping and admitted registrations; do not derive scope membership from arbitrary strings or mutable scheduling rows.
+
+Discovery is a read-only hint: select elapsed scopes with members in Pending/Leased/Running/Waiting/Cancelling or Unknown, excluding cancelled runs and members with an existing exact scope-expiry decision. Activated members use their original binding; genuinely unactivated members are eligible only for inherited scopes already opened by their real anchor, never an unopened mutation scope. Any malformed candidate still requires locked validation before action; the query alone is not proof of valid history.
+
+Advance the hint to the last examined candidate even when locked validation rejects it, its state changed, or its original expiry was already adjudicated. A rejected candidate emits only a fixed bounded diagnostic/count, does not mutate history or get deleted, and cannot stop the rest of the batch. After reaching the end, reset the cursor for the next sweep; restart begins at the start. Newly due members sorting before the cursor are found after wrap. Fully adjudicated immutable history therefore cannot monopolize the first batch, and one invalid member cannot starve later members.
+
+Each candidate transaction rechecks DB time, exact scope/anchor/binding, selected decision, cancellation, current authority and aggregate CAS under the existing full lock order. It chooses only the previously selected activated or genuinely unactivated expiry proof. Duplicate/restarted sweeps append at most one exact expiry decision. No cursor value conveys authority, extends a budget, creates a lease, repairs invalid history or promotes late evidence. Test more than 32 candidates, already adjudicated early scopes, an invalid early member, missing projections, cursor restart/wrap, and a member becoming due behind the cursor.
+
+### Focused independent disposition review
+
+The Astra gap-audit agent re-read this appended disposition and returned Clean within its bounded review. It confirmed cursor progress/wrap and separation from locked authority checks resolve the identified starvation, cancellation exclusion matches terminal preservation, and the insertion order/private reconciliation/null-attempt control/no-dispatch baseline choices remain coherent. This was static design review only, with no source edits, tests or runtime calls.
