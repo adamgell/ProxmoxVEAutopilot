@@ -42,6 +42,32 @@ struct ExceptionalFacts {
     at: DateTime<Utc>,
 }
 
+struct Cancellation {
+    event: EventId,
+    scope: Option<(wire::Scope, DateTime<Utc>)>,
+}
+
+// Selection of the already validated, locked scope lookup. This does not
+// reconstruct an anchor or grant authority; the caller owns those checks.
+fn cancellation_scope(
+    attempt: Option<AttemptId>,
+    bound_deadline: Option<DateTime<Utc>>,
+    scope: wire::Scope,
+    opened_deadline: Option<DateTime<Utc>>,
+    at: DateTime<Utc>,
+) -> Result<Option<(wire::Scope, DateTime<Utc>)>, Error> {
+    if opened_deadline.is_some_and(|deadline| at >= deadline) {
+        return Err(Error::FenceLost);
+    }
+    if attempt.is_some() {
+        let deadline = opened_deadline.ok_or(Error::Validation)?;
+        if bound_deadline != Some(deadline) {
+            return Err(Error::Validation);
+        }
+    }
+    Ok(opened_deadline.map(|deadline| (scope, deadline)))
+}
+
 impl ExceptionalFacts {
     async fn locked(
         scheduler: &Scheduler,
@@ -127,7 +153,10 @@ impl ExceptionalFacts {
         ))
     }
 
-    async fn cancellation(&self, tx: &mut Transaction<'_, Postgres>) -> Result<EventId, Error> {
+    async fn cancellation(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Cancellation, Error> {
         if !self.snapshot.cancelled() || self.snapshot.state().is_terminal() {
             return Err(Error::FenceLost);
         }
@@ -140,12 +169,19 @@ impl ExceptionalFacts {
             .to_owned();
         let deadline: Option<DateTime<Utc>> = sqlx::query_scalar("SELECT deadline_at FROM rust_controller.osdeploy_deadlines WHERE run_id=$1 AND scope_key=$2")
             .bind(self.snapshot.run_id().as_uuid()).bind(name).fetch_optional(&mut **tx).await?;
-        if deadline.is_some_and(|d| self.at >= d) {
-            return Err(Error::FenceLost);
-        }
+        let scope = cancellation_scope(
+            self.snapshot.attempt_id(),
+            self.snapshot.deadline_at(),
+            scope,
+            deadline,
+            self.at,
+        )?;
         let event: Uuid = sqlx::query_scalar("SELECT decision_event_id FROM rust_controller.osdeploy_run_cancellations WHERE run_id=$1")
             .bind(self.snapshot.run_id().as_uuid()).fetch_one(&mut **tx).await?;
-        load::id(event)
+        Ok(Cancellation {
+            event: load::id(event)?,
+            scope,
+        })
     }
 }
 
@@ -327,14 +363,9 @@ impl OsDeployTransitionProof {
         if f.snapshot.dispatch().is_some() {
             return Err(Error::Validation);
         }
-        let (scope, deadline) = if f.snapshot.attempt_id().is_some() {
-            let (scope, _, _, deadline) = f.scope(tx).await?;
-            (Some(scope), Some(deadline))
-        } else {
-            (None, None)
-        };
+        let (scope, deadline) = cancellation.scope.unzip();
         let detail = wire::Detail::StageCancelledUnexposed(wire::UnexposedCancellation {
-            cancellation_event_id: cancellation,
+            cancellation_event_id: cancellation.event,
             scope_key: scope,
             deadline_at: deadline,
             reason: wire::Reason::RunCancelledBeforeExposure,
@@ -342,7 +373,7 @@ impl OsDeployTransitionProof {
         Ok(Self::CancelledUnexposed(f.decision(
             detail,
             Some(pve_port::NativeDecision::Blocked),
-            format!("osdeploy:cancel:{}", cancellation.as_uuid()),
+            format!("osdeploy:cancel:{}", cancellation.event.as_uuid()),
         )?))
     }
 
@@ -365,11 +396,11 @@ impl OsDeployTransitionProof {
         {
             return Err(Error::Validation);
         }
-        let (scope, _, _, deadline) = f.scope(tx).await?;
+        let (scope, deadline) = cancellation.scope.ok_or(Error::Validation)?;
         let dispatch:Uuid=sqlx::query_scalar("SELECT dispatch_event_id FROM rust_controller.osdeploy_pve_dispatches WHERE operation_id=$1")
             .bind(op.as_uuid()).fetch_one(&mut **tx).await?;
         let detail = wire::Detail::StageCancelledExposed(wire::ExposedCancellation {
-            cancellation_event_id: cancellation,
+            cancellation_event_id: cancellation.event,
             scope_key: scope,
             deadline_at: deadline,
             dispatch_event_id: load::id(dispatch)?,
@@ -378,7 +409,7 @@ impl OsDeployTransitionProof {
         Ok(Self::CancelledExposed(f.decision(
             detail,
             Some(pve_port::NativeDecision::Unknown),
-            format!("osdeploy:cancel:{}", cancellation.as_uuid()),
+            format!("osdeploy:cancel:{}", cancellation.event.as_uuid()),
         )?))
     }
 }
@@ -594,6 +625,90 @@ mod local_postgres;
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn cancellation_scope_keeps_opened_inherited_deadline_without_an_attempt() {
+        let at = "2026-09-05T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let deadline = "2026-09-05T12:40:00Z".parse::<DateTime<Utc>>().unwrap();
+        assert_eq!(
+            cancellation_scope(None, None, wire::Scope::PeRegistration, Some(deadline), at),
+            Ok(Some((wire::Scope::PeRegistration, deadline)))
+        );
+    }
+
+    #[test]
+    fn cancellation_scope_selection_preserves_unopened_bound_and_expired_cases() {
+        let at = "2026-09-05T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let deadline = "2026-09-05T12:05:00Z".parse::<DateTime<Utc>>().unwrap();
+        let attempt = Some(AttemptId::new());
+        assert_eq!(
+            cancellation_scope(None, None, wire::Scope::PeRegistration, None, at),
+            Ok(None)
+        );
+        assert_eq!(
+            cancellation_scope(
+                attempt,
+                Some(deadline),
+                wire::Scope::MutationClone,
+                Some(deadline),
+                at
+            ),
+            Ok(Some((wire::Scope::MutationClone, deadline)))
+        );
+        assert_eq!(
+            cancellation_scope(
+                attempt,
+                Some(deadline),
+                wire::Scope::MutationClone,
+                None,
+                at
+            ),
+            Err(Error::Validation)
+        );
+        assert_eq!(
+            cancellation_scope(
+                attempt,
+                None,
+                wire::Scope::MutationClone,
+                Some(deadline),
+                at
+            ),
+            Err(Error::Validation)
+        );
+        assert_eq!(
+            cancellation_scope(
+                attempt,
+                Some(at),
+                wire::Scope::MutationClone,
+                Some(deadline),
+                at
+            ),
+            Err(Error::Validation)
+        );
+        for attempt in [None, attempt] {
+            let bound = attempt.map(|_| deadline);
+            assert_eq!(
+                cancellation_scope(
+                    attempt,
+                    bound,
+                    wire::Scope::PeRegistration,
+                    Some(deadline),
+                    deadline
+                ),
+                Err(Error::FenceLost)
+            );
+            assert_eq!(
+                cancellation_scope(
+                    attempt,
+                    bound,
+                    wire::Scope::PeRegistration,
+                    Some(deadline),
+                    deadline + chrono::Duration::microseconds(1)
+                ),
+                Err(Error::FenceLost)
+            );
+        }
+    }
     struct Database {
         pool: sqlx::PgPool,
         scheduler: Scheduler,
