@@ -342,6 +342,273 @@ fn reload_source() -> pve_port::ProvisioningVmConfigV1 {
 }
 
 #[tokio::test]
+async fn first_start_reload_rejects_timestamp_only_corruption_and_restores() {
+    let f = Fixture::new().await;
+    let h = ReloadHistory::new(&f).await;
+    h.started(&f).await;
+    assert_eq!(
+        f.store
+            .load_osdeploy_operation(h.operation)
+            .await
+            .unwrap()
+            .state(),
+        controller_domain::ExecutionState::Running
+    );
+    sqlx::query("UPDATE rust_controller.journal_events SET observed_at=$2 WHERE operation_id=$1 AND event_kind='attempt_started'")
+        .bind(h.operation.as_uuid()).bind(h.at+chrono::Duration::seconds(1)).execute(&f.pool).await.unwrap();
+    assert!(
+        matches!(
+            f.store.load_osdeploy_operation(h.operation).await,
+            Err(postgres_store::OsDeployExecutionError::Validation)
+        ),
+        "timestamp-only first-start corruption was accepted"
+    );
+    sqlx::query("UPDATE rust_controller.journal_events SET observed_at=$2 WHERE operation_id=$1 AND event_kind='attempt_started'")
+        .bind(h.operation.as_uuid()).bind(h.at).execute(&f.pool).await.unwrap();
+    assert_eq!(
+        f.store
+            .load_osdeploy_operation(h.operation)
+            .await
+            .unwrap()
+            .state(),
+        controller_domain::ExecutionState::Running
+    );
+}
+
+#[tokio::test]
+async fn first_start_reload_rejects_interleaved_history() {
+    let f = Fixture::new().await;
+    let h = ReloadHistory::new(&f).await;
+    let mut tx = f.pool.begin().await.unwrap();
+    h.event(
+        &mut tx,
+        controller_domain::EventId::new(),
+        4,
+        "attempt_started",
+        None,
+        json!({"phase":"mutation_started"}),
+        h.at,
+    )
+    .await;
+    h.event(
+        &mut tx,
+        controller_domain::EventId::new(),
+        5,
+        "evidence_recorded",
+        None,
+        json!({"unrelated":"observational-only"}),
+        h.at,
+    )
+    .await;
+    let evaluation = controller_domain::EventId::new();
+    h.decision(
+        &mut tx,
+        evaluation,
+        h.envelope(
+            "evaluation_started",
+            5,
+            Value::Null,
+            json!({"lease_acquisition_event_id":h.acquisition,"activity":"preflight_read"}),
+        ),
+    )
+    .await;
+    h.event(
+        &mut tx,
+        controller_domain::EventId::new(),
+        7,
+        "execution_state_changed",
+        Some("running"),
+        json!({"state":"running","decision_event_id":evaluation}),
+        h.at,
+    )
+    .await;
+    tx.commit().await.unwrap();
+    assert!(
+        matches!(
+            f.store.load_osdeploy_operation(h.operation).await,
+            Err(postgres_store::OsDeployExecutionError::Validation)
+        ),
+        "interleaved first-start transaction was accepted"
+    );
+}
+
+#[tokio::test]
+async fn ordinary_lease_reload_park_resume_and_later_start() {
+    let f = Fixture::new().await;
+    let source = reload_source();
+    let p = osdeploy_support::altered(|v| {
+        v["template_config_sha256"] = json!(source.template_fingerprint().unwrap())
+    });
+    let h = ReloadHistory::with_plan(&f, p).await;
+    let (_, evidence, _) = h.dispatched(&f, source).await;
+    let old_lease: Value = sqlx::query_scalar(
+        "SELECT to_jsonb(l) FROM rust_controller.worker_leases l WHERE operation_id=$1",
+    )
+    .bind(h.operation.as_uuid())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    let evidence_hash: String = sqlx::query_scalar(
+        "SELECT evidence_sha256 FROM rust_controller.osdeploy_pve_evidence WHERE event_id=$1",
+    )
+    .bind(evidence.as_uuid())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    let park = controller_domain::EventId::new();
+    let resumed_at = h.at + chrono::Duration::seconds(2);
+    let mut tx = f.pool.begin().await.unwrap();
+    h.decision(&mut tx, park, h.envelope("pve_evaluated",8,json!("waiting"),json!({"mode":"outcome","advice":"waiting",
+        "evidence_event_id":evidence,"evidence_sha256":evidence_hash,"scope_key":"mutation_clone","deadline_at":h.deadline,
+        "reason":"task_running","lease_acquisition_event_id":h.acquisition,
+        "schedule":{"mode":"waiting","next_check_at":resumed_at,"unavailable_count":0}}))).await;
+    h.event(
+        &mut tx,
+        controller_domain::EventId::new(),
+        10,
+        "execution_state_changed",
+        Some("waiting"),
+        json!({"state":"waiting","decision_event_id":park}),
+        h.at,
+    )
+    .await;
+    sqlx::query("DELETE FROM rust_controller.worker_leases WHERE operation_id=$1")
+        .bind(h.operation.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let parked = f.store.load_osdeploy_operation(h.operation).await.unwrap();
+    assert_eq!(parked.state(), controller_domain::ExecutionState::Waiting);
+    assert_eq!(parked.next_check_at(), Some(resumed_at));
+    sqlx::query("INSERT INTO rust_controller.worker_leases SELECT (jsonb_populate_record(NULL::rust_controller.worker_leases,$1::jsonb)).*").bind(&old_lease).execute(&f.pool).await.unwrap();
+    assert!(
+        matches!(
+            f.store.load_osdeploy_operation(h.operation).await,
+            Err(postgres_store::OsDeployExecutionError::Validation)
+        ),
+        "ordinary park accepted the evaluator lease it ended"
+    );
+
+    // A later acquisition is a distinct durable epoch; Waiting itself is not
+    // forbidden from carrying that new lease before its resumed start.
+    let resume = controller_domain::EventId::new();
+    let token = Uuid::now_v7().to_string();
+    let mut tx = f.pool.begin().await.unwrap();
+    sqlx::query("DELETE FROM rust_controller.worker_leases WHERE operation_id=$1")
+        .bind(h.operation.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let token_hash: String =
+        sqlx::query_scalar("SELECT encode(sha256(convert_to($1,'UTF8')),'hex')")
+            .bind(&token)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+    let expires = resumed_at + chrono::Duration::seconds(30);
+    let mut payload = h.envelope("lease_acquired",10,Value::Null,json!({"purpose":"resume_evaluation","acquisition_event_id":resume,
+        "token_sha256":token_hash,"worker_id":"reload-only-resumed-worker","acquired_at":resumed_at,"expires_at":expires,
+        "deadline_at":h.deadline,"prior_schedule_event_id":park}));
+    payload["evaluated_at"] = json!(resumed_at);
+    h.decision(&mut tx, resume, payload).await;
+    insert_row(&mut tx,"osdeploy_lease_epochs",&json!({"acquisition_event_id":resume,"operation_id":h.operation,"run_id":h.run,
+        "attempt_id":h.attempt,"executor_kind":"rust","generation":1,"worker_id":"reload-only-resumed-worker",
+        "lease_token_sha256":token_hash,"acquired_at":resumed_at,"initial_expires_at":expires,"deadline_at":h.deadline,"purpose":"resume_evaluation"})).await.unwrap();
+    let mut resumed_lease = old_lease;
+    resumed_lease["worker_id"] = json!("reload-only-resumed-worker");
+    resumed_lease["lease_token"] = json!(token);
+    resumed_lease["acquired_at"] = json!(resumed_at);
+    resumed_lease["heartbeat_at"] = json!(resumed_at);
+    resumed_lease["lease_expires_at"] = json!(expires);
+    sqlx::query("INSERT INTO rust_controller.worker_leases SELECT (jsonb_populate_record(NULL::rust_controller.worker_leases,$1::jsonb)).*").bind(resumed_lease).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let resumed = f.store.load_osdeploy_operation(h.operation).await.unwrap();
+    assert_eq!(resumed.state(), controller_domain::ExecutionState::Waiting);
+    assert_eq!(resumed.next_check_at(), None);
+    assert_eq!(resumed.revision(), 11);
+    let evaluation = controller_domain::EventId::new();
+    let mut payload = h.envelope(
+        "evaluation_started",
+        11,
+        Value::Null,
+        json!({"lease_acquisition_event_id":resume,"activity":"outcome_read"}),
+    );
+    payload["evaluated_at"] = json!(resumed_at);
+    let mut tx = f.pool.begin().await.unwrap();
+    h.decision(&mut tx, evaluation, payload).await;
+    h.event(
+        &mut tx,
+        controller_domain::EventId::new(),
+        13,
+        "execution_state_changed",
+        Some("running"),
+        json!({"state":"running","decision_event_id":evaluation}),
+        resumed_at,
+    )
+    .await;
+    tx.commit().await.unwrap();
+    assert_eq!(
+        f.store
+            .load_osdeploy_operation(h.operation)
+            .await
+            .unwrap()
+            .state(),
+        controller_domain::ExecutionState::Running
+    );
+    let starts:i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='attempt_started'").bind(h.operation.as_uuid()).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(
+        starts, 1,
+        "resuming the same attempt must not fabricate another start"
+    );
+}
+
+#[tokio::test]
+async fn ordinary_lease_reload_preserves_exact_terminal_residual_lease() {
+    let f = Fixture::new().await;
+    let h = ReloadHistory::new(&f).await;
+    let expiry = controller_domain::EventId::new();
+    let mut payload = h.envelope("activated_scope_expired",3,json!("unknown"),json!({"scope_key":"mutation_clone",
+        "anchor_operation_id":h.operation,"anchor_event_id":h.activation,"deadline_at":h.deadline,
+        "pe_complete_operation_id":null,"pe_complete_decision_event_id":null,"reason":"phase_deadline_expired"}));
+    payload["evaluated_at"] = json!(h.deadline);
+    let mut tx = f.pool.begin().await.unwrap();
+    h.decision(&mut tx, expiry, payload).await;
+    h.event(
+        &mut tx,
+        controller_domain::EventId::new(),
+        5,
+        "execution_state_changed",
+        Some("unknown"),
+        json!({"state":"unknown","decision_event_id":expiry}),
+        h.deadline,
+    )
+    .await;
+    tx.commit().await.unwrap();
+    assert_eq!(
+        f.store
+            .load_osdeploy_operation(h.operation)
+            .await
+            .unwrap()
+            .state(),
+        controller_domain::ExecutionState::Unknown
+    );
+    let leases: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rust_controller.worker_leases WHERE operation_id=$1",
+    )
+    .bind(h.operation.as_uuid())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(leases, 1);
+    sqlx::query("UPDATE rust_controller.worker_leases SET worker_id='wrong-residual-owner' WHERE operation_id=$1").bind(h.operation.as_uuid()).execute(&f.pool).await.unwrap();
+    assert!(matches!(
+        f.store.load_osdeploy_operation(h.operation).await,
+        Err(postgres_store::OsDeployExecutionError::Validation)
+    ));
+}
+
+#[tokio::test]
 async fn reload_rejects_changed_binding_scope_epoch_and_aggregate_times() {
     let f = Fixture::new().await;
     let h = ReloadHistory::new(&f).await;

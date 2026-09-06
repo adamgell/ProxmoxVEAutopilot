@@ -1164,8 +1164,19 @@ fn validate_state_history(
     let mut started = 0;
     let mut ran = false;
     let mut pending_transition = None;
+    let mut pending_first_start: Option<&Event> = None;
     for e in ordered {
         require(pending_transition.is_none() || e.kind == "execution_state_changed")?;
+        if let Some(start) = pending_first_start {
+            // The first start is one atomic three-event transaction. Keep its
+            // journal identity until the immediately adjacent evaluation consumes it.
+            require(
+                e.kind == "decision_recorded"
+                    && e.revision == start.revision + 1
+                    && e.at == start.at
+                    && e.attempt == start.attempt,
+            )?;
+        }
         match e.kind.as_str() {
             "attempt_started" => {
                 started += 1;
@@ -1176,6 +1187,7 @@ fn validate_state_history(
                         && deadline.is_some_and(|d| e.at < d)
                         && e.payload == serde_json::json!({"phase":"mutation_started"}),
                 )?;
+                pending_first_start = Some(e);
             }
             "execution_state_changed" => {
                 let p: StateChange = decode_exact(&canonical(&e.payload)?, DECISION_LIMIT)?;
@@ -1209,6 +1221,10 @@ fn validate_state_history(
             "decision_recorded" => {
                 let d = ds.get(&e.id.as_uuid()).ok_or(Error::Validation)?;
                 require(admits_decision_in(state, &d.value.detail))?;
+                if !ran && matches!(d.value.detail, Detail::EvaluationStarted(_)) {
+                    require(pending_first_start.take().is_some())?;
+                }
+                require(pending_first_start.is_none())?;
                 if let Ok(target) = state_for(d)
                     && target != state
                 {
@@ -1219,7 +1235,12 @@ fn validate_state_history(
             _ => return Err(Error::Validation),
         }
     }
-    require(state == current && (started == 1) == ran && pending_transition.is_none())?;
+    require(
+        state == current
+            && (started == 1) == ran
+            && pending_transition.is_none()
+            && pending_first_start.is_none(),
+    )?;
     if let Some(selected) = own
         .iter()
         .filter(|d| selected(d))
@@ -1294,13 +1315,15 @@ async fn validate_live_lease(
             .ok_or(Error::Validation)?;
         require(!own.iter().any(|d| {
             d.revision > acquisition.revision
-                && matches!(
+                && (matches!(
                     d.value.detail,
                     Detail::LeaseAcquired(_)
                         | Detail::ResidualLeaseRevoked(_)
                         | Detail::LeaseReclaimedSameAttempt(_)
                         | Detail::EvaluationReparked(_)
-                )
+                ) || matches!(&d.value.detail, Detail::PveEvaluated(v)
+                    if d.value.resolution == Some(NativeDecision::Waiting)
+                        && v.lease_acquisition_event_id == Some(epoch.event)))
         }))?;
         require(
             Some(id::<AttemptId>(r.try_get("attempt_id")?)?) == attempt
