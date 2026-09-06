@@ -19,5 +19,6 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+osdeploy-adapter = { path = "../osdeploy-adapter" }
 sqlx.workspace = true
 proptest.workspace = true

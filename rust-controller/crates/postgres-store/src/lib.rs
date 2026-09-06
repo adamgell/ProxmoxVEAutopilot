@@ -22,7 +22,7 @@ pub use native::{
 };
 pub use osdeploy::execution::{
     OsDeployDue, OsDeployDueKind, OsDeployExecutionError, OsDeployExpiryCursor,
-    OsDeployOperationSnapshot, OsDeployProgress, OsDeployRepairCursor,
+    OsDeployOperationSnapshot, OsDeployProgress, OsDeployPveObservation, OsDeployRepairCursor,
 };
 pub use osdeploy::{
     OsDeployOperationPlanV1, OsDeployRegistrationV1, OsDeployStoreError, OsDeployWorkflowIds,

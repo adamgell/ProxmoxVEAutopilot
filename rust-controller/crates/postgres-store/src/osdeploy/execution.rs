@@ -28,6 +28,37 @@ pub enum OsDeployProgress {
     Decided(ExecutionState),
 }
 
+/// A read-only DB-time observation, never an execution capability.
+/// ```compile_fail
+/// let _: postgres_store::OsDeployPveObservation = serde_json::from_str("{}").unwrap();
+/// ```
+pub struct OsDeployPveObservation {
+    context: pve_port::ProvisioningEvaluationContextV1,
+    checked_at: DateTime<Utc>,
+}
+impl OsDeployPveObservation {
+    pub(crate) fn observed(
+        context: pve_port::ProvisioningEvaluationContextV1,
+        checked_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            context,
+            checked_at,
+        }
+    }
+    pub fn context(&self) -> &pve_port::ProvisioningEvaluationContextV1 {
+        &self.context
+    }
+    pub fn checked_at(&self) -> DateTime<Utc> {
+        self.checked_at
+    }
+    pub fn remaining(&self) -> std::time::Duration {
+        (self.context.facts().mutation_deadline - self.checked_at)
+            .to_std()
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Default)]
 pub struct OsDeployRepairCursor {
     pub(crate) after: Option<OperationId>,

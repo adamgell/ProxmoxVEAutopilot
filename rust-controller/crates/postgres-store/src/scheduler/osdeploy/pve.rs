@@ -62,6 +62,26 @@ impl Scheduler {
 }
 
 impl PgStore {
+    pub async fn load_osdeploy_pve_context_with_budget(
+        &self,
+        operation: OperationId,
+        expected_revision: i64,
+        mode: ProvisioningEvaluationModeV1,
+    ) -> Result<crate::OsDeployPveObservation, Error> {
+        Box::pin(async move {
+            let mut tx = self.pool().begin().await?;
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(&mut *tx)
+                .await?;
+            let context =
+                history::load_context(&mut tx, operation, expected_revision, mode).await?;
+            let checked_at = now(&mut tx).await?;
+            tx.commit().await?;
+            Ok(crate::OsDeployPveObservation::observed(context, checked_at))
+        })
+        .await
+    }
+
     pub async fn load_osdeploy_pve_context(
         &self,
         operation: OperationId,

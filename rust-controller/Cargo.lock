@@ -1123,6 +1123,7 @@ dependencies = [
  "chrono",
  "controller-domain",
  "event-journal",
+ "osdeploy-adapter",
  "postgres-store",
  "proptest",
  "pve-port",
