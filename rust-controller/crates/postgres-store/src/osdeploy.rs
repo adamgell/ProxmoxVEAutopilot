@@ -14,6 +14,7 @@ use controller_domain::{OperationId, RunId};
 use osdeploy_adapter::{OsDeployPlanV1, OsDeployStage};
 use pve_port::ProvisioningOperationPlanV1;
 use serde::Serialize;
+pub(crate) mod execution;
 mod records;
 mod registration;
 mod stage;

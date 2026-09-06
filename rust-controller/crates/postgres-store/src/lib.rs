@@ -20,6 +20,9 @@ mod store;
 pub use native::{
     NativeDispatchPermit, NativeOperationSnapshot, NativeStoreError, NativeWorkflowIds,
 };
+pub use osdeploy::execution::{
+    OsDeployExecutionError, OsDeployOperationSnapshot, OsDeployProgress,
+};
 pub use osdeploy::{
     OsDeployOperationPlanV1, OsDeployRegistrationV1, OsDeployStoreError, OsDeployWorkflowIds,
 };
