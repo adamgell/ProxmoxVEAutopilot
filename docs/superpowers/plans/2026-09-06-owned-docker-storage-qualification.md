@@ -446,3 +446,45 @@ git commit -m "test: qualify owned Docker fixture storage and lifecycle"
 ```
 
 Use existing configured signing with no key/config access or overrides; no push/merge/publication. Return concise status/commit/test summary/concerns and the complete report path. Main independently reviews source/evidence and obtains a fresh Astra specification/code-quality review before accepting B or dispatching controller Task8. Readiness of the full replacement remains unproven.
+
+## Main implementation amendment: precise event cutoff
+
+This amendment supersedes only the Step3 literal `--until 0s` and adds bounded diagnostic retention. Initial implementation commit3ef1d1e24acc9fd8ed416e8b6e98cc195f6da162 and its failed first live result remain evidence, not acceptance. Main's spec cutoff correction and progress-ledger ruling bind this repair. The installed-CLI private-socket probe `cli-until-probe.py` confirmed duration truncation without touching a real daemon.
+
+1. In the existing probe module add the following test and a temporary private `event_cutoff` returning `"0s".to_owned()`; keep the live call unchanged until the test compiles and fails. Run the existing180s non-Docker decoder-filter command and retain the exact failing formatter assertion. Then replace the formatter body with the implementation below and use it for the actual query. Do not commit a completed behavior with the temporary body.
+
+```rust
+#[test]
+fn event_cutoff_preserves_subsecond_query_boundary() {
+    let at = chrono::DateTime::parse_from_rfc3339("2026-09-06T13:42:33.999999999Z")
+        .unwrap().with_timezone(&chrono::Utc);
+    assert_eq!(event_cutoff(at), "2026-09-06T13:42:33.999999999Z");
+}
+fn event_cutoff(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+}
+```
+
+2. Immediately before the existing events query, compute `let until = event_cutoff(chrono::Utc::now());` and pass `&until` instead of `"0s"`. No future cutoff, sleep, deadline increase, endpoint retry or changed history predicate. Record the retained Created, cutoff and normalized projection before returning a failed history verdict. Use the following fixed diagnostic form after successful bounded query output, instead of printing unvalidated raw stdout:
+
+```rust
+let result = events(&raw, created);
+eprintln!("owned_storage_history {} {} created_ns={} until={} result={:?}",
+    self.identity().0, self.identity().1, created, until, result);
+if result.is_err() {
+    for line in raw.lines().take(256) {
+        match serde_json::from_str::<(i64, u8)>(line) {
+            Ok((at, class)) if at > 0 && class <= 4 =>
+                eprintln!("owned_storage_history_row {} [{},{}]", self.identity().1, at, class),
+            _ => eprintln!("owned_storage_history_invalid_row {}", self.identity().1),
+        }
+    }
+}
+result?;
+```
+
+The cap/tuple checks above constrain diagnostics only; the existing strict `events` function remains the sole qualification predicate and still rejects overflow, malformed records, missing earlier witness/endpoints, unordered/duplicate endpoints or attributed mount/unmount. Created is retained by the handle before cleanup; its numeric value and chosen cutoff are now reported on both success and failure. Malformed raw output is never exposed.
+
+3. Run the four decoder bodies GREEN, complete existing helper filter, formatting and strict workspace Clippy under the existing bounds. Recheck local resource/backend gates and run exactly one corrected SQL/explicit-cleanup case under its original180s bound. A full pass permits the remaining Drop/cancellation cases and original Step7 workload/observational gates. A new history/cleanup/capacity/timeout ambiguity stops and returns to main; do not loop for a passing result.
+
+4. Append repair receipts, source hashes and final qualification truth to the existing report; preserve the original three RED tests, original live failure and diagnostic limits separately. Commit the scoped correction normally after its covering checks. Main reviews the entire original BASE-to-final source range, including the initial failed implementation and this repair. No Task8 or full readiness acceptance follows until B's complete gates and independent review pass.
