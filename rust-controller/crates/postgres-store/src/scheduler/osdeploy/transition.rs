@@ -791,7 +791,16 @@ async fn append_exception(
 }
 
 #[cfg(test)]
-const LOCAL_DATABASE_NAME: &str = "osdeploy_private_lifecycle_test";
+const fn private_fixture_database_family(is_linux: bool) -> &'static str {
+    if is_linux {
+        "native_test"
+    } else {
+        "osdeploy_private_lifecycle_test"
+    }
+}
+
+#[cfg(test)]
+const LOCAL_DATABASE_NAME: &str = private_fixture_database_family(cfg!(target_os = "linux"));
 #[cfg(test)]
 #[path = "../../../../../proof_support/mod.rs"]
 mod local_postgres;
@@ -800,6 +809,21 @@ mod local_postgres;
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn private_fixture_database_family_preserves_macos_and_admits_linux() {
+        assert_eq!(private_fixture_database_family(true), "native_test");
+        assert_eq!(
+            private_fixture_database_family(false),
+            "osdeploy_private_lifecycle_test"
+        );
+        let expected = if cfg!(target_os = "linux") {
+            "native_test"
+        } else {
+            "osdeploy_private_lifecycle_test"
+        };
+        assert_eq!(LOCAL_DATABASE_NAME, expected);
+    }
 
     #[test]
     fn cancellation_scope_keeps_opened_inherited_deadline_without_an_attempt() {
