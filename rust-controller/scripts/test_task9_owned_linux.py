@@ -21,6 +21,30 @@ class CapacityTests(unittest.TestCase):
 
 
 class ContractTests(unittest.TestCase):
+    def test_fixture_workload_preserves_ignored_child_entrypoints(self):
+        argv, seconds = gate.workload("fixture")
+        self.assertEqual(argv, ["cargo", "test", "--offline", "--locked", "-p", "pve-port",
+                               "--features", "fixture-ipc", "--no-fail-fast", "--",
+                               "--nocapture", "--test-threads=1"])
+        self.assertEqual(seconds, 1800)
+        self.assertNotIn("--include-ignored", argv)
+        self.assertNotIn("--ignored", argv)
+        runner = gate.profile_args("a" * 32, "runner", "b" * 64, "/receipt", "/script", "fixture")
+        self.assertEqual(runner[-3:], [gate.SCRIPT, "--inside", "fixture"])
+        self.assertIn(gate.RUNNER_IMAGE, runner)
+        with self.assertRaises(ValueError):
+            gate.workload("arbitrary")
+
+    def test_existing_workloads_keep_their_selection_and_bounds(self):
+        smoke, seconds = gate.workload("smoke")
+        self.assertEqual(seconds, 180)
+        self.assertIn(gate.SMOKE, smoke)
+        self.assertIn("--exact", smoke)
+        full, seconds = gate.workload("full")
+        self.assertEqual(seconds, 1800)
+        self.assertIn("--include-ignored", full)
+        self.assertNotIn("pve-port", full)
+
     def receipt(self):
         return {"version": 1, "session": "a" * 32, "pg_id": "b" * 64,
                 "pg_image": gate.PG_IMAGE, "runner_image": gate.RUNNER_IMAGE,

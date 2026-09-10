@@ -108,7 +108,7 @@ def validate_receipt(value):
 
 def profile_args(session, role, pg_id=None, receipt_path=None, script_path=None, mode="smoke"):
     require(re.fullmatch(r"[0-9a-f]{32}", session) is not None and role in CAPS)
-    require(mode in ("smoke", "full"))
+    require(mode in ("smoke", "full", "fixture"))
     argv = ["create", "--pull=never", "--name", "task9-" + session + "-" + role,
             "--label", LABEL + ".session=" + session, "--label", LABEL + ".role=" + role,
             "--memory", str(CAPS[role]), "--memory-swap", str(CAPS[role]),
@@ -210,6 +210,20 @@ CGROUP_FILES = ["/sys/fs/cgroup/" + name for name in
                 ("memory.current", "memory.max", "memory.swap.current", "memory.swap.max", "memory.events")]
 
 
+def workload(mode):
+    """Closed test selections; fixture children are launched only by their parent tests."""
+    require(mode in ("smoke", "full", "fixture"), "unknown workload")
+    if mode == "fixture":
+        return (["cargo", "test", "--offline", "--locked", "-p", "pve-port",
+                 "--features", "fixture-ipc", "--no-fail-fast", "--",
+                 "--nocapture", "--test-threads=1"], 1800)
+    argv = ["cargo", "test", "--offline", "--locked", "-p", "postgres-store"]
+    if mode == "smoke":
+        return (argv + ["--lib", SMOKE, "--", "--exact", "--nocapture", "--test-threads=1"], 180)
+    return (argv + ["-p", "scheduler", "-p", "osdeploy-adapter", "-p", "operation-controller",
+                   "--all-features", "--no-fail-fast", "--", "--include-ignored", "--nocapture", "--test-threads=1"], 1800)
+
+
 def inside(mode):
     require(sys.platform == "linux" and not OVERRIDES.intersection(os.environ))
     require(not any(Path(p).exists() for p in ("/var/run/docker.sock", "/run/docker.sock", "/run/podman/podman.sock")))
@@ -219,14 +233,7 @@ def inside(mode):
     require(os.environ.get("CONTROLLER_GIT_SHA") == IMAGE_SOURCE)
     require(Path("/proc/self/cgroup").read_bytes() == b"0::/\n")
     cgroup(b"".join(Path(p).read_bytes() for p in CGROUP_FILES), "runner")
-    argv = ["cargo", "test", "--offline", "--locked", "-p", "postgres-store"]
-    if mode == "smoke":
-        argv += ["--lib", SMOKE, "--", "--exact", "--nocapture", "--test-threads=1"]
-        seconds = 180
-    else:
-        argv += ["-p", "scheduler", "-p", "osdeploy-adapter", "-p", "operation-controller",
-                 "--all-features", "--no-fail-fast", "--", "--include-ignored", "--nocapture", "--test-threads=1"]
-        seconds = 1800
+    argv, seconds = workload(mode)
     result, out, err = bounded(argv, seconds)
     sys.stdout.buffer.write(out)
     sys.stderr.buffer.write(err)
@@ -365,10 +372,10 @@ def host(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--inside", choices=("smoke", "full"))
+    parser.add_argument("--inside", choices=("smoke", "full", "fixture"))
     parser.add_argument("--runner-image")
     parser.add_argument("--evidence")
-    parser.add_argument("--mode", choices=("smoke", "full"), default="smoke")
+    parser.add_argument("--mode", choices=("smoke", "full", "fixture"), default="smoke")
     args = parser.parse_args()
     if args.inside:
         return inside(args.inside)
