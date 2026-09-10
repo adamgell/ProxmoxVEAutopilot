@@ -29,6 +29,16 @@ const MAX_MESSAGE_BYTES: usize = 65_536;
 /// ```
 #[async_trait::async_trait]
 pub trait ControllerFixturePort: crate::ProvisioningFakePort {
+    /// Called after durable dispatch with the exact request committed by the scheduler.
+    /// Implementations must explicitly opt in; a legacy point-only barrier cannot
+    /// authorize an arbitrary provisioning stage.
+    async fn provisioning_checkpoint(
+        &self,
+        _request: &crate::ProvisioningMutationRequestV1,
+    ) -> Result<(), CheckpointError> {
+        Err(CheckpointError::Rejected)
+    }
+
     async fn controller_checkpoint(
         &self,
         point: crate::FakeControllerCheckpoint,
@@ -57,6 +67,15 @@ impl From<std::io::Error> for CheckpointError {
 
 #[async_trait::async_trait]
 impl ControllerFixturePort for crate::NativeFakePve {
+    async fn provisioning_checkpoint(
+        &self,
+        _request: &crate::ProvisioningMutationRequestV1,
+    ) -> Result<(), CheckpointError> {
+        self.controller_checkpoint(crate::FakeControllerCheckpoint::DispatchCommitted)
+            .await;
+        Ok(())
+    }
+
     async fn controller_checkpoint(
         &self,
         point: crate::FakeControllerCheckpoint,

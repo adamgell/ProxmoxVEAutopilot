@@ -4,6 +4,31 @@ use provisioning_support::chain;
 use pve_port::{fixture_ipc::*, *};
 
 #[tokio::test]
+async fn controller_request_checkpoint_rejects_unbound_and_unsupported_stages() {
+    use pve_port::fixture_support::*;
+    let episodes = chain();
+    let port = FixtureProvisioningPort::new_late(
+        "/nonexistent-stage-checkpoint.sock".into(),
+        std::time::Duration::from_millis(10),
+        FixtureReadIdentity {
+            fixture_id: uuid::Uuid::now_v7(),
+            operation: uuid::Uuid::now_v7(),
+            node: "fixture-node".into(),
+            source_vmid: 100,
+            target_vmid: 101,
+        },
+    )
+    .unwrap();
+    let capability: &dyn ControllerFixturePort = &port;
+    for episode in &episodes {
+        assert_eq!(
+            capability.provisioning_checkpoint(&episode.request).await,
+            Err(CheckpointError::Rejected)
+        );
+    }
+}
+
+#[tokio::test]
 async fn stage_transport_rejects_without_attempts_or_effects_across_restart() {
     use pve_port::fixture_support::*;
     use std::{fs, os::unix::fs::PermissionsExt, time::Duration};

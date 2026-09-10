@@ -201,6 +201,32 @@ impl FixtureProvisioningPort {
 impl crate::native::sealed::FakeMutationCapability for FixtureProvisioningPort {}
 #[async_trait::async_trait]
 impl crate::fixture_ipc::ControllerFixturePort for FixtureProvisioningPort {
+    async fn provisioning_checkpoint(
+        &self,
+        request: &ProvisioningMutationRequestV1,
+    ) -> Result<(), crate::fixture_ipc::CheckpointError> {
+        use crate::fixture_ipc::{CheckpointError, FixtureCloneRequest};
+        let ProvisioningMutationRequestV1::Clone(clone) = request else {
+            return Err(CheckpointError::Rejected);
+        };
+        let envelope = FixtureCloneRequest::new(self.identity.fixture_id, clone.clone())
+            .map_err(|_| CheckpointError::Rejected)?;
+        let vm = clone.clone_request().vm();
+        if clone.binding().operation_id().as_uuid() != self.identity.operation
+            || vm.node().as_str() != self.identity.node
+            || vm.source_vmid().get() != self.identity.source_vmid
+            || vm.target_vmid().get() != self.identity.target_vmid
+            || self
+                .exact_identity
+                .as_ref()
+                .is_some_and(|identity| envelope.request_sha256() != identity.request_sha256)
+        {
+            return Err(CheckpointError::Rejected);
+        }
+        self.controller_checkpoint(FakeControllerCheckpoint::DispatchCommitted)
+            .await
+    }
+
     async fn controller_checkpoint(
         &self,
         point: FakeControllerCheckpoint,

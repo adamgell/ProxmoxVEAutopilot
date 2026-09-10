@@ -9,9 +9,9 @@ use postgres_store::{
     LeaseGrant, OsDeployDue, OsDeployDueKind, OsDeployExecutionError, OsDeployProgress, PgStore,
     Scheduler,
 };
-use pve_port::{
-    FakeControllerCheckpoint, NativeFakePve, ProvisioningActionV1, ProvisioningEvaluationModeV1,
-};
+#[cfg(not(feature = "fixture-ipc"))]
+use pve_port::FakeControllerCheckpoint;
+use pve_port::{NativeFakePve, ProvisioningActionV1, ProvisioningEvaluationModeV1};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::{Semaphore, watch};
 use tokio::time::{Instant, timeout_at};
@@ -438,9 +438,7 @@ impl OsDeployController {
                 .await?;
                 before_close(closed, async {
                     #[cfg(feature = "fixture-ipc")]
-                    self.fake
-                        .controller_checkpoint(FakeControllerCheckpoint::DispatchCommitted)
-                        .await?;
+                    self.fake.provisioning_checkpoint(&request).await?;
                     #[cfg(not(feature = "fixture-ipc"))]
                     self.fake
                         .controller_checkpoint(FakeControllerCheckpoint::DispatchCommitted)
