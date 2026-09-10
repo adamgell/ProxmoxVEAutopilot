@@ -284,6 +284,29 @@ async fn read_client_observes_daemon_owned_effect_without_writing() {
 }
 
 #[test]
+fn delayed_payload_is_read_within_the_frame_deadline() {
+    let daemon = Daemon::start();
+    let mut stream = UnixStream::connect(daemon.directory.join("client.sock")).unwrap();
+    let payload = br#"{"command":"status"}"#;
+    stream
+        .write_all(&(payload.len() as u32).to_be_bytes())
+        .unwrap();
+    // Allow the daemon to accept and consume the header before the payload
+    // arrives. An inherited nonblocking stream would close this valid request.
+    thread::sleep(Duration::from_millis(20));
+    stream.write_all(payload).unwrap();
+    let mut header = [0; 4];
+    stream.read_exact(&mut header).unwrap();
+    let length = u32::from_be_bytes(header) as usize;
+    assert!(length <= 1024);
+    let mut bytes = vec![0; length];
+    stream.read_exact(&mut bytes).unwrap();
+    let reply: fixture_daemon::Reply = serde_json::from_slice(&bytes).unwrap();
+    assert!(reply.ok);
+    assert_eq!(reply.attempts, 0);
+}
+
+#[test]
 fn separate_process_enforces_control_boundary_and_durable_duplicate_ledger() {
     let mut daemon = Daemon::start();
     assert!(

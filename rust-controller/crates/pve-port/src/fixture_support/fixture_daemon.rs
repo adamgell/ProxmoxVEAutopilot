@@ -155,6 +155,10 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 Err(e) => return Err(e),
             };
+            // Accepted sockets inherit O_NONBLOCK on macOS. Framing uses
+            // blocking reads with a deadline, so normalize the stream mode
+            // before a client can race its payload against our first read.
+            stream.set_nonblocking(false)?;
             let Ok(bytes) = read_frame(&mut stream) else {
                 continue;
             };
