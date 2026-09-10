@@ -10,6 +10,32 @@ use uuid::Uuid;
 
 const MAX_MESSAGE_BYTES: usize = 65_536;
 
+/// Sealed provisioning fixture with a controller dispatch checkpoint.
+///
+/// This trait preserves the private mutation seal on `ProvisioningFakePort`.
+/// The checkpoint is a synchronization hook, not mutation authority or evidence
+/// that a request was accepted. IPC implementations must supply their own
+/// supervisor-controlled barrier before they can implement this seam.
+///
+/// A production observer cannot acquire this fixture capability.
+/// ```compile_fail
+/// use pve_port::{fixture_ipc::ControllerFixturePort, ReqwestPveObserver};
+/// fn observer_is_not_a_fixture(observer: &ReqwestPveObserver) {
+///     let _: &dyn ControllerFixturePort = observer;
+/// }
+/// ```
+#[async_trait::async_trait]
+pub trait ControllerFixturePort: crate::ProvisioningFakePort {
+    async fn controller_checkpoint(&self, point: crate::FakeControllerCheckpoint);
+}
+
+#[async_trait::async_trait]
+impl ControllerFixturePort for crate::NativeFakePve {
+    async fn controller_checkpoint(&self, point: crate::FakeControllerCheckpoint) {
+        crate::NativeFakePve::controller_checkpoint(self, point).await;
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("invalid local fixture clone message")]
 pub struct InvalidFixtureClone;
