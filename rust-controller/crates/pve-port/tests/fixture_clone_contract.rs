@@ -138,6 +138,136 @@ fn upid() -> Upid {
     Upid::parse("UPID:pve-test:00000001:00000001:00000001:qmclone:900:fake@pve:").unwrap()
 }
 
+#[tokio::test]
+async fn late_resize_requires_original_clone_and_never_submits_before_checkpoint() {
+    use pve_port::fixture_ipc::ControllerFixturePort;
+    use pve_port::fixture_support::*;
+    let episodes = chain();
+    let ProvisioningMutationRequestV1::Clone(clone) = &episodes[0].request else {
+        panic!()
+    };
+    let prior = FixtureCloneRequest::new(Uuid::from_u128(1), clone.clone()).unwrap();
+    let receipt = prior.encode_receipt(1, upid()).unwrap();
+    let socket = std::path::PathBuf::from(format!("/tmp/absent-resize-{}.sock", Uuid::now_v7()));
+    let make = || {
+        FixtureProvisioningPort::new_late(
+            socket.clone(),
+            std::time::Duration::from_millis(100),
+            FixtureReadIdentity {
+                fixture_id: prior.fixture_id(),
+                operation: episodes[1].request.binding().operation_id().as_uuid(),
+                node: "pve-test".into(),
+                source_vmid: 900,
+                target_vmid: 101,
+            },
+        )
+        .unwrap()
+    };
+    let client = || {
+        FixtureCheckpointClient::new(socket.clone(), std::time::Duration::from_millis(100)).unwrap()
+    };
+    assert!(
+        make()
+            .with_late_resize_after_legacy_clone(
+                client(),
+                Uuid::nil(),
+                Uuid::now_v7(),
+                prior.clone(),
+                receipt.clone()
+            )
+            .is_err()
+    );
+    let port = make()
+        .with_late_resize_after_legacy_clone(
+            client(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            prior.clone(),
+            receipt.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        port.submit_provisioning(&episodes[1].request).await,
+        Err(PveWriteError::Rejected)
+    );
+    assert!(
+        port.provisioning_checkpoint(&episodes[0].request)
+            .await
+            .is_err()
+    );
+    assert!(
+        port.provisioning_checkpoint(&episodes[2].request)
+            .await
+            .is_err()
+    );
+    assert!(
+        port.provisioning_vm_config(&node(), Vmid::new(101).unwrap())
+            .await
+            .is_err()
+    );
+    assert!(
+        port.provisioning_checkpoint(&episodes[1].request)
+            .await
+            .is_err()
+    );
+    // A failed checkpoint must not permit another attempt or expose stale reads.
+    assert_eq!(
+        port.submit_provisioning(&episodes[1].request).await,
+        Err(PveWriteError::Rejected)
+    );
+    assert!(
+        port.provisioning_checkpoint(&episodes[1].request)
+            .await
+            .is_err()
+    );
+    assert!(
+        port.provisioning_vm_config(&node(), Vmid::new(101).unwrap())
+            .await
+            .is_err()
+    );
+    let request = pve_port::fixture_ipc::FixtureStageRequest::new(
+        prior.fixture_id(),
+        episodes[1].request.clone(),
+    )
+    .unwrap();
+    let resize_receipt = request
+        .encode_receipt(
+            2,
+            MutationReceipt::Task(
+                Upid::parse("UPID:pve-test:00000002:00000001:00000001:resize:101:fake@pve:")
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    let restored = make()
+        .with_late_resize_after_legacy_clone(
+            client(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            prior,
+            receipt,
+        )
+        .unwrap()
+        .with_late_resize_receipt(&episodes[1].request, resize_receipt)
+        .unwrap();
+    assert_eq!(
+        restored.submit_provisioning(&episodes[1].request).await,
+        Err(PveWriteError::Rejected)
+    );
+    assert!(
+        restored
+            .provisioning_checkpoint(&episodes[1].request)
+            .await
+            .is_err()
+    );
+    assert!(
+        restored
+            .provisioning_vm_config(&node(), Vmid::new(101).unwrap())
+            .await
+            .is_err()
+    );
+}
+
 fn modify(bytes: &[u8], f: impl FnOnce(&mut Value)) -> Vec<u8> {
     let mut v: Value = serde_json::from_slice(bytes).unwrap();
     f(&mut v);

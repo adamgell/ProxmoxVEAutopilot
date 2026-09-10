@@ -4,6 +4,8 @@ use crate::*;
 use chrono::{DateTime, Utc};
 use serde_json::json;
 use std::{io, path::PathBuf, time::Duration};
+mod legacy_resize;
+use legacy_resize::LegacyResizeContext;
 
 /// Local synthetic provisioning capability. Configure `with_checkpoint` before
 /// controller use; an unconfigured checkpoint fails closed.
@@ -19,6 +21,7 @@ pub struct FixtureProvisioningPort {
     checkpoint: Option<(FixtureCheckpointClient, CheckpointBinding)>,
     dispatched: std::sync::Mutex<Option<crate::fixture_ipc::FixtureCloneRequest>>,
     resize: Option<ResizeContext>,
+    legacy_resize: Option<LegacyResizeContext>,
 }
 struct ResizeContext {
     client: FixtureCheckpointClient,
@@ -78,6 +81,7 @@ impl FixtureProvisioningPort {
             checkpoint: None,
             dispatched: std::sync::Mutex::new(None),
             resize: None,
+            legacy_resize: None,
         })
     }
     /// Collect v2 facts before the controller constructs its exact request.
@@ -96,6 +100,7 @@ impl FixtureProvisioningPort {
             checkpoint: None,
             dispatched: std::sync::Mutex::new(None),
             resize: None,
+            legacy_resize: None,
         })
     }
     /// Restore the exact journaled request when reconstructing an adapter.
@@ -106,7 +111,8 @@ impl FixtureProvisioningPort {
         request: crate::fixture_ipc::FixtureCloneRequest,
     ) -> io::Result<Self> {
         let vm = request.request().clone_request().vm();
-        if self.resize.is_some()
+        if self.legacy_resize.is_some()
+            || self.resize.is_some()
             || request.fixture_id() != self.identity.fixture_id
             || request.request().binding().operation_id().as_uuid() != self.identity.operation
             || vm.node().as_str() != self.identity.node
@@ -152,7 +158,8 @@ impl FixtureProvisioningPort {
                 "resize request required",
             ));
         };
-        if self.exact_identity.is_some()
+        if self.legacy_resize.is_some()
+            || self.exact_identity.is_some()
             || self.checkpoint.is_some()
             || self.dispatched.lock().unwrap().is_some()
             || identity.stage != FixtureLedgerStage::DiskCapacity
@@ -211,7 +218,8 @@ impl FixtureProvisioningPort {
         client: FixtureCheckpointClient,
         binding: CheckpointBinding,
     ) -> io::Result<Self> {
-        if self.resize.is_some()
+        if self.legacy_resize.is_some()
+            || self.resize.is_some()
             || binding.generation.is_nil()
             || binding.owner.is_nil()
             || binding.operation != self.identity.operation
@@ -232,7 +240,10 @@ impl FixtureProvisioningPort {
         }
     }
     async fn clone_reads(&self) -> Result<FixtureCloneReads, PveReadError> {
-        if self.resize.is_some() || self.dispatched.lock().unwrap().is_some() {
+        if self.legacy_resize.is_some()
+            || self.resize.is_some()
+            || self.dispatched.lock().unwrap().is_some()
+        {
             return Ok(self.post_dispatch().await?.inventory);
         }
         let facts = self
@@ -247,7 +258,10 @@ impl FixtureProvisioningPort {
         Ok(facts)
     }
     async fn provisioning(&self) -> Result<FixtureProvisioningReadsV2, PveReadError> {
-        if self.resize.is_some() || self.dispatched.lock().unwrap().is_some() {
+        if self.legacy_resize.is_some()
+            || self.resize.is_some()
+            || self.dispatched.lock().unwrap().is_some()
+        {
             return Ok(self
                 .post_dispatch()
                 .await?
@@ -270,6 +284,9 @@ impl FixtureProvisioningPort {
         }
     }
     async fn post_dispatch(&self) -> Result<FixturePostDispatchV1, PveReadError> {
+        if let Some(resize) = &self.legacy_resize {
+            return resize.observation(&self.reads).await;
+        }
         if let Some(resize) = &self.resize {
             let dispatched = resize.dispatched.lock().unwrap().clone();
             let (identity, request, receipt) = match &dispatched {
@@ -318,6 +335,9 @@ impl crate::fixture_ipc::ControllerFixturePort for FixtureProvisioningPort {
         request: &ProvisioningMutationRequestV1,
     ) -> Result<(), crate::fixture_ipc::CheckpointError> {
         use crate::fixture_ipc::{CheckpointError, FixtureCloneRequest};
+        if let Some(resize) = &self.legacy_resize {
+            return resize.checkpoint(request).await;
+        }
         if let Some(resize) = &self.resize {
             if resize.request.request() != request {
                 return Err(CheckpointError::Rejected);
@@ -532,6 +552,9 @@ impl ProvisioningFakePort for FixtureProvisioningPort {
         &self,
         request: &ProvisioningMutationRequestV1,
     ) -> Result<MutationReceipt, PveWriteError> {
+        if let Some(resize) = &self.legacy_resize {
+            return resize.submit(&self.mutation, request).await;
+        }
         if let Some(resize) = &self.resize {
             if resize.request.request() != request {
                 return Err(PveWriteError::Rejected);

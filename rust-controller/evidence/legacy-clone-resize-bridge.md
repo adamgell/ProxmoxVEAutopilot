@@ -29,7 +29,18 @@ Validation: the new IPC target passes one test; `fixture_stage_consumers` passes
 two and `fixture_post_dispatch` passes seven. Strict feature all-targets Clippy,
 formatting, and diff checks pass. No production/default controller path changed.
 
-A fresh controller Clone-to-DiskCapacity chain remains unproven. The controller adapter still needs late binding of
-its generated resize request and original v1 predecessor observation readback;
-`with_resize_stage` currently requires an exact request and v2 predecessor before
-the controller generates its attempt. ConfigurePe integration remains open.
+The adapter now supports `with_late_resize_after_legacy_clone`: it reads original
+accepted v1 Clone observations before binding the controller-generated resize
+request at the dispatch checkpoint. Successful supervisor release is required
+before its single submission. Once binding begins, stale predecessor observations
+cannot be returned. `with_late_resize_receipt` restores a journaled response for
+observation only and cannot resubmit. Tests cover missing ownership, unsupported
+stages, absent predecessor observations, failed checkpoints and restored-response
+send rejection.
+
+A fresh controller Clone-to-DiskCapacity chain remains unproven. Its proof must
+orchestrate the store's new resize attempt, arm/release its exact v2 supervisor
+identity, publish accepted resize observations, and inspect journaled satisfaction.
+The existing fresh Clone harness uses a v1 barrier and needs an additional v2
+supervisor phase for resize. No pre-admitted Ready result was used as a substitute.
+ConfigurePe integration remains open.
