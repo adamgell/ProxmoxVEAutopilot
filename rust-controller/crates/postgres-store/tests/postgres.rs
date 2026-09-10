@@ -9,7 +9,7 @@ use event_journal::{EventKind, JournalEvent, payload_digest};
 use postgres_store::{CommandAppend, EventAppend, ExecutorKind, PgStore, Scheduler, StoreError};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
-const EXPECTED_TABLES: [&str; 17] = [
+const EXPECTED_TABLES: [&str; 26] = [
     "attempts",
     "commands",
     "journal_events",
@@ -23,8 +23,17 @@ const EXPECTED_TABLES: [&str; 17] = [
     "operations",
     "orchestration_authority",
     "osdeploy_agent_reservations",
+    "osdeploy_attempt_bindings",
+    "osdeploy_deadlines",
+    "osdeploy_decisions",
+    "osdeploy_lease_epochs",
     "osdeploy_operation_plans",
+    "osdeploy_pve_dispatches",
+    "osdeploy_pve_evidence",
+    "osdeploy_pve_receipts",
+    "osdeploy_run_cancellations",
     "osdeploy_runs",
+    "osdeploy_schedule_projection",
     "outbox",
     "worker_leases",
 ];
