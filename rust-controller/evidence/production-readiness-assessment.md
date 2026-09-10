@@ -38,14 +38,14 @@ Production access, deployment, mutation, Ansible retirement, and cutover each re
 
 Current level: **local PoC / release-candidate preparation**.  
 Target level: **production candidate pending external gates**.  
-Decision owner: Adam, after the missing Linux, service, handoff, recovery, artifact, rollback, and operator-acceptance evidence is complete.
+Decision owner: Adam, after the remaining service, independent-process handoff/recovery, artifact/rollback, non-production, and operator-acceptance evidence is complete.
 
 ## Evidence index
 
-- [macOS regression receipt](restart-task9-macos-full-2.receipt.json)
-- [Linux build receipt](restart-task9-linux-build-5.receipt.json)
-- [Linux Compose output](restart-task9-linux-compose-1.stdout.log)
-- [Python contract receipt](restart-task9-python-contracts-3.receipt.json)
+- [macOS regression receipt](../../restart-task9-macos-full-2.receipt.json)
+- [Linux build receipt](../../restart-task9-linux-build-5.receipt.json)
+- [Linux Compose output](../../restart-task9-linux-compose-1.stdout.log)
+- [Python contract receipt](../../restart-task9-python-contracts-3.receipt.json)
 - [Readiness tracker](poc-readiness-tracker.md)
 - [Owned Linux full-run evidence](restart-task9-owned-full-4/)
 - [Restart/recovery and compatibility evidence](restart-recovery-1/acceptance.md)
