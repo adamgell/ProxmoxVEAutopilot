@@ -146,3 +146,21 @@ complete baseline remains admitted. This inspection adds no sealed adapter or
 controller round-trip claim. Unsupported inherited reads must use an explicit
 existing typed read error (the contract has no `Unsupported` variant), and the
 controller checkpoint still requires a supervisor-owned bounded barrier.
+
+### Adapter inspection: complete inventory power observation
+
+After the lock and per-identity coverage additions, the complete cluster
+inventory still cannot project into `ClusterVmInventory`: each entry requires
+an explicit `status`, while `SeedIdentity` contains no power observation.
+`fixture_inventory_projection.rs` proves that the identity-only projection is
+rejected and that both stopped and running worlds fit the same seed identity.
+Choosing a status would therefore invent supervisor evidence.
+
+Add per-entry power to the complete inventory seed, observed at the inventory
+timestamp, including unrelated VMs. Source/target power fields cannot substitute
+for this: their observations have independent timestamps and cover only two
+identities. Preserve missing/error semantics; do not default omitted power to
+stopped, infer it from template status, or borrow another observation timestamp.
+Then revalidate the adapter's entire read projection before implementing the
+sealed provisioning capability. The supervisor checkpoint remains a separate
+required protocol, and no adapter or controller round-trip is claimed here.
