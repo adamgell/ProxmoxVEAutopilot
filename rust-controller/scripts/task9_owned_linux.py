@@ -325,7 +325,9 @@ def host(args):
         receipt_file.write_bytes(canonical(value))
         state["pending"] = "runner"
         save()
-        raw = docker(*profile_args(session, "runner", state["pg"], str(receipt_file), str(script), args.mode), seconds=10)
+        # Large locally sealed images may take longer to materialize under
+        # OrbStack; this is create admission only, not the runner test bound.
+        raw = docker(*profile_args(session, "runner", state["pg"], str(receipt_file), str(script), args.mode), seconds=60)
         require(re.fullmatch(rb"[0-9a-f]{64}\n", raw) is not None)
         state["runner"] = raw.decode().strip()
         state.pop("pending")
