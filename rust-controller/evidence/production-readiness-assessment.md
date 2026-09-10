@@ -11,6 +11,8 @@ Production and `192.168.2.4`: read-only throughout
 ## Proven locally
 
 - Commit `857b485` verifies stage-aware Clone and DiskCapacity/resize post-dispatch publication/readback with exact durable-effect identity, owner/generation/attempt/digest binding, restart invalidation, duplicate refusal, and seven focused tests. The `FixtureProvisioningPort` adapter and full three-stage controller progression are still incomplete.
+- Commit `2450784` wires the adapter's exact DiskCapacity/resize request through stage checkpointing, durable Clone predecessor validation, stage submission, and publication/readback, while preserving legacy Clone behavior. The controller-level request generation/journaling and ConfigurePe publication contract remain open.
+- Commit `6a52130` adds an explicit feature-enabled Linux fixture qualification workload; it has only launcher-test evidence so far, not a current-source Linux runtime result.
 - Current-source Linux qualification is not established: the retained owned-v1 image is sealed to `ac03e96c...`, while the current Rust source is later and differs in 47 inputs. A fresh approved OrbStack Linux build must explicitly execute feature-gated `pve-port` runtime tests; existing Linux compilation and other-package runs are insufficient.
 
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
