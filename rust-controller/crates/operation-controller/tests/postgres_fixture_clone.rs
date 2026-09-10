@@ -10,6 +10,7 @@ mod osdeploy_support;
 
 use osdeploy_execution_support::Scenario;
 use pve_port::{fixture_ipc::*, fixture_support::*, *};
+use sqlx::ConnectOptions;
 use std::{fs, os::unix::fs::PermissionsExt, sync::Arc, time::Duration};
 
 #[tokio::test]
@@ -37,7 +38,7 @@ async fn committed_dispatch_captures_ipc_clone_receipt_in_independent_store() {
     )
     .unwrap();
     let daemon_path = directory.clone();
-    let daemon = std::thread::spawn(move || run(&daemon_path, Duration::from_secs(5)).unwrap());
+    let daemon = std::thread::spawn(move || run(&daemon_path, Duration::from_secs(10)).unwrap());
     let supervisor =
         FixtureCheckpointClient::new(directory.join("supervisor.sock"), Duration::from_secs(2))
             .unwrap();
@@ -167,6 +168,48 @@ async fn committed_dispatch_captures_ipc_clone_receipt_in_independent_store() {
             .receipt(),
         reloaded.receipt()
     );
+    fs::write(directory.join("request.json"), envelope.encode().unwrap()).unwrap();
+    fs::write(
+        directory.join("operation.json"),
+        serde_json::to_vec(&ready.grant.operation_id()).unwrap(),
+    )
+    .unwrap();
+    let attempts_before: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rust_controller.attempts WHERE operation_id=$1")
+            .bind(binding.operation)
+            .fetch_one(&s.db.pool)
+            .await
+            .unwrap();
+    let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "independent_recovery_reader",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("PVA_OWNED_RECOVERY_DIRECTORY", &directory)
+        .env(
+            "PVA_OWNED_RECOVERY_DSN",
+            s.db.pool.connect_options().to_url_lossy().as_str(),
+        )
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let status = tokio::time::timeout(Duration::from_secs(3), child.wait())
+        .await
+        .expect("independent recovery reader exceeded bound")
+        .unwrap();
+    assert!(status.success(), "independent recovery reader failed");
+    let attempts_after: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rust_controller.attempts WHERE operation_id=$1")
+            .bind(binding.operation)
+            .fetch_one(&s.db.pool)
+            .await
+            .unwrap();
+    assert_eq!(attempts_after, attempts_before);
     assert!(
         FixtureMutationClient::new(directory.join("client.sock"), Duration::from_secs(2))
             .unwrap()
@@ -175,4 +218,43 @@ async fn committed_dispatch_captures_ipc_clone_receipt_in_independent_store() {
             .is_err()
     );
     daemon.join().unwrap();
+}
+
+/// A new address space reconstructs only from durable inputs. This proves receipt
+/// recovery reads, not scheduler takeover or a dispatching worker's crash boundary.
+#[tokio::test]
+#[ignore = "subprocess entry point; invoked by the owned PostgreSQL proof"]
+async fn independent_recovery_reader() {
+    let directory = std::env::var_os("PVA_OWNED_RECOVERY_DIRECTORY")
+        .expect("owned recovery directory required");
+    let directory = std::path::PathBuf::from(directory);
+    let envelope =
+        FixtureCloneRequest::decode(&fs::read(directory.join("request.json")).unwrap()).unwrap();
+    let operation: controller_domain::OperationId =
+        serde_json::from_slice(&fs::read(directory.join("operation.json")).unwrap()).unwrap();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(1))
+        .connect(&std::env::var("PVA_OWNED_RECOVERY_DSN").unwrap())
+        .await
+        .expect("owned recovery database unavailable");
+    let store = postgres_store::PgStore::new(pool);
+    let snapshot = store.load_osdeploy_operation(operation).await.unwrap();
+    assert!(snapshot.dispatch().is_some());
+    let reader =
+        FixtureReadClient::new(directory.join("client.sock"), Duration::from_secs(1)).unwrap();
+    let effect = reader
+        .accepted_effect(operation.as_uuid(), &envelope.request_sha256())
+        .await
+        .unwrap()
+        .expect("accepted effect missing");
+    let receipt = envelope.decode_receipt(effect.receipt().unwrap()).unwrap();
+    assert_eq!(receipt.submission_sequence(), 1);
+    assert_eq!(snapshot.receipt().unwrap().receipt(), receipt.receipt());
+    assert!(
+        reader
+            .accepted_effect(operation.as_uuid(), &"0".repeat(64))
+            .await
+            .is_err()
+    );
 }
