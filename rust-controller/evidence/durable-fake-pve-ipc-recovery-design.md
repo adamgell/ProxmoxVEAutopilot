@@ -1,6 +1,6 @@
 # Durable fake-PVE IPC recovery design
 
-Status: design only; implementation requires review and separate approval.
+Status: reviewed design baseline; implementation is authorized only inside this isolated local PoC worktree.
 
 ## Purpose and boundary
 
@@ -12,7 +12,7 @@ Use a supervisor, a durable fake-PVE daemon, and controller workers A/B as separ
 
 ## Durable state and commit rules
 
-Persist a checksummed append-only fixture log (or an equivalent transactional store) containing VM state, task state, pending mutations, incarnation/sequence counters, attempted operation IDs, submission records, canonical request digests, admission outcomes, receipts/UPIDs, and resulting world transitions. A mutation reply is sent only after its record is durably committed. Corrupt or incomplete records fail closed. Submission attempts remain distinct from accepted effects: duplicate attempts are recorded and rejected rather than transparently deduplicated.
+Use a checksummed append-only fixture log as the first implementation (one length-delimited canonical record plus checksum per line, followed by `fdatasync` before acknowledgement). Records contain VM state, task state, pending mutations, incarnation/sequence counters, attempted operation IDs, submission records, canonical request digests, admission outcomes, receipts/UPIDs, and resulting world transitions. A received submission attempt is recorded before an acceptance/rejection reply; accepted effects are then recorded with their world/task transition before the success reply. Recovery refuses the fixture if any record is corrupt or if a trailing record is partial; it never silently truncates and continues. Submission attempts remain distinct from accepted effects: duplicate attempts are recorded and rejected rather than transparently deduplicated.
 
 ## Required recovery proof
 
@@ -20,4 +20,4 @@ The supervisor starts worker A, releases an explicit barrier, terminates it, and
 
 ## Evidence and approval
 
-Retain source/image bindings, process IDs, barrier events, durable before/after snapshots, fixture submission ledger, receipts, and bounded shutdown/descendant-cleanup records. This is a local test-infrastructure design only. Implementation should select the persistence mechanism and receive review before code changes; passing it would close the process-boundary recovery gate, not full OSDeploy, callback reachability, Python/Ansible handoff, or production readiness.
+Retain source/image bindings, process IDs, barrier events, durable before/after snapshots, fixture submission ledger, receipts, and bounded shutdown/descendant-cleanup records. This is a local test-infrastructure design only. Passing the resulting tests would establish independent-process recovery evidence for the supported three-stage prefix; it would not close full OSDeploy, callback reachability, Python/Ansible handoff, or production readiness.
