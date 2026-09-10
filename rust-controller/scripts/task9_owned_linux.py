@@ -77,6 +77,15 @@ def cgroup(raw, role):
     return {"current": current, "maximum": maximum, "events": events}
 
 
+def cgroup2_mount(raw):
+    """Accept the kernel mount record even when BusyBox stat cannot name it."""
+    require(len(raw) <= 8192 and raw.endswith(b"\n"))
+    lines = raw.decode("ascii").splitlines()
+    matches = [line for line in lines if " - cgroup2 cgroup " in line]
+    require(len(matches) == 1)
+    return "cgroup2"
+
+
 def validate_receipt(value):
     require(type(value) is dict and set(value) == {"version", "session", "pg_id", "pg_image",
             "runner_image", "source_git_sha", "system_identifier", "marker", "netns"})
@@ -298,7 +307,7 @@ def host(args):
         require(len(settings) == 12 and 160000 <= u64(settings[0]) < 170000)
         require(settings[2:] == ["lf_" + session, "127.0.0.1", "128MB", "100", "1GB", "80MB", "5min", "on", "on", "on"])
         netns = docker("exec", state["pg"], "readlink", "/proc/self/ns/net").decode().strip()
-        require(docker("exec", state["pg"], "stat", "-f", "-c", "%T", "/sys/fs/cgroup") == b"cgroup2fs\n")
+        state["cgroup_fs"] = cgroup2_mount(docker("exec", state["pg"], "grep", "-e", " - cgroup2 cgroup ", "/proc/self/mountinfo"))
         require(docker("exec", state["pg"], "cat", "/proc/self/cgroup") == b"0::/\n")
         state["capacity"] = capacity(docker("exec", state["pg"], "stat", "-f", "-c", "%T|%S|%b|%a", DATA))
         state["pg_cgroup"] = cgroup(docker("exec", state["pg"], "cat", *CGROUP_FILES), "pg")
