@@ -137,6 +137,49 @@ fn fixture_daemon_child() {
     fixture_daemon::run(&path, Duration::from_secs(5)).unwrap();
 }
 
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
+async fn read_client_observes_daemon_owned_effect_without_writing() {
+    let daemon = Daemon::start();
+    let client = pve_port::fixture_support::FixtureReadClient::new(
+        daemon.directory.join("client.sock"),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let operation = Uuid::now_v7();
+    let digest = "a".repeat(64);
+    assert_eq!(client.status().await.unwrap().attempts, 0);
+    assert!(client.world(100).await.unwrap().is_none());
+    assert!(
+        client
+            .accepted_effect(operation, &digest)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let attempt = serde_json::to_vec(
+        &serde_json::json!({"command":"attempt", "operation":operation, "request_sha256":digest}),
+    )
+    .unwrap();
+    assert!(daemon.request("client.sock", &attempt).ok);
+    let accepted = daemon.request("client.sock", br#"{"command":"effect","attempt_sequence":1,"vmid":100,"before":null,"after":{"disk_bytes":80,"pe_configured":false}}"#);
+    assert!(accepted.ok);
+    let ledger_before = fs::read(daemon.directory.join("fixture.log")).unwrap();
+    assert_eq!(client.world(100).await.unwrap(), accepted.vm);
+    assert!(
+        client
+            .accepted_effect(operation, &digest)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(client.status().await.unwrap().effects, 1);
+    assert_eq!(
+        fs::read(daemon.directory.join("fixture.log")).unwrap(),
+        ledger_before
+    );
+}
+
 #[test]
 fn separate_process_enforces_control_boundary_and_durable_duplicate_ledger() {
     let mut daemon = Daemon::start();

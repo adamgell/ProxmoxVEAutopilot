@@ -32,12 +32,16 @@ fn acceptance_and_world_transition_recover_together_after_durable_attempt() {
         pe_configured: false,
     };
     assert!(log.record_effect(1, 100, None, initial.clone()).is_err());
-    log.record_attempt(Uuid::now_v7(), &"a".repeat(64)).unwrap();
+    let operation = Uuid::now_v7();
+    log.record_attempt(operation, &"a".repeat(64)).unwrap();
     drop(log);
     let mut log = FixtureLog::recover(&fixture.path()).unwrap();
     assert!(log.effects().is_empty());
     assert!(log.world().is_empty());
     log.record_effect(1, 100, None, initial.clone()).unwrap();
+    assert!(log.effects()[0].matches(operation, &"a".repeat(64)));
+    assert!(!log.effects()[0].matches(Uuid::now_v7(), &"a".repeat(64)));
+    assert!(!log.effects()[0].matches(operation, &"b".repeat(64)));
     assert!(
         log.record_effect(1, 100, Some(initial.clone()), initial.clone())
             .is_err()

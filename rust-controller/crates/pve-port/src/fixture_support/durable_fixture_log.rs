@@ -43,6 +43,17 @@ pub struct Effect {
     after: VmState,
 }
 
+impl Effect {
+    pub(super) fn matches(&self, operation: Uuid, digest: &str) -> bool {
+        self.effect_version == 1
+            && self.sequence != 0
+            && self.attempt_sequence != 0
+            && self.vmid != 0
+            && self.operation == operation
+            && self.request_sha256 == digest
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 enum Record {
