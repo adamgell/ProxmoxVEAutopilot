@@ -80,6 +80,8 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 | Disposable non-production proof | Separate authorization required; exact artifact, isolated stack and sacrificial workflow targets |
 | Production readiness decision | Still not ready: full Linux and contract-level recovery are accepted, but complete service-process recovery, single-writer handoff/quiescence, rollback/export, operator acceptance and non-production evidence remain; deployment/cutover separately approved |
 
+- Commit `0108405` adds a strict `FixtureCloneReads` supervisor seed schema for node status, storage, bridges, and complete cluster inventory/identities. It preserves family timestamps and explicit errors, validates fixture UUID, rejects unknown fields, duplicate VM IDs/resource names, malformed identities, and oversized payloads, and treats missing files as unavailable. Two focused schema tests, 25 default library tests, formatting, and strict feature Clippy pass. This is schema/loading only; daemon startup wiring, transport, full config/media/task facts, typed projections, and `ProvisioningFakePort` remain open.
+
 ## Current resource ruling
 
 After the resource hold, the user reported freeing over100GiB. Main verified113,433,292KiB available on resumption and113,030,064KiB at the storage-admission review checkpoint. The local8GiB guard is cleared; no further cleanup was performed by this worker. These are point-in-time checks, not a promise of future headroom. Recheck the separate18GiB Linux artifact-start guard before that later build. Historical cleanup evidence below remains unchanged.
