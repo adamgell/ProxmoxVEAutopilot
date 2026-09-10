@@ -97,6 +97,21 @@ fn valid_read<T>(r: &SeedRead<T>, valid: impl FnOnce(&T) -> bool) -> bool {
     }
 }
 impl FixtureCloneReads {
+    pub(crate) fn load_startup(path: &Path) -> io::Result<Option<Self>> {
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let mut bytes = Vec::new();
+        file.take((MAX_CLONE_READ_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > MAX_CLONE_READ_BYTES {
+            return Err(invalid());
+        }
+        let seed: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        Self::decode(&bytes, seed.fixture_id).map(Some)
+    }
     pub fn decode(bytes: &[u8], fixture_id: Uuid) -> io::Result<Self> {
         if bytes.is_empty() || bytes.len() > MAX_CLONE_READ_BYTES {
             return Err(invalid());

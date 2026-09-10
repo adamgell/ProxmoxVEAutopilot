@@ -193,6 +193,55 @@ fn fixture_daemon_child() {
 
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
+async fn clone_reads_preserve_seed_errors_identity_and_restart_observations() {
+    use pve_port::fixture_support::{FixtureCloneReads, FixtureReadClient};
+    let mut daemon = Daemon::start();
+    let id = Uuid::now_v7();
+    let client =
+        FixtureReadClient::new(daemon.directory.join("client.sock"), Duration::from_secs(1))
+            .unwrap();
+    assert!(client.clone_reads(id).await.unwrap().is_none());
+    assert!(client.clone_reads(Uuid::nil()).await.is_err());
+    let seed = serde_json::json!({
+        "version":1,"fixture_id":id,"node":"fixture-node",
+        "node_status":{"state":"observed","observed_unix_ms":123,"value":{"online":true,"uptime_seconds":4}},
+        "storage":{"state":"error","observed_unix_ms":124,"error":"forbidden"},
+        "bridges":{"state":"observed","observed_unix_ms":125,"value":[]},
+        "cluster_inventory":{"state":"error","observed_unix_ms":126,"error":"unavailable"}
+    });
+    let bytes = serde_json::to_vec(&seed).unwrap();
+    let expected = FixtureCloneReads::decode(&bytes, id).unwrap();
+    fs::write(daemon.directory.join("clone_reads.json"), &bytes).unwrap();
+    assert!(client.clone_reads(id).await.unwrap().is_none());
+    for _ in 0..2 {
+        daemon.child.kill().unwrap();
+        daemon.child.wait().unwrap();
+        daemon.clear_stale_sockets().unwrap();
+        daemon.child = Daemon::spawn(&daemon.directory);
+        daemon.await_ready();
+        assert_eq!(
+            client.clone_reads(id).await.unwrap(),
+            Some(expected.clone())
+        );
+        assert!(client.clone_reads(Uuid::now_v7()).await.is_err());
+        let request = serde_json::to_vec(
+            &serde_json::json!({"command":"clone_reads","fixture_id":id,"extra":true}),
+        )
+        .unwrap();
+        assert!(!daemon.request("client.sock", &request).ok);
+        assert_eq!(client.status().await.unwrap().attempts, 0);
+    }
+    fs::write(daemon.directory.join("clone_reads.json"), b"{}").unwrap();
+    assert_eq!(client.clone_reads(id).await.unwrap(), Some(expected));
+    daemon.child.kill().unwrap();
+    daemon.child.wait().unwrap();
+    daemon.clear_stale_sockets().unwrap();
+    daemon.child = Daemon::spawn(&daemon.directory);
+    daemon.await_failure();
+}
+
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
 async fn read_client_observes_daemon_owned_effect_without_writing() {
     let daemon = Daemon::start();
     let client = pve_port::fixture_support::FixtureReadClient::new(

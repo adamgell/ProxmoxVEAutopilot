@@ -25,6 +25,10 @@ const IO_BOUND: Duration = Duration::from_millis(100);
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum ClientRequest {
     #[cfg(feature = "fixture-ipc")]
+    CloneReads {
+        fixture_id: Uuid,
+    },
+    #[cfg(feature = "fixture-ipc")]
     Clone {
         request: serde_json::Value,
     },
@@ -128,6 +132,8 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
     }
     let ledger = directory.join("fixture.log");
     #[cfg(feature = "fixture-ipc")]
+    let clone_reads = super::FixtureCloneReads::load_startup(&directory.join("clone_reads.json"))?;
+    #[cfg(feature = "fixture-ipc")]
     let clone_seed = super::clone_mutation::FixtureCloneSeed::load(&directory.join("clone.json"))?;
     let inventory = snapshot::FixtureSnapshot::load(&directory.join("inventory.json"))?;
     #[cfg(feature = "fixture-ipc")]
@@ -168,6 +174,20 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                 }
             } else {
                 match serde_json::from_slice::<ClientRequest>(&bytes) {
+                    #[cfg(feature = "fixture-ipc")]
+                    Ok(ClientRequest::CloneReads { fixture_id }) => {
+                        if !fixture_id.is_nil()
+                            && clone_reads
+                                .as_ref()
+                                .is_none_or(|seed| seed.fixture_id == fixture_id)
+                        {
+                            let payload = serde_json::to_vec(&clone_reads)?;
+                            let _ = stream
+                                .write_all(&(payload.len() as u32).to_be_bytes())
+                                .and_then(|()| stream.write_all(&payload));
+                            continue;
+                        }
+                    }
                     #[cfg(feature = "fixture-ipc")]
                     Ok(ClientRequest::Clone { request }) => {
                         if let Some(seed) = &clone_seed {

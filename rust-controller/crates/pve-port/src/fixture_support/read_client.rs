@@ -67,6 +67,36 @@ fn invalid() -> io::Error {
 }
 
 impl FixtureReadClient {
+    /// Returns historical supervisor facts, or `None` when the seed is unavailable.
+    /// The caller must supply the expected fixture identity; times are never refreshed.
+    pub async fn clone_reads(
+        &self,
+        fixture_id: Uuid,
+    ) -> io::Result<Option<super::FixtureCloneReads>> {
+        if fixture_id.is_nil() {
+            return Err(invalid());
+        }
+        tokio::time::timeout(self.timeout, async {
+            let payload = serde_json::to_vec(
+                &serde_json::json!({"command":"clone_reads", "fixture_id":fixture_id}),
+            )?;
+            let mut stream = UnixStream::connect(&self.socket).await?;
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(&payload).await?;
+            let length = stream.read_u32().await? as usize;
+            if length == 0 || length > super::clone_reads::MAX_CLONE_READ_BYTES {
+                return Err(invalid());
+            }
+            let mut bytes = vec![0; length];
+            stream.read_exact(&mut bytes).await?;
+            if bytes == b"null" {
+                return Ok(None);
+            }
+            super::FixtureCloneReads::decode(&bytes, fixture_id).map(Some)
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "fixture Clone reads deadline"))?
+    }
     /// Reads an explicitly recorded historical task observation. Missing or
     /// mismatched records are errors, never inferred absence or success.
     pub async fn task(
