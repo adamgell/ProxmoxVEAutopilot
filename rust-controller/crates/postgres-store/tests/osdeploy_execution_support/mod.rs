@@ -77,7 +77,7 @@ impl Scenario {
             let r = self.ready(stage).await;
             let scheduler = self.db.scheduler();
             let (permit, capture) = scheduler.begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request).await.unwrap();
-            let receipt = permit.submit_fake_once(&self.fake).await.unwrap();
+            let receipt = permit.submit_fake_once(self.fake.as_ref()).await.unwrap();
             scheduler.record_osdeploy_pve_receipt(&capture, &receipt).await.unwrap();
             r.grant
         };

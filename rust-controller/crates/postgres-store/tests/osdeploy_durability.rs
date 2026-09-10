@@ -154,7 +154,7 @@ async fn original_receipt_survives_cancellation_control_while_continuation_is_fe
             ProvisioningActionV1::Clone,
             Some(r.grant.operation_id()),
         ));
-    let send = permit.submit_fake_once(&s.fake);
+    let send = permit.submit_fake_once(s.fake.as_ref());
     tokio::pin!(send);
     tokio::time::timeout(std::time::Duration::from_secs(3),async {
         tokio::select! { _=pause.entered()=>{}, result=&mut send=>panic!("submission completed before pause: {result:?}") }
@@ -374,7 +374,7 @@ async fn dispatch_independent_pools_commit_only_one_permit() {
     .unwrap();
     assert_ne!(a.is_ok(), b.is_ok());
     let (permit, capture) = a.or(b).ok().unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     first
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -399,7 +399,7 @@ async fn receipt_rejects_mismatched_task_and_conflicting_admitted_response() {
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     let before = s.db.snapshot().await;
     for wrong in [
         MutationReceipt::SynchronousAccepted,
@@ -448,7 +448,7 @@ async fn receipt_can_arrive_after_original_generation_lease_and_scope_expire() {
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     sqlx::query(
         "UPDATE rust_controller.orchestration_authority SET generation=2,executor_kind='python'",
     )
@@ -494,7 +494,7 @@ async fn receipt_storage_retry_rolls_back_every_write_and_preserves_first_db_tim
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     sqlx::raw_sql("CREATE FUNCTION receipt_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'owned_receipt_fault'; END $$;").execute(&s.db.pool).await.unwrap();
     let before = s.db.snapshot().await;
     for table in [
@@ -568,7 +568,7 @@ async fn consuming_send_errors_and_response_loss_never_restore_a_permit() {
             .await
             .unwrap();
         let before = s.db.snapshot().await;
-        assert_eq!(permit.submit_fake_once(&s.fake).await, Err(error));
+        assert_eq!(permit.submit_fake_once(s.fake.as_ref()).await, Err(error));
         assert_eq!(s.fake.recorded_provisioning_submissions().len(), 1);
         assert_eq!(s.db.snapshot().await, before);
         let snap =
@@ -602,7 +602,7 @@ async fn consuming_send_errors_and_response_loss_never_restore_a_permit() {
             .await
             .unwrap();
     assert_eq!(
-        permit.submit_fake_once(&s.fake).await,
+        permit.submit_fake_once(s.fake.as_ref()).await,
         Err(PveWriteError::OutcomeUnknown)
     );
     assert_eq!(s.fake.recorded_provisioning_submissions().len(), 1);
@@ -643,7 +643,7 @@ async fn paused_send_future_cancellation_keeps_dispatch_and_cannot_resend() {
             .await
             .unwrap();
     {
-        let send = permit.submit_fake_once(&s.fake);
+        let send = permit.submit_fake_once(s.fake.as_ref());
         tokio::pin!(send);
         tokio::time::timeout(std::time::Duration::from_secs(3),async {
             tokio::select! { _=pause.entered()=>{}, result=&mut send=>panic!("submission completed before pause: {result:?}") }
@@ -681,7 +681,7 @@ async fn original_clone_receipt_is_immutable_and_preserves_preflight_replay() {
         .await
         .unwrap();
     assert!(s.fake.recorded_provisioning_submissions().is_empty());
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     assert!(matches!(receipt, MutationReceipt::Task(_)));
     assert_eq!(s.fake.recorded_provisioning_submissions().len(), 1);
     scheduler
@@ -749,7 +749,7 @@ async fn committed_but_unpolled_send_never_yields_a_second_permit() {
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    drop(permit.submit_fake_once(&s.fake));
+    drop(permit.submit_fake_once(s.fake.as_ref()));
     assert!(s.fake.recorded_provisioning_submissions().is_empty());
     let snap =
         s.db.store
@@ -4015,7 +4015,7 @@ async fn task6_waiting_due_resume_preserves_original_attempt_and_replays_decisio
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     scheduler
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -4269,7 +4269,7 @@ async fn task6_original_scope_deadline_rejects_late_apparent_success() {
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     scheduler
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -4426,7 +4426,7 @@ async fn task6_synchronous_configure_response_loss_keeps_original_dispatch_unkno
         .await
         .unwrap();
     assert_eq!(
-        permit.submit_fake_once(&s.fake).await,
+        permit.submit_fake_once(s.fake.as_ref()).await,
         Err(PveWriteError::OutcomeUnknown)
     );
     drop(capture);
@@ -4483,7 +4483,7 @@ async fn task6_decision_and_park_rollback_each_write_and_deferred_commit() {
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-        let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+        let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
         scheduler
             .record_osdeploy_pve_receipt(&capture, &receipt)
             .await
@@ -4597,7 +4597,7 @@ async fn task6_resume_rollback_each_write_and_deferred_commit() {
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     scheduler
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -4729,7 +4729,7 @@ async fn task6_config_and_identity_changes_select_conflicted() {
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-        let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+        let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
         scheduler
             .record_osdeploy_pve_receipt(&capture, &receipt)
             .await
@@ -4805,7 +4805,7 @@ async fn task6_current_cas_serializes_preflight_selection_against_dispatch() {
             assert!(s.fake.recorded_provisioning_submissions().is_empty())
         }
         (Err(E::FenceLost), Ok((permit, capture))) => {
-            let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+            let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
             scheduler
                 .record_osdeploy_pve_receipt(&capture, &receipt)
                 .await
@@ -4841,7 +4841,7 @@ async fn task6_paused_original_send_may_capture_after_unknown_without_resend() {
             ProvisioningActionV1::Clone,
             Some(r.grant.operation_id()),
         ));
-    let send = permit.submit_fake_once(&s.fake);
+    let send = permit.submit_fake_once(s.fake.as_ref());
     tokio::pin!(send);
     tokio::time::timeout(std::time::Duration::from_secs(3),async {
         tokio::select! { _=pause.entered()=>{}, result=&mut send=>panic!("original send completed before pause: {result:?}") }
@@ -4885,7 +4885,7 @@ async fn task6_decision_rechecks_final_freshness_and_current_authority() {
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     scheduler
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -4944,7 +4944,7 @@ async fn task6_resume_requires_real_basis_cap_original_attempt_and_cancellation_
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     scheduler
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -5130,7 +5130,7 @@ async fn task6_due_resume_at_original_deadline_never_renews_attempt_budget() {
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     scheduler
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -5227,7 +5227,7 @@ async fn task6_scope_crossing_during_decision_rolls_back_then_retries_original_e
         .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     scheduler
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -5452,7 +5452,7 @@ async fn task7_original_unknown_reconciles_actual_success_and_failure_without_ne
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-        let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+        let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
         assert_eq!(
             s.observe_and_decide(&r.grant).await,
             controller_domain::ExecutionState::Unknown
@@ -5558,7 +5558,7 @@ async fn task7_repair_and_due_restore_genuine_waiting_without_creating_authority
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     s.db.scheduler()
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -5659,7 +5659,7 @@ async fn task7_unauthorized_unknown_reconciliation_is_validation_without_writes(
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     assert_eq!(
         s.observe_and_decide(&r.grant).await,
         controller_domain::ExecutionState::Unknown
@@ -5706,7 +5706,7 @@ async fn task7_cancel_terminal_unknown_clears_schedule_and_matching_future_lease
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     assert_eq!(
         s.observe_and_decide(&r.grant).await,
         controller_domain::ExecutionState::Unknown
@@ -6029,7 +6029,7 @@ async fn task7_missing_receipt_repair_only_enables_original_bounded_observation(
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     assert_eq!(
         s.observe_and_decide(&r.grant).await,
         controller_domain::ExecutionState::Unknown
@@ -6155,7 +6155,7 @@ async fn task7_reconciliation_preserves_synchronous_loss_and_actual_conflict() {
                 .await
                 .unwrap();
         assert_eq!(
-            permit.submit_fake_once(&s.fake).await,
+            permit.submit_fake_once(s.fake.as_ref()).await,
             Err(PveWriteError::OutcomeUnknown)
         );
         assert_eq!(
@@ -6217,7 +6217,7 @@ async fn task7_late_unknown_success_cannot_pass_deadline_and_expiry_has_no_secon
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     assert_eq!(
         s.observe_and_decide(&r.grant).await,
         controller_domain::ExecutionState::Unknown
@@ -6533,7 +6533,7 @@ async fn task7_new_mutations_rollback_every_actual_row_write_and_deferred_commit
                     .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
                     .await
                     .unwrap();
-            let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+            let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
             if kind == "repair" {
                 s.db.scheduler()
                     .record_osdeploy_pve_receipt(&capture, &receipt)
@@ -6743,7 +6743,7 @@ async fn task7_cancellation_races_actual_dispatch_parking_receipt_and_collection
                     .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
                     .await
                     .unwrap();
-                let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+                let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
                 if kind == "receipt" {
                     let (cancel, captured) =
                         tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -6850,7 +6850,7 @@ async fn task7_unavailable_reconciliation_backoff_is_bounded_and_usable_read_res
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     assert_eq!(
         s.observe_and_decide(&r.grant).await,
         controller_domain::ExecutionState::Unknown
@@ -6902,7 +6902,7 @@ async fn task7_projection_repair_does_not_repair_poisoned_immutable_epoch() {
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     s.db.scheduler()
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -6957,7 +6957,7 @@ async fn task7_reconciliation_rechecks_original_fences_and_final_scope_before_co
             .begin_osdeploy_pve_dispatch(&r.grant, r.revision, r.event, &r.request)
             .await
             .unwrap();
-        let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+        let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
         assert_eq!(
             s.observe_and_decide(&r.grant).await,
             controller_domain::ExecutionState::Unknown
