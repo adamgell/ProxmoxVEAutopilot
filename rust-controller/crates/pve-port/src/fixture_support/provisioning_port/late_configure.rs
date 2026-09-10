@@ -1,14 +1,15 @@
 use super::*;
-use crate::fixture_ipc::{CheckpointError, FixtureCloneRequest, FixtureStageRequest};
+use crate::fixture_ipc::{CheckpointError, FixtureStageRequest};
 use std::sync::Mutex;
 use uuid::Uuid;
 
-pub(super) struct LegacyResizeContext {
+pub(super) struct LateConfigureContext {
     client: FixtureCheckpointClient,
     operation: Uuid,
     generation: Uuid,
     owner: Uuid,
-    predecessor: FixtureCloneRequest,
+    predecessor: FixtureStageRequest,
+    predecessor_identity: FixtureStageIdentity,
     receipt: Vec<u8>,
     bound: Mutex<Option<Bound>>,
 }
@@ -21,22 +22,22 @@ struct Bound {
     receipt: Option<Vec<u8>>,
 }
 impl FixtureProvisioningPort {
-    /// Restore the exact journaled resize response for observation only.
+    /// Restore the exact journaled ConfigurePe response for observation only.
     /// The daemon still validates acceptance and current publication on every read.
-    pub fn with_late_resize_receipt(
+    pub fn with_late_configure_receipt(
         self,
         request: &ProvisioningMutationRequestV1,
         receipt: Vec<u8>,
     ) -> io::Result<Self> {
-        let resize = self.legacy_resize.as_ref().ok_or_else(invalid)?;
-        let mut bound = resize.bind(request).map_err(|_| invalid())?;
+        let configure = self.late_configure.as_ref().ok_or_else(invalid)?;
+        let mut bound = configure.bind(request).map_err(|_| invalid())?;
         bound
             .request
             .decode_receipt(&receipt)
             .map_err(|_| invalid())?;
         bound.submitted = true;
         bound.receipt = Some(receipt);
-        let mut slot = resize.bound.lock().unwrap();
+        let mut slot = configure.bound.lock().unwrap();
         if slot.is_some() {
             return Err(invalid());
         }
@@ -44,25 +45,30 @@ impl FixtureProvisioningPort {
         drop(slot);
         Ok(self)
     }
-    /// Collect the original accepted Clone publication before the controller
-    /// generates a resize attempt. The exact request binds at dispatch checkpoint.
+    /// Collect the original accepted resize publication before the controller
+    /// generates a ConfigurePe attempt. The exact request binds at dispatch checkpoint.
     /// No caller-supplied before-state or manufactured attempt is needed.
-    pub fn with_late_resize_after_legacy_clone(
+    pub fn with_late_configure_after_resize(
         mut self,
         client: FixtureCheckpointClient,
         generation: Uuid,
         owner: Uuid,
-        predecessor: FixtureCloneRequest,
+        predecessor_identity: FixtureStageIdentity,
+        predecessor: FixtureStageRequest,
         original_receipt: Vec<u8>,
     ) -> io::Result<Self> {
+        predecessor_identity.validate_request(&predecessor)?;
+        if predecessor_identity.stage != FixtureLedgerStage::DiskCapacity {
+            return Err(invalid());
+        }
         let vm = predecessor.request().plan().expected().vm();
         if generation.is_nil()
             || owner.is_nil()
             || self.exact_identity.is_some()
             || self.checkpoint.is_some()
             || self.resize.is_some()
-            || self.legacy_resize.is_some()
             || self.late_configure.is_some()
+            || self.legacy_resize.is_some()
             || self.dispatched.lock().unwrap().is_some()
             || predecessor.fixture_id() != self.identity.fixture_id
             || predecessor.request().binding().operation_id().as_uuid() == self.identity.operation
@@ -75,12 +81,13 @@ impl FixtureProvisioningPort {
         predecessor
             .decode_receipt(&original_receipt)
             .map_err(|_| invalid())?;
-        self.legacy_resize = Some(LegacyResizeContext {
+        self.late_configure = Some(LateConfigureContext {
             client,
             operation: self.identity.operation,
             generation,
             owner,
             predecessor,
+            predecessor_identity,
             receipt: original_receipt,
             bound: Mutex::new(None),
         });
@@ -88,23 +95,28 @@ impl FixtureProvisioningPort {
     }
 }
 fn invalid() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::InvalidInput,
-        "legacy resize binding rejected",
-    )
+    io::Error::new(io::ErrorKind::InvalidInput, "ConfigurePe binding rejected")
 }
-impl LegacyResizeContext {
+impl LateConfigureContext {
     fn bind(&self, request: &ProvisioningMutationRequestV1) -> Result<Bound, CheckpointError> {
-        let ProvisioningMutationRequestV1::GrowDisk(grow) = request else {
+        let ProvisioningMutationRequestV1::Configure(configure) = request else {
             return Err(CheckpointError::Rejected);
         };
         let prior = self.predecessor.request();
+        let ProvisioningMutationRequestV1::GrowDisk(grow) = prior else {
+            return Err(CheckpointError::Rejected);
+        };
+        if request.plan().action() != ProvisioningActionV1::ConfigurePe {
+            return Err(CheckpointError::Rejected);
+        }
         if request.binding().operation_id().as_uuid() != self.operation
             || !prior
                 .binding()
-                .same_operation_attempt(grow.predecessor_binding())
-            || !prior.binding().same_operation_attempt(grow.clone_binding())
-            || prior.plan() != grow.predecessor_plan()
+                .same_operation_attempt(configure.predecessor_binding())
+            || !grow
+                .clone_binding()
+                .same_operation_attempt(configure.clone_binding())
+            || prior.plan() != configure.predecessor_plan()
             || prior.plan().expected() != request.plan().expected()
         {
             return Err(CheckpointError::Rejected);
@@ -113,7 +125,7 @@ impl LegacyResizeContext {
             .map_err(|_| CheckpointError::Rejected)?;
         let identity = FixtureStageIdentity {
             operation: self.operation,
-            stage: FixtureLedgerStage::DiskCapacity,
+            stage: FixtureLedgerStage::ConfigurePe,
             attempt: request.request().binding().attempt_id().as_uuid(),
             generation: self.generation,
             owner: self.owner,
@@ -152,36 +164,30 @@ impl LegacyResizeContext {
     pub(super) async fn observation(
         &self,
         reads: &FixtureReadClient,
-    ) -> Result<FixturePostDispatchV1, PveReadError> {
+    ) -> Result<FixtureSynchronousPostDispatchV1, PveReadError> {
         let bound = self.bound.lock().unwrap().clone();
         match bound {
             None => {
-                let effect = reads
-                    .accepted_effect(
-                        self.predecessor
-                            .request()
-                            .binding()
-                            .operation_id()
-                            .as_uuid(),
-                        &self.predecessor.request_sha256(),
+                let observed = reads
+                    .stage_post_dispatch(
+                        &self.predecessor_identity,
+                        &self.predecessor,
+                        &self.receipt,
                     )
                     .await
                     .map_err(transport)?
-                    .ok_or(PveReadError::TransportUnavailable)?;
-                if effect.receipt() != Some(self.receipt.as_slice()) {
-                    return Err(PveReadError::InvalidResponse);
-                }
-                reads
-                    .post_dispatch(&self.predecessor, &self.receipt)
-                    .await
-                    .map_err(transport)?
-                    .map(|p| p.observation)
-                    .ok_or(PveReadError::TransportUnavailable)
+                    .ok_or(PveReadError::TransportUnavailable)?
+                    .observation;
+                Ok(FixtureSynchronousPostDispatchV1 {
+                    version: 1,
+                    provisioning: observed.provisioning,
+                    inventory: observed.inventory,
+                })
             }
             Some(bound) => {
                 let receipt = bound.receipt.ok_or(PveReadError::TransportUnavailable)?;
                 reads
-                    .stage_post_dispatch(&bound.identity, &bound.request, &receipt)
+                    .synchronous_stage_post_dispatch(&bound.identity, &bound.request, &receipt)
                     .await
                     .map_err(transport)?
                     .map(|p| p.observation)
@@ -189,6 +195,7 @@ impl LegacyResizeContext {
             }
         }
     }
+
     pub(super) async fn submit(
         &self,
         mutation: &FixtureMutationClient,
@@ -204,11 +211,11 @@ impl LegacyResizeContext {
             bound.clone()
         };
         let receipt = mutation
-            .stage_late_after_legacy_clone(
+            .stage_late_with_predecessor(
                 bound.identity,
                 &bound.request,
+                &self.predecessor_identity,
                 &self.predecessor,
-                &self.receipt,
             )
             .await
             .map_err(|_| PveWriteError::OutcomeUnknown)?;

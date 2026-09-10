@@ -158,7 +158,7 @@ async fn fresh_controller_clone_reaches_satisfied_from_supervisor_publication() 
 }
 
 #[tokio::test]
-async fn fresh_controller_clone_then_disk_capacity_reaches_satisfied() {
+async fn fresh_controller_clone_then_disk_capacity_then_configure_pe_reaches_satisfied() {
     fresh_controller_clone(true, true).await;
 }
 
@@ -290,7 +290,7 @@ async fn fresh_controller_clone(publish_outcome: bool, resize_after: bool) {
     )
     .unwrap();
     let daemon_path = directory.clone();
-    let daemon = std::thread::spawn(move || run(&daemon_path, Duration::from_secs(5)).unwrap());
+    let daemon = std::thread::spawn(move || run(&daemon_path, Duration::from_secs(10)).unwrap());
     let supervisor =
         FixtureCheckpointClient::new(directory.join("supervisor.sock"), Duration::from_secs(1))
             .unwrap();
@@ -747,6 +747,293 @@ async fn fresh_resize_after_clone(
     assert_eq!(durable.receipt().unwrap().receipt(), receipt.receipt());
     let status = reader.status().await.unwrap();
     assert_eq!((status.attempts, status.effects), (2, 2));
+    assert!(s.fake.recorded_provisioning_submissions().is_empty());
+    controller
+        .close_and_drain(Duration::from_secs(1))
+        .await
+        .unwrap();
+    fresh_configure_after_resize(
+        s,
+        directory,
+        fixture_id,
+        &identity,
+        &request,
+        &receipt_bytes,
+        &observation,
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fresh_configure_after_resize(
+    s: &Scenario,
+    directory: &std::path::Path,
+    fixture_id: sqlx::types::Uuid,
+    predecessor_identity: &FixtureStageIdentity,
+    predecessor: &FixtureStageRequest,
+    original_receipt: &[u8],
+    previous_observation: &serde_json::Value,
+) {
+    use serde_json::json;
+    let operation = s
+        .ids
+        .operation(osdeploy_adapter::OsDeployStage::ConfigurePe);
+    let supervisor =
+        FixtureCheckpointClient::new(directory.join("supervisor.sock"), Duration::from_secs(2))
+            .unwrap();
+    let generation = supervisor
+        .stage_request(StageCheckpointRequest::Status)
+        .await
+        .unwrap()
+        .generation;
+    let owner = controller_domain::RunId::new().as_uuid();
+    let port = FixtureProvisioningPort::new_late(
+        directory.join("client.sock"),
+        Duration::from_secs(2),
+        FixtureReadIdentity {
+            fixture_id,
+            operation: operation.as_uuid(),
+            node: "node-a".into(),
+            source_vmid: 900,
+            target_vmid: 901,
+        },
+    )
+    .unwrap()
+    .with_late_configure_after_resize(
+        FixtureCheckpointClient::new(directory.join("client.sock"), Duration::from_secs(2))
+            .unwrap(),
+        generation,
+        owner,
+        predecessor_identity.clone(),
+        predecessor.clone(),
+        original_receipt.to_vec(),
+    )
+    .unwrap();
+    let controller = Arc::new(
+        operation_controller::OsDeployController::new_fixture(
+            s.db.store.clone(),
+            s.db.scheduler(),
+            Arc::new(port),
+            1,
+        )
+        .unwrap(),
+    );
+    controller.open_send_admission().await.unwrap();
+    let worker = tokio::spawn({
+        let controller = controller.clone();
+        async move { controller.run_osdeploy_once(operation).await }
+    });
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let committed = loop {
+        let operation = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+        if operation.dispatch().is_some() {
+            break operation;
+        }
+        assert!(
+            !worker.is_finished(),
+            "resize ended before generated dispatch: {:?}",
+            worker.await
+        );
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    };
+    let dispatch = committed.dispatch().unwrap();
+    let ProvisioningMutationRequestV1::Configure(grow) = dispatch.request() else {
+        panic!("ConfigurePe required")
+    };
+    assert!(
+        predecessor
+            .request()
+            .binding()
+            .same_operation_attempt(grow.predecessor_binding())
+    );
+    assert_eq!(grow.predecessor_plan(), predecessor.request().plan());
+    let request = FixtureStageRequest::new(fixture_id, dispatch.request().clone()).unwrap();
+    let identity = FixtureStageIdentity {
+        operation: operation.as_uuid(),
+        stage: FixtureLedgerStage::ConfigurePe,
+        attempt: committed.attempt_id().unwrap().as_uuid(),
+        generation,
+        owner,
+        request_sha256: request.request_sha256(),
+    };
+    identity.validate_request(&request).unwrap();
+    assert!(
+        supervisor
+            .stage_request(StageCheckpointRequest::Arm {
+                identity: identity.clone(),
+                timeout_ms: 3000
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    loop {
+        let state = supervisor
+            .stage_request(StageCheckpointRequest::Status)
+            .await
+            .unwrap();
+        if state.phase == CheckpointPhase::Entered {
+            assert_eq!(state.identity, Some(identity.clone()));
+            break;
+        }
+        assert!(
+            !worker.is_finished(),
+            "configure checkpoint stopped: {:?}",
+            worker.await
+        );
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let reader =
+        FixtureReadClient::new(directory.join("client.sock"), Duration::from_secs(1)).unwrap();
+    assert_eq!(reader.status().await.unwrap().effects, 2);
+    assert!(committed.receipt().is_none());
+    let mut tx = s.db.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE rust_controller.journal_events IN SHARE MODE")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert!(
+        supervisor
+            .stage_request(StageCheckpointRequest::AuthorizeRelease {
+                identity: identity.clone(),
+                request: request.encode().unwrap(),
+                committed_request: request.encode().unwrap(),
+                after: VmState {
+                    disk_bytes: request
+                        .request()
+                        .plan()
+                        .expected()
+                        .effective_capacity_bytes(),
+                    pe_configured: true
+                }
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'INSERT INTO rust_controller.journal_events%osdeploy:receipt%')").fetch_one(&s.db.pool).await.unwrap();
+            if waiting { break; }
+            assert!(!worker.is_finished(), "resize ended before receipt barrier");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }).await.unwrap();
+    async fn exchange(socket: &std::path::Path, value: serde_json::Value) -> serde_json::Value {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::UnixStream::connect(socket).await.unwrap();
+        let bytes = serde_json::to_vec(&value).unwrap();
+        stream.write_u32(bytes.len() as u32).await.unwrap();
+        stream.write_all(&bytes).await.unwrap();
+        let size = stream.read_u32().await.unwrap();
+        assert!(size < 200_000);
+        let mut bytes = vec![0; size as usize];
+        stream.read_exact(&mut bytes).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+    let effect = exchange(
+        &directory.join("client.sock"),
+        json!({"command":"accepted_stage_effect","identity":identity}),
+    )
+    .await;
+    let receipt_bytes: Vec<u8> =
+        serde_json::from_value(effect["accepted_effect"]["receipt"].clone()).unwrap();
+    let receipt = request.decode_receipt(&receipt_bytes).unwrap();
+    assert_eq!(receipt.receipt(), &MutationReceipt::SynchronousAccepted);
+    let mut observation = previous_observation.clone();
+    observation.as_object_mut().unwrap().remove("task");
+    observation["provisioning"]["identity"]["operation"] = json!(operation.as_uuid());
+    observation["provisioning"]["identity"]["request_sha256"] = json!(request.request_sha256());
+    let e = request.request().plan().expected();
+    let p = e.vm();
+    let v = &mut observation["provisioning"]["target_config"]["value"]["config"];
+    v["cores"] = json!(p.cores());
+    v["memory_mib"] = json!(p.memory_mib());
+    v["cpu"] = json!("host");
+    v["balloon_mib"] = json!(0);
+    v["firmware"] = json!("seabios");
+    v["qga_enabled"] = json!(true);
+    v["qga_channel"] = json!("virtio");
+    v["uuid"] = json!(p.uuid());
+    v["system_serial"] = json!(e.system_serial());
+    v["mac"] = json!(p.mac());
+    v["bridge"] = json!(p.bridge());
+    v["primary_disk"]["serial"] = json!(e.disk_serial());
+    v["deployment_iso"] = json!({"state":"iso","volid":e.deployment_iso_volid()});
+    v["driver_iso"] = json!({"state":"iso","volid":e.driver_iso_volid()});
+    v["boot_profile"] = json!("pe_media");
+    v["digest"] = json!("d".repeat(64));
+    for vm in observation["inventory"]["cluster_inventory"]["value"]
+        .as_array_mut()
+        .unwrap()
+    {
+        if vm["vmid"] == 901 {
+            vm["config_sha256"] = json!("d".repeat(64));
+            vm["uuid"] = json!(p.uuid());
+            vm["mac"] = json!(p.mac());
+        }
+    }
+    retime_outcome(
+        &mut observation,
+        chrono::Utc::now().timestamp_millis() as u64,
+    );
+    let publication = exchange(&directory.join("supervisor.sock"), json!({"command":"publish_synchronous_stage","identity":identity,"request":serde_json::from_slice::<serde_json::Value>(&request.encode().unwrap()).unwrap(),"observation":observation})).await;
+    assert!(publication["daemon_generation"].is_string());
+    tx.commit().await.unwrap();
+    assert_eq!(
+        worker.await.unwrap().unwrap(),
+        postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Satisfied)
+    );
+    let durable = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+    assert_eq!(durable.dispatch().unwrap().request(), dispatch.request());
+    assert_eq!(durable.receipt().unwrap().receipt(), receipt.receipt());
+    let status = reader.status().await.unwrap();
+    assert_eq!((status.attempts, status.effects), (3, 3));
+    let restored = FixtureProvisioningPort::new_late(
+        directory.join("client.sock"),
+        Duration::from_secs(2),
+        FixtureReadIdentity {
+            fixture_id,
+            operation: operation.as_uuid(),
+            node: "node-a".into(),
+            source_vmid: 900,
+            target_vmid: 901,
+        },
+    )
+    .unwrap()
+    .with_late_configure_after_resize(
+        FixtureCheckpointClient::new(directory.join("client.sock"), Duration::from_secs(2))
+            .unwrap(),
+        generation,
+        owner,
+        predecessor_identity.clone(),
+        predecessor.clone(),
+        original_receipt.to_vec(),
+    )
+    .unwrap()
+    .with_late_configure_receipt(dispatch.request(), receipt_bytes)
+    .unwrap();
+    assert_eq!(
+        restored.submit_provisioning(dispatch.request()).await,
+        Err(PveWriteError::Rejected)
+    );
+    assert!(
+        restored
+            .provisioning_checkpoint(dispatch.request())
+            .await
+            .is_err()
+    );
+    let physical = restored
+        .provisioning_vm_config(&NodeName::parse("node-a").unwrap(), Vmid::new(901).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        physical.boot_profile(),
+        Some(ProvisioningBootProfile::PeMedia)
+    );
+    assert_eq!(reader.status().await.unwrap().effects, 3);
     assert!(s.fake.recorded_provisioning_submissions().is_empty());
     controller
         .close_and_drain(Duration::from_secs(1))
