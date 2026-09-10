@@ -4,7 +4,7 @@ use super::{OsDeployControllerError as Error, READ_BOUND, before_close, budget_d
 use postgres_store::{
     LeaseGrant, OsDeployDispatchPermit, OsDeployExecutionError, OsDeployResponseCapture, Scheduler,
 };
-use pve_port::NativeFakePve;
+use pve_port::ProvisioningFakePort;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, timeout_at};
 
@@ -25,10 +25,10 @@ fn retry_delay(attempt: usize) -> Duration {
     clippy::too_many_arguments,
     reason = "governing private signature keeps consumed capabilities and original endpoint explicit"
 )]
-pub(super) async fn submit_and_capture_once(
+pub(super) async fn submit_and_capture_once<P: ProvisioningFakePort + ?Sized>(
     admission: &OsDeploySendAdmission,
     scheduler: &Scheduler,
-    fake: &NativeFakePve,
+    fake: &P,
     grant: &LeaseGrant,
     workflow_sha256: &str,
     permit: OsDeployDispatchPermit,

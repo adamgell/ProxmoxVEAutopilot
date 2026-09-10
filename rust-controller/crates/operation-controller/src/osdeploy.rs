@@ -21,6 +21,11 @@ const READ_BOUND: Duration = Duration::from_secs(2);
 const COLLECTION_BOUND: Duration = Duration::from_secs(6);
 type RecordedObservation = (EventId, i64, ProvisioningEvaluationModeV1);
 
+#[cfg(not(feature = "fixture-ipc"))]
+type ControllerPort = NativeFakePve;
+#[cfg(feature = "fixture-ipc")]
+type ControllerPort = dyn pve_port::fixture_ipc::ControllerFixturePort;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum OsDeployControllerError {
     #[error("osdeploy_storage_unavailable")]
@@ -55,7 +60,7 @@ impl From<OsDeployExecutionError> for Error {
 pub struct OsDeployController {
     store: PgStore,
     scheduler: Scheduler,
-    fake: Arc<NativeFakePve>,
+    fake: Arc<ControllerPort>,
     admission: OsDeploySendAdmission,
     workers: Semaphore,
     cap: u32,
@@ -65,6 +70,50 @@ impl OsDeployController {
         store: PgStore,
         scheduler: Scheduler,
         fake: Arc<NativeFakePve>,
+        cap: u32,
+    ) -> Result<Self, Error> {
+        Self::with_port(store, scheduler, fake, cap)
+    }
+
+    /// Construct a controller with a sealed local fixture capability.
+    ///
+    /// This opt-in seam preserves the same admission, collection, consuming
+    /// dispatch permit and response persistence path as the native fixture.
+    /// It does not grant a production observer mutation authority.
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use operation_controller::OsDeployController;
+    /// use postgres_store::{PgStore, Scheduler};
+    /// use pve_port::fixture_ipc::ControllerFixturePort;
+    /// fn construct(store: PgStore, scheduler: Scheduler, fixture: Arc<dyn ControllerFixturePort>) {
+    ///     assert!(OsDeployController::new_fixture(store, scheduler, fixture, 1).is_ok());
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use std::sync::Arc;
+    /// use operation_controller::OsDeployController;
+    /// use postgres_store::{PgStore, Scheduler};
+    /// use pve_port::ReqwestPveObserver;
+    /// fn reject_observer(store: PgStore, scheduler: Scheduler, observer: Arc<ReqwestPveObserver>) {
+    ///     let _ = OsDeployController::new_fixture(store, scheduler, observer, 1);
+    /// }
+    /// ```
+    #[cfg(feature = "fixture-ipc")]
+    pub fn new_fixture(
+        store: PgStore,
+        scheduler: Scheduler,
+        fixture: Arc<dyn pve_port::fixture_ipc::ControllerFixturePort>,
+        cap: u32,
+    ) -> Result<Self, Error> {
+        Self::with_port(store, scheduler, fixture, cap)
+    }
+
+    fn with_port(
+        store: PgStore,
+        scheduler: Scheduler,
+        fake: Arc<ControllerPort>,
         cap: u32,
     ) -> Result<Self, Error> {
         if cap == 0 || cap as usize > Semaphore::MAX_PERMITS {
@@ -209,7 +258,7 @@ impl OsDeployController {
         let evidence = before_close(
             closed,
             Box::pin(collect::collect(
-                &self.fake,
+                self.fake.as_ref(),
                 observation.context(),
                 deadline.min(Instant::now() + COLLECTION_BOUND),
             )),
@@ -316,7 +365,7 @@ impl OsDeployController {
             let evidence = before_close(
                 closed,
                 Box::pin(collect::collect(
-                    &self.fake,
+                    self.fake.as_ref(),
                     &context,
                     deadline.min(Instant::now() + COLLECTION_BOUND),
                 )),
@@ -386,7 +435,7 @@ impl OsDeployController {
                 send::submit_and_capture_once(
                     &self.admission,
                     &self.scheduler,
-                    &self.fake,
+                    self.fake.as_ref(),
                     grant,
                     hash,
                     permit,

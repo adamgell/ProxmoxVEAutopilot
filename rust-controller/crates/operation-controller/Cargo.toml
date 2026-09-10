@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+default = []
+fixture-ipc = ["pve-port/fixture-ipc"]
+
 [dependencies]
 chrono.workspace = true
 controller-domain = { path = "../controller-domain" }

@@ -19,8 +19,8 @@ async fn read<T>(
     NativeRead::new(Utc::now(), result)
 }
 
-pub(super) async fn collect(
-    fake: &NativeFakePve,
+pub(super) async fn collect<P: ProvisioningFakePort + ?Sized>(
+    fake: &P,
     context: &ProvisioningEvaluationContextV1,
     deadline: Instant,
 ) -> Result<ProvisioningEvidenceV1, Error> {
