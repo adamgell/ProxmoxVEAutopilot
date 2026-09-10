@@ -1,9 +1,28 @@
 # Late Clone authorization protocol
 
-Status: typed candidate validation implemented; daemon routing, persistence,
-collection migration and positive controller execution are **not implemented**.
+Status: typed candidate validation and supervisor-only atomic authorization /
+checkpoint release persistence are implemented. Collection migration, consuming
+this authorization for Clone mutation, and positive controller execution are
+**not implemented**.
 `LateCloneAuthorizationV1::validate_candidate` returns no mutation capability.
 Existing seed and digest boundaries continue to govern actual submission.
+
+The checkpoint command now supports `ArmLate` with a stable read identity and
+`AuthorizeRelease` with the proposal plus independently loaded committed bytes.
+The supervisor must obtain those bytes from PostgreSQL; the daemon trusts this
+local supervisor capability and cannot establish database durability itself.
+Late barriers reject standalone release. Authorization and Released state share
+one synchronized rename and directory sync before acknowledgement. Restart
+replaces the generation and clears both authorization and late identity. The
+worker socket rejects both supervisor actions. The persisted authorization is
+currently an inert record: the existing Clone submission path still requires
+the original seeded exact request, and does not consume this new record.
+
+The daemon process regression covers successful persistence, worker rejection,
+release without authorization, altered digest, duplicate authorization, expiry,
+restart invalidation, and a failed persistence rename with no acknowledgement.
+The version-two stable read message and actual controller entrypoint proof
+remain the next integration gate.
 
 `FixtureReadIdentity` contains fixture, operation, node, source VM and target VM.
 It permits naming historical collection facts before the controller chooses an

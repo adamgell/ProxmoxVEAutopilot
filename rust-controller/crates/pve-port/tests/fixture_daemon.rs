@@ -29,6 +29,238 @@ use uuid::Uuid;
 mod provisioning_seed_support;
 
 #[cfg(feature = "fixture-ipc")]
+#[tokio::test]
+async fn late_authorization_is_supervisor_owned_atomic_and_invalidated_on_restart() {
+    use provisioning_seed_support::support as s;
+    use pve_port::{fixture_ipc::FixtureCloneRequest, fixture_support::*, *};
+    let mut daemon = Daemon::start();
+    let supervisor = FixtureCheckpointClient::new(
+        daemon.directory.join("supervisor.sock"),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let worker =
+        FixtureCheckpointClient::new(daemon.directory.join("client.sock"), Duration::from_secs(1))
+            .unwrap();
+    let request = FixtureCloneRequest::new(
+        Uuid::from_u128(1),
+        CloneProvisioningRequestV1::new(
+            s::binding(ProvisioningActionV1::Clone, 10, 0),
+            s::plan(ProvisioningActionV1::Clone),
+            s::clone_request(),
+            s::before(s::source(), false),
+            s::time(),
+            30,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let vm = request.request().clone_request().vm();
+    let identity = FixtureReadIdentity {
+        fixture_id: request.fixture_id(),
+        operation: request.request().binding().operation_id().as_uuid(),
+        node: vm.node().as_str().into(),
+        source_vmid: vm.source_vmid().get(),
+        target_vmid: vm.target_vmid().get(),
+    };
+    let binding = CheckpointBinding {
+        generation: supervisor
+            .request(CheckpointRequest::Status)
+            .await
+            .unwrap()
+            .state
+            .generation,
+        owner: Uuid::now_v7(),
+        operation: identity.operation,
+        point: CheckpointPoint::DispatchCommitted,
+    };
+    let arm = || CheckpointRequest::ArmLate {
+        binding,
+        timeout_ms: 5000,
+        identity: identity.clone(),
+    };
+    assert!(!worker.request(arm()).await.unwrap().ok);
+    assert!(supervisor.request(arm()).await.unwrap().ok);
+    assert!(
+        worker
+            .request(CheckpointRequest::Enter { binding })
+            .await
+            .unwrap()
+            .ok
+    );
+    assert!(
+        !supervisor
+            .request(CheckpointRequest::Release { binding })
+            .await
+            .unwrap()
+            .ok
+    );
+    let proposal = LateCloneAuthorizationV1 {
+        version: 1,
+        binding,
+        identity,
+        request_sha256: request.request_sha256(),
+        request: request.encode().unwrap(),
+    };
+    let authorize = |proposal| CheckpointRequest::AuthorizeRelease {
+        proposal,
+        committed_request: request.encode().unwrap(),
+    };
+    assert!(
+        !worker
+            .request(authorize(proposal.clone()))
+            .await
+            .unwrap()
+            .ok
+    );
+    let mut altered = proposal.clone();
+    altered.request_sha256 = "0".repeat(64);
+    assert!(!supervisor.request(authorize(altered)).await.unwrap().ok);
+    assert_eq!(
+        supervisor
+            .request(CheckpointRequest::Status)
+            .await
+            .unwrap()
+            .state
+            .phase,
+        CheckpointPhase::Entered
+    );
+    let released = supervisor
+        .request(authorize(proposal.clone()))
+        .await
+        .unwrap();
+    assert!(released.ok);
+    assert_eq!(released.state.phase, CheckpointPhase::Released);
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(daemon.directory.join("checkpoint.json")).unwrap())
+            .unwrap();
+    assert_eq!(persisted["state"]["phase"], "released");
+    assert_eq!(
+        persisted["authorization"]["request_sha256"],
+        request.request_sha256()
+    );
+    assert!(
+        !supervisor
+            .request(authorize(proposal.clone()))
+            .await
+            .unwrap()
+            .ok
+    );
+    daemon.child.kill().unwrap();
+    daemon.child.wait().unwrap();
+    daemon.clear_stale_sockets().unwrap();
+    daemon.child = Daemon::spawn(&daemon.directory);
+    daemon.await_ready();
+    assert!(
+        !worker
+            .request(CheckpointRequest::Poll { binding })
+            .await
+            .unwrap()
+            .ok
+    );
+    assert!(
+        !supervisor
+            .request(authorize(proposal.clone()))
+            .await
+            .unwrap()
+            .ok
+    );
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(daemon.directory.join("checkpoint.json")).unwrap())
+            .unwrap();
+    assert!(persisted["authorization"].is_null());
+    let fresh_binding = CheckpointBinding {
+        generation: supervisor
+            .request(CheckpointRequest::Status)
+            .await
+            .unwrap()
+            .state
+            .generation,
+        ..binding
+    };
+    assert!(
+        supervisor
+            .request(CheckpointRequest::ArmLate {
+                binding: fresh_binding,
+                timeout_ms: 20,
+                identity: proposal.identity.clone(),
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    assert!(
+        worker
+            .request(CheckpointRequest::Enter {
+                binding: fresh_binding
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let mut expired = proposal;
+    expired.binding = fresh_binding;
+    assert!(
+        !supervisor
+            .request(authorize(expired.clone()))
+            .await
+            .unwrap()
+            .ok
+    );
+    assert_eq!(
+        supervisor
+            .request(CheckpointRequest::Status)
+            .await
+            .unwrap()
+            .state
+            .phase,
+        CheckpointPhase::Expired
+    );
+    daemon.child.kill().unwrap();
+    daemon.child.wait().unwrap();
+    daemon.clear_stale_sockets().unwrap();
+    daemon.child = Daemon::spawn(&daemon.directory);
+    daemon.await_ready();
+    expired.binding.generation = supervisor
+        .request(CheckpointRequest::Status)
+        .await
+        .unwrap()
+        .state
+        .generation;
+    assert!(
+        supervisor
+            .request(CheckpointRequest::ArmLate {
+                binding: expired.binding,
+                timeout_ms: 5000,
+                identity: expired.identity.clone(),
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    assert!(
+        worker
+            .request(CheckpointRequest::Enter {
+                binding: expired.binding
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    // Replace only this test-owned persistence destination with a directory:
+    // the release rename must fail before acknowledgement and terminate daemon.
+    fs::rename(
+        daemon.directory.join("checkpoint.json"),
+        daemon.directory.join("checkpoint.before-failure.json"),
+    )
+    .unwrap();
+    fs::create_dir(daemon.directory.join("checkpoint.json")).unwrap();
+    assert!(supervisor.request(authorize(expired)).await.is_err());
+    daemon.await_failure();
+}
+
+#[cfg(feature = "fixture-ipc")]
 #[test]
 fn missing_lock_or_invalid_coverage_prevents_daemon_startup() {
     for field in ["locked", "coverage"] {
@@ -230,9 +462,14 @@ async fn supervisor_checkpoint_release_timeout_and_restart_are_owned() {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     assert!(!pending.is_finished());
-    let persisted: fixture_daemon::CheckpointState =
-        serde_json::from_slice(&fs::read(daemon.directory.join("checkpoint.json")).unwrap())
-            .unwrap();
+    let persisted: fixture_daemon::CheckpointState = serde_json::from_value(
+        serde_json::from_slice::<serde_json::Value>(
+            &fs::read(daemon.directory.join("checkpoint.json")).unwrap(),
+        )
+        .unwrap()["state"]
+            .clone(),
+    )
+    .unwrap();
     assert_eq!(persisted.phase, CheckpointPhase::Entered);
     let stale = CheckpointBinding {
         owner: Uuid::now_v7(),

@@ -1,5 +1,5 @@
 #[path = "../provisioning_support/mod.rs"]
-mod support;
+pub(crate) mod support;
 use pve_port::{fixture_support::*, *};
 use uuid::Uuid;
 

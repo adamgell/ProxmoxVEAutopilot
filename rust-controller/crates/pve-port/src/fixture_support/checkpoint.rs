@@ -48,6 +48,15 @@ pub struct CheckpointState {
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CheckpointRequest {
     Status,
+    ArmLate {
+        binding: CheckpointBinding,
+        timeout_ms: u64,
+        identity: super::FixtureReadIdentity,
+    },
+    AuthorizeRelease {
+        proposal: super::LateCloneAuthorizationV1,
+        committed_request: Vec<u8>,
+    },
     Arm {
         binding: CheckpointBinding,
         timeout_ms: u64,
@@ -72,6 +81,17 @@ pub(crate) struct Barrier {
     state: CheckpointState,
     path: PathBuf,
     deadline: Option<Instant>,
+    late_identity: Option<super::FixtureReadIdentity>,
+    authorization: Option<super::LateCloneAuthorizationV1>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedBarrier {
+    state: CheckpointState,
+    #[serde(default)]
+    late_identity: Option<super::FixtureReadIdentity>,
+    #[serde(default)]
+    authorization: Option<super::LateCloneAuthorizationV1>,
 }
 impl Barrier {
     pub(crate) fn new(directory: &Path) -> io::Result<Self> {
@@ -79,10 +99,13 @@ impl Barrier {
         // Reject corrupt prior state; old state can never authorize a new process.
         if path.exists() {
             let metadata = fs::symlink_metadata(&path)?;
-            if !metadata.is_file() || metadata.len() > 4096 {
+            if !metadata.is_file() || metadata.len() > 131_072 {
                 return Err(invalid());
             }
-            let _: CheckpointState = serde_json::from_slice(&fs::read(&path)?)?;
+            let bytes = fs::read(&path)?;
+            if serde_json::from_slice::<PersistedBarrier>(&bytes).is_err() {
+                let _: CheckpointState = serde_json::from_slice(&bytes)?;
+            }
         }
         let barrier = Self {
             state: CheckpointState {
@@ -92,6 +115,8 @@ impl Barrier {
             },
             path,
             deadline: None,
+            late_identity: None,
+            authorization: None,
         };
         barrier.persist()?;
         Ok(barrier)
@@ -102,7 +127,11 @@ impl Barrier {
             .write(true)
             .create_new(true)
             .open(&temporary)?;
-        file.write_all(&serde_json::to_vec(&self.state)?)?;
+        file.write_all(&serde_json::to_vec(&PersistedBarrier {
+            state: self.state.clone(),
+            late_identity: self.late_identity.clone(),
+            authorization: self.authorization.clone(),
+        })?)?;
         file.sync_all()?;
         fs::rename(&temporary, &self.path)?;
         fs::File::open(self.path.parent().ok_or_else(invalid)?)?.sync_all()
@@ -123,6 +152,47 @@ impl Barrier {
         }
         let ok = match request {
             CheckpointRequest::Status => supervisor,
+            CheckpointRequest::ArmLate {
+                binding,
+                timeout_ms,
+                identity,
+            } if supervisor
+                && self.state.phase == CheckpointPhase::Idle
+                && binding.generation == self.state.generation
+                && !binding.owner.is_nil()
+                && binding.operation == identity.operation
+                && identity.validate().is_ok()
+                && (1..=5000).contains(&timeout_ms) =>
+            {
+                self.state.binding = Some(binding);
+                self.state.phase = CheckpointPhase::Armed;
+                self.late_identity = Some(identity);
+                self.deadline = Some(Instant::now() + Duration::from_millis(timeout_ms));
+                true
+            }
+            CheckpointRequest::AuthorizeRelease {
+                proposal,
+                committed_request,
+            } if supervisor && self.authorization.is_none() => {
+                let valid = self
+                    .late_identity
+                    .as_ref()
+                    .zip(self.state.binding)
+                    .and_then(|(identity, binding)| {
+                        let committed =
+                            crate::fixture_ipc::FixtureCloneRequest::decode(&committed_request)
+                                .ok()?;
+                        proposal
+                            .validate_candidate(identity, binding, &self.state, &committed)
+                            .ok()
+                    })
+                    .is_some();
+                if valid {
+                    self.authorization = Some(proposal);
+                    self.state.phase = CheckpointPhase::Released;
+                }
+                valid
+            }
             CheckpointRequest::Arm {
                 binding,
                 timeout_ms,
@@ -156,6 +226,7 @@ impl Barrier {
             }
             CheckpointRequest::Release { binding }
                 if supervisor
+                    && self.late_identity.is_none()
                     && self.state.binding == Some(binding)
                     && self.state.phase == CheckpointPhase::Entered =>
             {

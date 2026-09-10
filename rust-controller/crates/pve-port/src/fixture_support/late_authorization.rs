@@ -1,6 +1,6 @@
-//! Candidate protocol only: validation does not grant a mutation capability.
-//! The daemon intentionally does not route this command until durable supervisor
-//! admission and atomic checkpoint release are implemented together.
+//! Supervisor proposal validation. Validation alone grants no mutation capability.
+//! The checkpoint daemon can persist a validated proposal and release atomically;
+//! actual Clone mutation still uses the existing exact seeded-request admission.
 use super::{CheckpointBinding, CheckpointPhase, CheckpointState, FixtureProvisioningIdentity};
 use crate::fixture_ipc::FixtureCloneRequest;
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ impl FixtureReadIdentity {
 }
 
 /// Versioned supervisor proposal. No worker API consumes this type.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LateCloneAuthorizationV1 {
     pub version: u8,
