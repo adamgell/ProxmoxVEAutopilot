@@ -8,6 +8,9 @@ use crate::{CloneProvisioningRequestV1, MutationReceipt, Upid};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod stage;
+pub use stage::{FixtureStageReceipt, FixtureStageRequest};
+
 const MAX_MESSAGE_BYTES: usize = 65_536;
 
 /// Sealed provisioning fixture with a controller dispatch checkpoint.
