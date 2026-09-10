@@ -107,6 +107,25 @@ impl FixtureMutationClient {
         binding: super::CheckpointBinding,
         request: &crate::fixture_ipc::FixtureStageRequest,
     ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
+        self.send_stage(serde_json::to_value(binding)?, request)
+            .await
+    }
+    /// Stage protocol identity. Mutation remains gated until stage observation
+    /// and controller adapters implement the complete acceptance contract.
+    pub async fn stage_late_bound(
+        &self,
+        binding: super::FixtureStageIdentity,
+        request: &crate::fixture_ipc::FixtureStageRequest,
+    ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
+        binding.validate_request(request)?;
+        self.send_stage(serde_json::to_value(binding)?, request)
+            .await
+    }
+    async fn send_stage(
+        &self,
+        binding: serde_json::Value,
+        request: &crate::fixture_ipc::FixtureStageRequest,
+    ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
         tokio::time::timeout(self.timeout, async {
             let payload = serde_json::to_vec(&serde_json::json!({
                 "command": "stage_late",

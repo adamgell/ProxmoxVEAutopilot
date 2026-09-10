@@ -26,10 +26,8 @@ const IO_BOUND: Duration = Duration::from_millis(100);
 enum ClientRequest {
     #[cfg(feature = "fixture-ipc")]
     StageLate {
-        #[serde(rename = "binding")]
-        _binding: super::CheckpointBinding,
-        #[serde(rename = "request")]
-        _request: serde_json::Value,
+        binding: super::FixtureStageIdentity,
+        request: serde_json::Value,
     },
     #[cfg(feature = "fixture-ipc")]
     ProvisioningReadsV2 {
@@ -61,6 +59,10 @@ enum ClientRequest {
     AcceptedEffect {
         operation: Uuid,
         request_sha256: String,
+    },
+    #[cfg(feature = "fixture-ipc")]
+    AcceptedStageEffect {
+        identity: super::FixtureStageIdentity,
     },
     World {
         vmid: u32,
@@ -175,6 +177,8 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
     #[cfg(feature = "fixture-ipc")]
     let mut barrier = super::checkpoint::Barrier::new(directory)?;
     #[cfg(feature = "fixture-ipc")]
+    let mut stage_barrier = super::stage_checkpoint::StageBarrier::new(directory)?;
+    #[cfg(feature = "fixture-ipc")]
     let mut publications = super::post_dispatch_publication::Publications::new();
     client.set_nonblocking(true)?;
     control.set_nonblocking(true)?;
@@ -193,6 +197,25 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
             let Ok(bytes) = read_frame(&mut stream) else {
                 continue;
             };
+            #[cfg(feature = "fixture-ipc")]
+            {
+                #[derive(Deserialize)]
+                #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+                enum StageEnvelope {
+                    StageCheckpoint {
+                        request: super::StageCheckpointRequest,
+                    },
+                }
+                if let Ok(StageEnvelope::StageCheckpoint { request }) =
+                    serde_json::from_slice(&bytes)
+                {
+                    let payload = serde_json::to_vec(&stage_barrier.handle(request, supervisor)?)?;
+                    let _ = stream
+                        .write_all(&(payload.len() as u32).to_be_bytes())
+                        .and_then(|()| stream.write_all(&payload));
+                    continue;
+                }
+            }
             #[cfg(feature = "fixture-ipc")]
             if let Ok(command) =
                 serde_json::from_slice::<super::post_dispatch_publication::Command>(&bytes)
@@ -247,7 +270,15 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                     // cannot safely authorize multiple stages of one operation.
                     // Rejection must precede checkpoint consumption or log writes.
                     #[cfg(feature = "fixture-ipc")]
-                    Ok(ClientRequest::StageLate { .. }) => {}
+                    Ok(ClientRequest::StageLate { binding, request }) => {
+                        if let Ok(request) = crate::fixture_ipc::FixtureStageRequest::decode(
+                            &serde_json::to_vec(&request)?,
+                        ) {
+                            // Validate the whole dispatch identity without consuming authority:
+                            // stage effect and observation adapters are still gated.
+                            let _ = stage_barrier.validate_submission(&binding, &request);
+                        }
+                    }
                     #[cfg(feature = "fixture-ipc")]
                     Ok(ClientRequest::ProvisioningReadsV2 { identity }) => {
                         if identity.validate().is_ok()
@@ -353,6 +384,19 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                         request_sha256,
                     }) => {
                         if let Ok(effect) = log.accepted_effect(operation, &request_sha256) {
+                            response.ok = true;
+                            response.accepted_effect = effect.cloned();
+                        }
+                    }
+                    #[cfg(feature = "fixture-ipc")]
+                    Ok(ClientRequest::AcceptedStageEffect { identity }) => {
+                        if identity.validate().is_ok()
+                            && let Ok(effect) = log.accepted_stage_effect(
+                                identity.operation,
+                                &identity.request_sha256,
+                                identity.ledger_binding(),
+                            )
+                        {
                             response.ok = true;
                             response.accepted_effect = effect.cloned();
                         }

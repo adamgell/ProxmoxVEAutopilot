@@ -5,6 +5,11 @@
 //! capability with an explicitly bound supervisor checkpoint client. Missing
 //! checkpoint configuration fails closed before controller dispatch.
 mod checkpoint;
+mod stage_checkpoint;
+mod stage_identity;
+pub use durable_fixture_log::{FixtureLedgerStage, StageBinding};
+pub use stage_checkpoint::{StageCheckpointReply, StageCheckpointRequest};
+pub use stage_identity::FixtureStageIdentity;
 mod clone_mutation;
 mod late_authorization;
 pub use checkpoint::{
