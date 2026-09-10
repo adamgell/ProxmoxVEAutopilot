@@ -1,5 +1,5 @@
 //! PostgreSQL dispatch/receipt durability composed with the owned IPC fixture.
-//! Preflight uses the existing native scenario; this does not prove controller IPC collection.
+//! Includes fresh controller IPC collection and separate pre-admitted composition proofs.
 #![cfg(feature = "fixture-ipc")]
 #[allow(dead_code)]
 #[path = "../../postgres-store/tests/osdeploy_execution_support/mod.rs"]
@@ -12,6 +12,312 @@ use osdeploy_execution_support::Scenario;
 use pve_port::{fixture_ipc::*, fixture_support::*, *};
 use sqlx::ConnectOptions;
 use std::{fs, os::unix::fs::PermissionsExt, sync::Arc, time::Duration};
+
+/// A fresh controller collects IPC facts and creates its own attempt and request.
+/// Only the supervisor observes the committed request and releases its exact digest.
+#[tokio::test]
+async fn fresh_controller_late_clone_records_exact_durable_receipt() {
+    let s = Scenario::new(300, true).await;
+    let operation = s.ids.operation(osdeploy_adapter::OsDeployStage::Clone);
+    let fixture_id = controller_domain::RunId::new().as_uuid();
+    let identity = FixtureReadIdentity {
+        fixture_id,
+        operation: operation.as_uuid(),
+        node: "node-a".into(),
+        source_vmid: 900,
+        target_vmid: 901,
+    };
+    let directory = std::path::PathBuf::from("/tmp").join(format!("pglate-{fixture_id}"));
+    fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+    fn observed<T>(at: u64, value: T) -> SeedRead<T> {
+        SeedRead::Observed {
+            observed_unix_ms: at,
+            value,
+        }
+    }
+    let node = NodeName::parse("node-a").unwrap();
+    let source = s
+        .fake
+        .provisioning_vm_config(&node, Vmid::new(900).unwrap())
+        .await
+        .unwrap();
+    let fingerprint = source.template_fingerprint().unwrap();
+    let mut source_wire = serde_json::to_value(&source).unwrap();
+    source_wire["digest"] = serde_json::json!("a".repeat(64));
+    let source: ProvisioningVmConfigV1 = serde_json::from_value(source_wire).unwrap();
+    assert_eq!(source.template_fingerprint().unwrap(), fingerprint);
+    let reads = FixtureProvisioningReadsV2 {
+        version: 2,
+        identity: identity.clone(),
+        source_config: observed(
+            source.observed_at().timestamp_millis() as u64,
+            SeedConfig::Present {
+                config: Box::new(source.clone()),
+            },
+        ),
+        target_config: observed(now, SeedConfig::Absent {}),
+        source_power: observed(
+            now,
+            SeedPower {
+                power: PowerState::Stopped,
+                locked: false,
+            },
+        ),
+        target_power: SeedRead::Error {
+            observed_unix_ms: now,
+            error: SeedReadError::Unavailable,
+        },
+        source_coverage: observed(now, ProvisioningCoverageV1::Complete),
+        target_coverage: observed(now, ProvisioningCoverageV1::Complete),
+        deployment_media: {
+            let value = s
+                .fake
+                .provisioning_media(&node, &StorageName::parse("media-store").unwrap())
+                .await
+                .unwrap();
+            observed(value.observed_at().timestamp_millis() as u64, value)
+        },
+        driver_media: {
+            let value = s
+                .fake
+                .provisioning_media(&node, &StorageName::parse("drivers").unwrap())
+                .await
+                .unwrap();
+            observed(value.observed_at().timestamp_millis() as u64, value)
+        },
+    };
+    fs::write(
+        directory.join("provisioning_reads_v2.json"),
+        serde_json::to_vec(&reads).unwrap(),
+    )
+    .unwrap();
+    let infrastructure = FixtureCloneReads {
+        version: 1,
+        fixture_id,
+        node: "node-a".into(),
+        node_status: observed(
+            now,
+            SeedNode {
+                online: true,
+                uptime_seconds: 100,
+            },
+        ),
+        storage: observed(
+            now,
+            vec![SeedStorage {
+                name: "disk-store".into(),
+                active: true,
+                enabled: true,
+                available_bytes: 999999999999,
+                content: vec!["images".into()],
+            }],
+        ),
+        bridges: observed(
+            now,
+            vec![SeedBridge {
+                name: "vmbr0".into(),
+                active: true,
+            }],
+        ),
+        cluster_inventory: observed(
+            now,
+            vec![SeedIdentity {
+                status: observed(now, PowerState::Stopped),
+                coverage: observed(now, ProvisioningCoverageV1::Complete),
+                node: "node-a".into(),
+                vmid: 900,
+                name: "blank-template".into(),
+                template: true,
+                config_sha256: "a".repeat(64),
+                uuid: "33333333-3333-4333-8333-333333333390".parse().unwrap(),
+                mac: "02:00:00:00:09:00".into(),
+                primary_storage: "disk-store".into(),
+                primary_volume: "vm-900-disk-0".into(),
+            }],
+        ),
+    };
+    fs::write(
+        directory.join("clone_reads.json"),
+        serde_json::to_vec(&infrastructure).unwrap(),
+    )
+    .unwrap();
+    let daemon_path = directory.clone();
+    let daemon = std::thread::spawn(move || run(&daemon_path, Duration::from_secs(5)).unwrap());
+    let supervisor =
+        FixtureCheckpointClient::new(directory.join("supervisor.sock"), Duration::from_secs(1))
+            .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let state = loop {
+        if let Ok(reply) = supervisor.request(CheckpointRequest::Status).await {
+            break reply.state;
+        }
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    };
+    let binding = CheckpointBinding {
+        generation: state.generation,
+        owner: fixture_id,
+        operation: identity.operation,
+        point: CheckpointPoint::DispatchCommitted,
+    };
+    assert!(
+        supervisor
+            .request(CheckpointRequest::ArmLate {
+                binding,
+                timeout_ms: 3000,
+                identity: identity.clone()
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    let port = FixtureProvisioningPort::new_late(
+        directory.join("client.sock"),
+        Duration::from_secs(2),
+        identity.clone(),
+    )
+    .unwrap()
+    .with_checkpoint(
+        FixtureCheckpointClient::new(directory.join("client.sock"), Duration::from_secs(2))
+            .unwrap(),
+        binding,
+    )
+    .unwrap();
+    let controller = Arc::new(
+        operation_controller::OsDeployController::new_fixture(
+            s.db.store.clone(),
+            s.db.scheduler(),
+            Arc::new(port),
+            1,
+        )
+        .unwrap(),
+    );
+    controller.open_send_admission().await.unwrap();
+    let worker = tokio::spawn({
+        let controller = controller.clone();
+        async move { controller.run_osdeploy_once(operation).await }
+    });
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let entered = loop {
+        let state = supervisor
+            .request(CheckpointRequest::Status)
+            .await
+            .unwrap()
+            .state;
+        if state.phase == CheckpointPhase::Entered {
+            break state;
+        }
+        if worker.is_finished() {
+            let rows: Vec<(serde_json::Value,)> = sqlx::query_as("SELECT payload->'detail' FROM rust_controller.journal_events WHERE payload->>'action'='pve_evaluated'").fetch_all(&s.db.pool).await.unwrap();
+            panic!(
+                "controller ended before dispatch checkpoint: {:?}; {:?}",
+                worker.await,
+                rows
+            );
+        }
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    };
+    let committed = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+    let dispatch = committed
+        .dispatch()
+        .expect("independently visible durable dispatch");
+    assert!(committed.receipt().is_none());
+    let ProvisioningMutationRequestV1::Clone(request) = dispatch.request() else {
+        panic!("expected Clone")
+    };
+    let envelope = FixtureCloneRequest::new(fixture_id, request.clone()).unwrap();
+    assert_eq!(
+        dispatch.request_sha256(),
+        dispatch.request().request_digest().unwrap()
+    );
+    let reader =
+        FixtureReadClient::new(directory.join("client.sock"), Duration::from_secs(1)).unwrap();
+    assert!(
+        reader
+            .accepted_effect(identity.operation, &envelope.request_sha256())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let proposal = LateCloneAuthorizationV1 {
+        version: 1,
+        binding,
+        identity: identity.clone(),
+        request_sha256: envelope.request_sha256(),
+        request: envelope.encode().unwrap(),
+        after: VmState {
+            disk_bytes: 85899345920,
+            pe_configured: false,
+        },
+    };
+    proposal
+        .validate_candidate(&identity, binding, &entered, &envelope)
+        .unwrap();
+    let mut mismatched = proposal.clone();
+    mismatched.request_sha256 = "0".repeat(64);
+    assert!(
+        !supervisor
+            .request(CheckpointRequest::AuthorizeRelease {
+                committed_request: envelope.encode().unwrap(),
+                proposal: mismatched,
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    assert!(!worker.is_finished());
+    assert!(
+        reader
+            .accepted_effect(identity.operation, &envelope.request_sha256())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        supervisor
+            .request(CheckpointRequest::AuthorizeRelease {
+                committed_request: envelope.encode().unwrap(),
+                proposal
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    let result = worker.await.unwrap().unwrap();
+    // Startup facts cannot establish a post-dispatch outcome. The receipt is
+    // durable, but outcome reconciliation needs fresh task/config observations.
+    assert_eq!(
+        result,
+        postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Unknown)
+    );
+    let durable = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+    assert_eq!(durable.attempt_id(), committed.attempt_id());
+    let effect = reader
+        .accepted_effect(identity.operation, &envelope.request_sha256())
+        .await
+        .unwrap()
+        .unwrap();
+    let receipt = envelope.decode_receipt(effect.receipt().unwrap()).unwrap();
+    assert_eq!(receipt.submission_sequence(), 1);
+    assert_eq!(durable.receipt().unwrap().receipt(), receipt.receipt());
+    assert_eq!(
+        durable.dispatch().unwrap().request_sha256(),
+        dispatch.request_sha256()
+    );
+    assert!(s.fake.recorded_provisioning_submissions().is_empty());
+    let mutation =
+        FixtureMutationClient::new(directory.join("client.sock"), Duration::from_secs(1)).unwrap();
+    assert!(mutation.clone_vm_late(binding, &envelope).await.is_err());
+    controller
+        .close_and_drain(Duration::from_secs(1))
+        .await
+        .unwrap();
+    daemon.join().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+}
 
 /// Fresh controller admission must not convert an unseeded IPC world into
 /// vacancy or borrow the native Scenario's Ready authorization.
