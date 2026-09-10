@@ -27,6 +27,8 @@ mod durable_fixture_log;
 mod fixture_daemon;
 mod inventory_read;
 mod post_dispatch;
+mod post_dispatch_publication;
+pub use post_dispatch_publication::FixturePostDispatchPublication;
 mod read_client;
 mod task;
 pub use clone_mutation::{FixtureCloneSeed, FixtureMutationClient};

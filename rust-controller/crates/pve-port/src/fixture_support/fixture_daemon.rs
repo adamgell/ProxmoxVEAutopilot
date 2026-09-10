@@ -18,7 +18,7 @@ use uuid::Uuid;
 #[path = "snapshot.rs"]
 pub mod snapshot;
 
-const MAX_REQUEST: usize = 65_536;
+const MAX_REQUEST: usize = 196_608;
 const IO_BOUND: Duration = Duration::from_millis(100);
 
 #[derive(Deserialize)]
@@ -167,6 +167,8 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
     let control = UnixListener::bind(directory.join("supervisor.sock"))?;
     #[cfg(feature = "fixture-ipc")]
     let mut barrier = super::checkpoint::Barrier::new(directory)?;
+    #[cfg(feature = "fixture-ipc")]
+    let mut publications = super::post_dispatch_publication::Publications::new();
     client.set_nonblocking(true)?;
     control.set_nonblocking(true)?;
     let deadline = Instant::now() + lifetime;
@@ -184,6 +186,21 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
             let Ok(bytes) = read_frame(&mut stream) else {
                 continue;
             };
+            #[cfg(feature = "fixture-ipc")]
+            if let Ok(command) =
+                serde_json::from_slice::<super::post_dispatch_publication::Command>(&bytes)
+            {
+                match publications.handle(command, supervisor, &log, directory) {
+                    Ok(payload) => {
+                        let _ = stream
+                            .write_all(&(payload.len() as u32).to_be_bytes())
+                            .and_then(|()| stream.write_all(&payload));
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::InvalidData => {}
+                    Err(e) => return Err(e),
+                }
+                continue;
+            }
             #[cfg(feature = "fixture-ipc")]
             {
                 #[derive(Deserialize)]
@@ -266,6 +283,7 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                         if let Some(seed) = &clone_seed {
                             match seed.submit(&serde_json::to_vec(&request)?, &mut log) {
                                 Ok(payload) => {
+                                    publications.accepted(&serde_json::to_vec(&request)?)?;
                                     let _ = stream
                                         .write_all(&(payload.len() as u32).to_be_bytes())
                                         .and_then(|()| stream.write_all(&payload));
@@ -286,6 +304,7 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                                 .and_then(|seed| seed.submit(&bytes, &mut log))
                             {
                                 Ok(payload) => {
+                                    publications.accepted(&bytes)?;
                                     let _ = stream
                                         .write_all(&(payload.len() as u32).to_be_bytes())
                                         .and_then(|()| stream.write_all(&payload));

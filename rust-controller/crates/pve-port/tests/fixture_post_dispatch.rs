@@ -6,6 +6,145 @@ use pve_port::{fixture_ipc::FixtureCloneRequest, fixture_support::*, *};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+async fn wire(socket: &std::path::Path, value: Value) -> std::io::Result<Value> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::UnixStream::connect(socket).await?;
+    let bytes = serde_json::to_vec(&value)?;
+    stream.write_u32(bytes.len() as u32).await?;
+    stream.write_all(&bytes).await?;
+    let length = stream.read_u32().await? as usize;
+    assert!(length < 200_000);
+    let mut bytes = vec![0; length];
+    stream.read_exact(&mut bytes).await?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+fn retime(value: &mut Value, at: u64) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                if key == "observed_unix_ms" {
+                    *value = json!(at);
+                } else if key == "observed_at" {
+                    *value = serde_json::to_value(
+                        chrono::DateTime::from_timestamp_millis(at as i64).unwrap(),
+                    )
+                    .unwrap();
+                } else {
+                    retime(value, at);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                retime(value, at);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[tokio::test]
+async fn supervisor_publication_requires_accepted_effect_and_invalidates_on_restart() {
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        time::{Duration, Instant},
+    };
+    let directory = std::path::PathBuf::from("/tmp").join(format!("fpd-{}", Uuid::now_v7()));
+    fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let (observation, request, _, _) = sample();
+    let seed = FixtureCloneSeed::new(
+        &request,
+        VmState {
+            disk_bytes: 4096,
+            pe_configured: false,
+        },
+    )
+    .unwrap();
+    fs::write(directory.join("clone.json"), seed.encode().unwrap()).unwrap();
+    let request_json: Value = serde_json::from_slice(&request.encode().unwrap()).unwrap();
+    let mut document = serde_json::to_value(observation).unwrap();
+    let mut receipt = Vec::new();
+    for restart in [false, true] {
+        if restart {
+            fs::remove_file(directory.join("client.sock")).unwrap();
+            fs::remove_file(directory.join("supervisor.sock")).unwrap();
+        }
+        let path = directory.clone();
+        let daemon = std::thread::spawn(move || run(&path, Duration::from_secs(5)).unwrap());
+        let socket = directory.join("client.sock");
+        let control = directory.join("supervisor.sock");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !control.exists() {
+            assert!(Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let reader = FixtureReadClient::new(socket.clone(), Duration::from_secs(1)).unwrap();
+        let publish = |observation: &Value| json!({"command":"publish_post_dispatch","request":request_json,"observation":observation});
+        assert!(wire(&control, publish(&document)).await.is_err());
+        if !restart {
+            let mutation =
+                FixtureMutationClient::new(socket.clone(), Duration::from_secs(1)).unwrap();
+            mutation.clone_vm(&request).await.unwrap();
+            receipt = reader
+                .accepted_effect(
+                    request.request().binding().operation_id().as_uuid(),
+                    &request.request_sha256(),
+                )
+                .await
+                .unwrap()
+                .unwrap()
+                .receipt()
+                .unwrap()
+                .to_vec();
+            assert!(
+                reader
+                    .post_dispatch(&request, &receipt)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            // Stale startup observations cannot become post-dispatch evidence.
+            assert!(wire(&control, publish(&document)).await.is_err());
+            retime(&mut document, chrono::Utc::now().timestamp_millis() as u64);
+            assert!(wire(&socket, publish(&document)).await.is_err());
+            let mut wrong = document.clone();
+            wrong["task"]["identity"]["upid"] =
+                json!("UPID:pve-test:00000002:00000001:00000001:qmclone:900:fake@pve:");
+            assert!(wire(&control, publish(&wrong)).await.is_err());
+            let published = wire(&control, publish(&document)).await.unwrap();
+            assert!(!published.is_null());
+            let fetched = reader
+                .post_dispatch(&request, &receipt)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(serde_json::to_value(fetched.observation).unwrap(), document);
+            assert!(wire(&control, publish(&document)).await.is_err());
+            assert!(fs::read_dir(&directory).unwrap().any(|file| {
+                file.unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("post-dispatch-")
+            }));
+        } else {
+            assert!(
+                reader
+                    .post_dispatch(&request, &receipt)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let status = reader.status().await.unwrap();
+        assert_eq!((status.attempts, status.effects), (1, 1));
+        wire(&control, json!({"command":"shutdown"})).await.unwrap();
+        daemon.join().unwrap();
+    }
+}
+
 fn sample() -> (FixturePostDispatchV1, FixtureCloneRequest, Vec<u8>, u64) {
     let request = FixtureCloneRequest::new(
         Uuid::from_u128(1),

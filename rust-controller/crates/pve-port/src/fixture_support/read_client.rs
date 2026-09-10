@@ -67,6 +67,49 @@ fn invalid() -> io::Error {
 }
 
 impl FixtureReadClient {
+    /// Read a supervisor publication for an exact accepted Clone receipt.
+    /// A daemon restart returns `None`; historical files never refresh facts.
+    pub async fn post_dispatch(
+        &self,
+        request: &crate::fixture_ipc::FixtureCloneRequest,
+        accepted_receipt: &[u8],
+    ) -> io::Result<Option<super::FixturePostDispatchPublication>> {
+        tokio::time::timeout(self.timeout, async {
+            let value: serde_json::Value =
+                serde_json::from_slice(&request.encode().map_err(|_| invalid())?)?;
+            let payload = serde_json::to_vec(
+                &serde_json::json!({"command":"post_dispatch","request":value}),
+            )?;
+            let mut stream = UnixStream::connect(&self.socket).await?;
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(&payload).await?;
+            let length = stream.read_u32().await? as usize;
+            if length == 0 || length > super::post_dispatch::MAX_POST_DISPATCH_BYTES + 4096 {
+                return Err(invalid());
+            }
+            let mut bytes = vec![0; length];
+            stream.read_exact(&mut bytes).await?;
+            let publication: Option<super::FixturePostDispatchPublication> =
+                serde_json::from_slice(&bytes)?;
+            if let Some(value) = &publication {
+                if value.daemon_generation.is_nil()
+                    || value.published_unix_ms > super::post_dispatch_publication::now()?
+                {
+                    return Err(invalid());
+                }
+                super::FixturePostDispatchV1::decode(
+                    &serde_json::to_vec(&value.observation)?,
+                    request,
+                    accepted_receipt,
+                    value.accepted_unix_ms,
+                    value.published_unix_ms,
+                )?;
+            }
+            Ok(publication)
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "fixture post-dispatch deadline"))?
+    }
     /// Version two reads bind stable collection identity before an attempt exists.
     pub async fn provisioning_reads_v2(
         &self,
