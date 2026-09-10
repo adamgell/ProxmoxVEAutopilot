@@ -29,7 +29,9 @@ enum ClientRequest {
         binding: super::FixtureStageIdentity,
         request: serde_json::Value,
         #[serde(default)]
-        predecessor: Option<(super::FixtureStageIdentity, serde_json::Value)>,
+        predecessor: Option<Box<(super::FixtureStageIdentity, serde_json::Value)>>,
+        #[serde(default)]
+        legacy_clone: Option<(serde_json::Value, Vec<u8>)>,
     },
     #[cfg(feature = "fixture-ipc")]
     ProvisioningReadsV2 {
@@ -274,30 +276,54 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                         binding,
                         request,
                         predecessor,
+                        legacy_clone,
                     }) => {
                         if let Ok(request) = crate::fixture_ipc::FixtureStageRequest::decode(
                             &serde_json::to_vec(&request)?,
                         ) {
                             let had_predecessor = predecessor.is_some();
-                            let prior = predecessor.and_then(|(identity, value)| {
+                            let prior = predecessor.and_then(|prior| {
+                                let (identity, value) = *prior;
                                 crate::fixture_ipc::FixtureStageRequest::decode(
                                     &serde_json::to_vec(&value).ok()?,
                                 )
                                 .ok()
                                 .map(|request| (identity, request))
                             });
+                            let legacy = legacy_clone.as_ref().and_then(|(value, receipt)| {
+                                crate::fixture_ipc::FixtureCloneRequest::decode(
+                                    &serde_json::to_vec(value).ok()?,
+                                )
+                                .ok()
+                                .map(|request| (request, receipt))
+                            });
                             if (!had_predecessor || prior.is_some())
+                                && (legacy_clone.is_none() || legacy.is_some())
+                                && !(had_predecessor && legacy_clone.is_some())
                                 && let Ok(after) =
                                     stage_barrier.authorized_after(&binding, &request)
                             {
-                                match super::stage_effect::submit(
-                                    &mut log,
-                                    &binding,
-                                    &request,
-                                    prior.as_ref().map(|(i, r)| (i, r)),
-                                    after,
-                                    || stage_barrier.consume(&binding, &request).map(|_| ()),
-                                ) {
+                                let result = if let Some((legacy, receipt)) = legacy {
+                                    super::stage_effect::submit_after_legacy_clone(
+                                        &mut log,
+                                        &binding,
+                                        &request,
+                                        &legacy,
+                                        receipt,
+                                        after,
+                                        || stage_barrier.consume(&binding, &request).map(|_| ()),
+                                    )
+                                } else {
+                                    super::stage_effect::submit(
+                                        &mut log,
+                                        &binding,
+                                        &request,
+                                        prior.as_ref().map(|(i, r)| (i, r)),
+                                        after,
+                                        || stage_barrier.consume(&binding, &request).map(|_| ()),
+                                    )
+                                };
+                                match result {
                                     Ok(payload) => {
                                         publications.accepted_stage(&binding)?;
                                         let _ = stream

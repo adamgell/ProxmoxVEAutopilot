@@ -107,7 +107,7 @@ impl FixtureMutationClient {
         binding: super::CheckpointBinding,
         request: &crate::fixture_ipc::FixtureStageRequest,
     ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
-        self.send_stage(serde_json::to_value(binding)?, request, None)
+        self.send_stage(serde_json::to_value(binding)?, request, None, None)
             .await
     }
     /// Stage protocol identity. Clone can submit directly; resize and ConfigurePe
@@ -118,7 +118,7 @@ impl FixtureMutationClient {
         request: &crate::fixture_ipc::FixtureStageRequest,
     ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
         binding.validate_request(request)?;
-        self.send_stage(serde_json::to_value(binding)?, request, None)
+        self.send_stage(serde_json::to_value(binding)?, request, None, None)
             .await
     }
     /// Supplies the original predecessor as evidence. The daemon verifies its
@@ -139,7 +139,36 @@ impl FixtureMutationClient {
                 &predecessor.encode().map_err(|_| invalid())?
             )?
         ]);
-        self.send_stage(serde_json::to_value(binding)?, request, Some(prior))
+        self.send_stage(serde_json::to_value(binding)?, request, Some(prior), None)
+            .await
+    }
+    /// Supplies exact original v1 Clone evidence without assigning it v2 ownership.
+    /// Only a new v2 resize may use this bridge; daemon acceptance and current
+    /// supervisor authority are independently required.
+    pub async fn stage_late_after_legacy_clone(
+        &self,
+        binding: super::FixtureStageIdentity,
+        request: &crate::fixture_ipc::FixtureStageRequest,
+        predecessor: &crate::fixture_ipc::FixtureCloneRequest,
+        original_receipt: &[u8],
+    ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
+        binding.validate_request(request)?;
+        if !matches!(
+            request.request(),
+            crate::ProvisioningMutationRequestV1::GrowDisk(_)
+        ) {
+            return Err(invalid());
+        }
+        predecessor
+            .decode_receipt(original_receipt)
+            .map_err(|_| invalid())?;
+        let legacy = serde_json::json!([
+            serde_json::from_slice::<serde_json::Value>(
+                &predecessor.encode().map_err(|_| invalid())?
+            )?,
+            original_receipt
+        ]);
+        self.send_stage(serde_json::to_value(binding)?, request, None, Some(legacy))
             .await
     }
     async fn send_stage(
@@ -147,12 +176,14 @@ impl FixtureMutationClient {
         binding: serde_json::Value,
         request: &crate::fixture_ipc::FixtureStageRequest,
         predecessor: Option<serde_json::Value>,
+        legacy_clone: Option<serde_json::Value>,
     ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
         tokio::time::timeout(self.timeout, async {
             let payload = serde_json::to_vec(&serde_json::json!({
                 "command": "stage_late",
                 "binding": binding,
                 "predecessor": predecessor,
+                "legacy_clone": legacy_clone,
                 "request": serde_json::from_slice::<serde_json::Value>(
                     &request.encode().map_err(|_| invalid())?
                 )?,

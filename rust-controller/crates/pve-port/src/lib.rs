@@ -1,4 +1,6 @@
 mod credentials;
+#[cfg(test)]
+extern crate self as pve_port;
 mod fake;
 #[cfg(feature = "fixture-ipc")]
 pub mod fixture_ipc;
