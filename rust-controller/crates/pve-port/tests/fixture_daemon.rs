@@ -104,9 +104,11 @@ impl Daemon {
     }
     fn request(&self, socket: &str, payload: &[u8]) -> fixture_daemon::Reply {
         let mut stream = UnixStream::connect(self.directory.join(socket)).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
+        // macOS may reject SO_RCVTIMEO for Unix-domain streams with EINVAL;
+        // the daemon still enforces the authoritative bounded read deadline.
+        if let Err(error) = stream.set_read_timeout(Some(Duration::from_secs(1))) {
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        }
         stream
             .write_all(&(payload.len() as u32).to_be_bytes())
             .unwrap();
