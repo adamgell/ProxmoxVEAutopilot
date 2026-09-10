@@ -26,6 +26,10 @@ The current Python-side contracts passed under explicit Homebrew Python 3.12:
 
 The Rust `api-compat` crate also passed 18 runtime tests and 2 intended compile-fail documentation tests; the complete output is `api-compat.log` (SHA-256 `6ff17557c9c8da55fa5744b540fa0fd0fa3fd71291582089c0da0f3091b6a00f`). These checks establish the sanitized, duplicate-aware Python-to-Rust contract; they do not claim that the legacy Python/Ansible writer is quiesced or that a live dual-writer handoff has been performed.
 
+## Controller-service package
+
+Fresh local all-feature execution passed 58 unit/runtime tests and 44 service tests, including startup denial before local I/O, readiness fault latching, observation cancellation/transaction cleanup, no-writer guarantees, and bounded child cleanup. The complete output is `controller-service.log` (SHA-256 `56dbc74bfb64f97317dcb6ef8f910785d632fdf0684806051652db3ea7a142d4`). This closes the service observation/health package gate only; it is not the sixteen-stage OSDeploy workflow or independent service-process takeover proof.
+
 ## Readiness impact
 
 This evidence closes the local controller/database restart-recovery and compatibility-contract gates. Remaining production-candidate gates are independent-process service recovery, explicit Python/Ansible single-writer handoff/quiescence, rollback/export sealing, non-production sacrificial workflow approval, and operator acceptance. No deployment or mutation is authorized by this record.

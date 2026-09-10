@@ -1,0 +1,159 @@
+   Compiling serde_core v1.0.229
+   Compiling httpdate v1.0.3
+   Compiling mime v0.3.17
+   Compiling controller-service v0.1.0 (/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-restart-20260909/rust-controller/crates/controller-service)
+   Compiling matchit v0.8.4
+   Compiling anyhow v1.0.104
+   Compiling axum-core v0.5.6
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling uuid v1.26.0
+   Compiling serde_path_to_error v0.1.20
+   Compiling smallvec v1.15.2
+   Compiling chrono v0.4.45
+   Compiling controller-domain v0.1.0 (/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-restart-20260909/rust-controller/crates/controller-domain)
+   Compiling serde_urlencoded v0.7.1
+   Compiling either v1.18.0
+   Compiling parking_lot_core v0.9.12
+   Compiling icu_normalizer v2.3.0
+   Compiling parking_lot v0.12.5
+   Compiling tokio v1.53.1
+   Compiling futures-intrusive v0.5.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling event-journal v0.1.0 (/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-restart-20260909/rust-controller/crates/event-journal)
+   Compiling artifact-index v0.1.0 (/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-restart-20260909/rust-controller/crates/artifact-index)
+   Compiling api-compat v0.1.0 (/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-restart-20260909/rust-controller/crates/api-compat)
+   Compiling hyper v1.11.0
+   Compiling tower v0.5.3
+   Compiling tokio-rustls v0.26.4
+   Compiling tokio-stream v0.1.18
+   Compiling sqlx-core v0.8.6
+   Compiling tower-http v0.6.11
+   Compiling hyper-util v0.1.20
+   Compiling hyper-rustls v0.27.9
+   Compiling axum v0.8.9
+   Compiling reqwest v0.12.28
+   Compiling sqlx-postgres v0.8.6
+   Compiling pve-port v0.1.0 (/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-restart-20260909/rust-controller/crates/pve-port)
+   Compiling sqlx v0.8.6
+   Compiling osdeploy-adapter v0.1.0 (/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-restart-20260909/rust-controller/crates/osdeploy-adapter)
+   Compiling postgres-store v0.1.0 (/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-restart-20260909/rust-controller/crates/postgres-store)
+   Compiling scheduler v0.1.0 (/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-restart-20260909/rust-controller/crates/scheduler)
+   Compiling ansible-adapter v0.1.0 (/Users/Adam.Gell/repo/ProxmoxVEAutopilot/.worktrees/codex-rust-controller-restart-20260909/rust-controller/crates/ansible-adapter)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.93s
+     Running unittests src/main.rs (target/debug/deps/controller_service-76077f7a1d9f4709)
+
+running 58 tests
+test config::tests::explicit_remote_reads_are_limited_to_observe_mode ... ok
+test config::tests::normalized_literal_loopback_endpoints_are_allowed_without_opt_in ... ok
+test config::tests::observation_fake_defaults_without_file_and_http_requires_nonempty_file ... ok
+test config::tests::observation_gates_before_loader_matrix ... ok
+test config::tests::observation_rechecks_database_boundary_before_file_reference ... ok
+test config::tests::observe_requires_explicit_production_read_permission ... ok
+test config::tests::rejects_production_controller_in_adapter_mode ... ok
+test config::tests::selected_node_factory_preserves_selection_and_absence ... ok
+test config::tests::selected_node_presence_is_rejected_under_fake ... ok
+test config::tests::selected_node_rejects_invalid_values_before_token_reference ... ok
+test config::tests::unapproved_observe_rejects_database_and_pve_aliases_before_construction ... ok
+test health::tests::fresh_http_observation_cannot_mask_execution_failure_or_database_failure ... ok
+test health::tests::observation_freshness_expires_monotonically_and_failure_cannot_reuse_last_success ... ok
+test health::tests::readiness_exposes_only_sanitized_operational_facts ... ok
+test health::tests::readiness_requires_current_dependencies_and_real_sweep_progress ... ok
+test infrastructure_health::tests::component_freshness_has_exact_boundary_and_snapshots_do_not_refresh_it ... ok
+test infrastructure_health::tests::each_failed_component_retains_last_success_without_granting_readiness ... ok
+test infrastructure_health::tests::missing_component_fields_cannot_set_success_or_readiness ... ok
+test infrastructure_health::tests::node_ages_independently_of_later_network_completion ... ok
+test infrastructure_health::tests::serialized_health_contains_only_sanitized_components_and_fixed_coverage ... ok
+test infrastructure_observation::tests::cancellation_drops_active_read_and_starts_no_later_read ... ok
+test infrastructure_observation::tests::constructor_requires_explicit_selection ... ok
+test infrastructure_observation::tests::delayed_repoll_respects_each_call_deadline ... ok
+test infrastructure_observation::tests::each_error_is_fixed_and_independent_of_the_other_component ... ok
+test infrastructure_observation::tests::each_pending_call_is_dropped_at_two_seconds ... ok
+test infrastructure_observation::tests::expired_whole_deadline_cancels_without_starting_network ... ok
+test infrastructure_observation::tests::expired_whole_deadline_discards_an_earlier_success ... ok
+test infrastructure_observation::tests::network_degrades_only_for_rejected_rows ... ok
+test infrastructure_observation::tests::production_constructor_uses_only_authenticated_selected_node_gets ... ok
+test infrastructure_observation::tests::successful_pair_sanitizes_counts_and_captures_each_completion ... ok
+test infrastructure_observation::tests::two_pending_reads_finish_in_four_seconds_without_retry ... ok
+test infrastructure_observation::tests::zero_and_missing_uptime_are_fresh_with_distinct_knowledge ... ok
+test observe::tests::cancelled_observe_discards_open_transaction_and_releases_locks_before_reuse ... ok
+test observe::tests::observe_has_no_process_capability_and_leaves_no_child_process ... ok
+test observe::tests::observe_rejection_output_never_contains_unsafe_job_material ... ok
+test observe::tests::observe_rejects_a_superuser_even_inside_the_read_only_transaction ... ok
+test observe::tests::observe_uses_select_only_role_and_audits_zero_mutating_statements ... ok
+test observe::tests::observer_role_cannot_execute_any_advisory_lock_function ... ok
+test observe::tests::server_log_parser_handles_generic_execute_names_and_fails_closed ... ok
+test pve_credentials::tests::credential_fifo_is_nonblocking_and_errors_do_not_leak_to_stderr ... ok
+test pve_credentials::tests::credential_metadata_rejects_effective_owner_mismatch_without_chown ... ok
+test pve_credentials::tests::credential_read_cap_rejects_growth_after_metadata_check ... ok
+test pve_credentials::tests::credential_rejects_missing_symlink_directory_and_exposed_permissions ... ok
+test pve_credentials::tests::credential_rejects_oversize_and_strict_json_or_token_failures ... ok
+test pve_credentials::tests::credential_valid_0600_redacts_token_and_accepts_exact_size_limit ... ok
+test pve_observation::tests::caller_cancellation_drops_the_only_inflight_read ... ok
+test pve_observation::tests::collection_deadline_drops_pending_read_at_three_seconds ... ok
+test pve_observation::tests::errors_have_fixed_status_with_no_timestamp_or_counts ... ok
+test pve_observation::tests::production_constructor_enforces_two_second_request_timeout ... ok
+test pve_observation::tests::summaries_serialize_only_classified_counts_and_unverified_coverage ... ok
+test runtime::tests::infrastructure_loop_is_immediate_ten_second_skip_and_joins_cancelled_read ... ok
+test runtime::tests::infrastructure_loop_shutdown_before_start_issues_no_request ... ok
+test runtime::tests::normal_cancellation_and_authority_loss_remain_execution_outcomes ... ok
+test runtime::tests::observation_loop_bounds_cadence_skips_missed_ticks_and_cancels_inflight_read ... ok
+test runtime::tests::panic_and_abort_join_failures_become_sanitized_operational_failure ... ok
+test runtime::tests::real_preparation_error_stays_unready_after_later_successful_sweep ... ok
+test runtime::tests::runtime_defensively_denies_observation_in_adapter_before_credential_io ... ok
+test runtime::tests::sweep_validation_fault_survives_successful_reads_and_stops_later_claims ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 33.08s
+
+     Running tests/service.rs (target/debug/deps/service-1927d7900c88499b)
+
+running 44 tests
+test http_observe_missing_credentials_fails_before_local_io ... ok
+test live_server_survives_database_failure_and_sanitizes_readiness ... ok
+test native_startup_fails_before_local_io_even_with_read_permission ... ok
+test observation_service::authenticated_service_is_visible_but_never_execution_ready_or_a_writer ... ok
+test observation_service::http_observation_remains_fresh_when_database_is_unavailable ... ok
+test observation_service::infrastructure_service::selected_node_service_is_independent_and_never_a_writer ... ok
+test observation_service::infrastructure_service::selected_node_service_stays_fresh_without_database ... ok
+test observation_service::infrastructure_service::selected_node_startup_denials_precede_owned_canaries_and_listener ... ok
+test observation_service::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test observation_service::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test observation_service::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test observation_service::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test observation_service::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test observation_service::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test observation_service::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test observation_service::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test observation_service::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test observation_service::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test observation_service::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test observation_service::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test observation_service::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test observation_service::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test observation_service::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test observation_service::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test observation_service::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test observation_service::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test observation_service::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test observation_service::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test observation_service::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test observation_service::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test observation_service::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test observation_service::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test observation_service::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test observation_service::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test observation_service::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test observation_service::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test observation_service::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test observation_service::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test observation_service::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test observation_service::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test observation_service::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test observation_service::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+test real_transport_startup_fails_before_local_io_even_with_read_permission ... ok
+test remote_pve_and_database_startup_targets_are_denied ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 51.72s
+
