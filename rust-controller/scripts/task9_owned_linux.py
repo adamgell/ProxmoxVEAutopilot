@@ -98,7 +98,8 @@ def profile_args(session, role, pg_id=None, receipt_path=None, script_path=None,
     argv = ["create", "--pull=never", "--name", "task9-" + session + "-" + role,
             "--label", LABEL + ".session=" + session, "--label", LABEL + ".role=" + role,
             "--memory", str(CAPS[role]), "--memory-swap", str(CAPS[role]),
-            "--cgroupns", "private", "--ipc", "private", "--restart", "no"]
+            "--cgroupns", "private", "--ipc", "private", "--shm-size", str(64 * 1024**2),
+            "--restart", "no"]
     if role == "pg":
         return argv + ["--platform", "linux/arm64", "--network", "none", "--tmpfs", DATA + ":" + TMPFS,
                        "-e", "POSTGRES_PASSWORD=local-linux-probe", PG_IMAGE,

@@ -42,6 +42,7 @@ class ContractTests(unittest.TestCase):
         pg = gate.profile_args("a" * 32, "pg")
         self.assertEqual(pg[pg.index("--memory") + 1], str(6 * gate.GIB))
         self.assertEqual(pg[pg.index("--memory-swap") + 1], str(6 * gate.GIB))
+        self.assertEqual(pg[pg.index("--shm-size") + 1], str(64 * 1024**2))
         self.assertIn(gate.DATA + ":" + gate.TMPFS, pg)
         self.assertNotIn("-p", pg)
         runner = gate.profile_args("a" * 32, "runner", "b" * 64, "/receipt", "/script")
