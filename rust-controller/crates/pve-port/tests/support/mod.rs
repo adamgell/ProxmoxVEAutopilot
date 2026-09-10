@@ -90,7 +90,9 @@ impl Server {
     pub fn observer(&self) -> ReqwestPveObserver {
         ReqwestPveObserver::new(
             PveObserverConfig::new(self.base.clone(), PveAccessMode::Observe, false)
-                .with_timeout(Duration::from_millis(100)),
+                // AMD64 emulation can delay loopback scheduling; keep a
+                // bounded fixture timeout without changing production config.
+                .with_timeout(Duration::from_millis(250)),
         )
         .unwrap()
     }
