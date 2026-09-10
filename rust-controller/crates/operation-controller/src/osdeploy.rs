@@ -42,6 +42,15 @@ pub enum OsDeployControllerError {
     TimedOut,
     #[error("osdeploy_admission_closed")]
     AdmissionClosed,
+    #[cfg(feature = "fixture-ipc")]
+    #[error("osdeploy_checkpoint_failed: {0}")]
+    Checkpoint(pve_port::fixture_ipc::CheckpointError),
+}
+#[cfg(feature = "fixture-ipc")]
+impl From<pve_port::fixture_ipc::CheckpointError> for OsDeployControllerError {
+    fn from(error: pve_port::fixture_ipc::CheckpointError) -> Self {
+        Self::Checkpoint(error)
+    }
 }
 use OsDeployControllerError as Error;
 impl From<OsDeployExecutionError> for Error {
@@ -426,6 +435,11 @@ impl OsDeployController {
                 )
                 .await?;
                 before_close(closed, async {
+                    #[cfg(feature = "fixture-ipc")]
+                    self.fake
+                        .controller_checkpoint(FakeControllerCheckpoint::DispatchCommitted)
+                        .await?;
+                    #[cfg(not(feature = "fixture-ipc"))]
                     self.fake
                         .controller_checkpoint(FakeControllerCheckpoint::DispatchCommitted)
                         .await;
@@ -485,6 +499,46 @@ where
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+    #[cfg(feature = "fixture-ipc")]
+    #[tokio::test]
+    async fn checkpoint_failure_and_cancellation_stop_dispatch_continuation() {
+        use pve_port::fixture_ipc::CheckpointError;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for failure in [
+            CheckpointError::Rejected,
+            CheckpointError::TimedOut,
+            CheckpointError::Unavailable,
+        ] {
+            let (_sender, mut closed) = watch::channel(false);
+            let submitted = AtomicBool::new(false);
+            let result = async {
+                before_close(&mut closed, async { Err::<(), _>(failure) }).await?;
+                submitted.store(true, Ordering::SeqCst);
+                Ok::<(), Error>(())
+            }
+            .await;
+            assert_eq!(result, Err(Error::Checkpoint(failure)));
+            assert!(!submitted.load(Ordering::SeqCst));
+        }
+        let (sender, mut closed) = watch::channel(false);
+        let submitted = AtomicBool::new(false);
+        let dispatch = async {
+            before_close(
+                &mut closed,
+                std::future::pending::<Result<(), CheckpointError>>(),
+            )
+            .await?;
+            submitted.store(true, Ordering::SeqCst);
+            Ok::<(), Error>(())
+        };
+        let close = async {
+            tokio::task::yield_now().await;
+            sender.send(true).unwrap();
+        };
+        let (result, ()) = tokio::join!(dispatch, close);
+        assert_eq!(result, Err(Error::AdmissionClosed));
+        assert!(!submitted.load(Ordering::SeqCst));
+    }
     #[test]
     fn lease_status_roundtrip_delay_consumes_budget() {
         assert_eq!(

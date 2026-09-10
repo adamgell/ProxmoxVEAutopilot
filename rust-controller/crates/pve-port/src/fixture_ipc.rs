@@ -26,13 +26,40 @@ const MAX_MESSAGE_BYTES: usize = 65_536;
 /// ```
 #[async_trait::async_trait]
 pub trait ControllerFixturePort: crate::ProvisioningFakePort {
-    async fn controller_checkpoint(&self, point: crate::FakeControllerCheckpoint);
+    async fn controller_checkpoint(
+        &self,
+        point: crate::FakeControllerCheckpoint,
+    ) -> Result<(), CheckpointError>;
+}
+
+/// Failure to obtain supervisor release never authorizes dispatch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum CheckpointError {
+    #[error("checkpoint transport unavailable")]
+    Unavailable,
+    #[error("checkpoint deadline elapsed")]
+    TimedOut,
+    #[error("checkpoint binding or state rejected")]
+    Rejected,
+}
+impl From<std::io::Error> for CheckpointError {
+    fn from(error: std::io::Error) -> Self {
+        match error.kind() {
+            std::io::ErrorKind::TimedOut => Self::TimedOut,
+            std::io::ErrorKind::InvalidData | std::io::ErrorKind::InvalidInput => Self::Rejected,
+            _ => Self::Unavailable,
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl ControllerFixturePort for crate::NativeFakePve {
-    async fn controller_checkpoint(&self, point: crate::FakeControllerCheckpoint) {
+    async fn controller_checkpoint(
+        &self,
+        point: crate::FakeControllerCheckpoint,
+    ) -> Result<(), CheckpointError> {
         crate::NativeFakePve::controller_checkpoint(self, point).await;
+        Ok(())
     }
 }
 

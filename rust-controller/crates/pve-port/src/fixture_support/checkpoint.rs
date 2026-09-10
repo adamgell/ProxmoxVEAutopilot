@@ -183,6 +183,13 @@ pub struct FixtureCheckpointClient {
     timeout: Duration,
 }
 impl FixtureCheckpointClient {
+    /// Preserve checkpoint failure categories across the sealed controller seam.
+    pub async fn controller_checkpoint(
+        &self,
+        binding: CheckpointBinding,
+    ) -> Result<(), crate::fixture_ipc::CheckpointError> {
+        self.checkpoint(binding).await.map_err(Into::into)
+    }
     pub fn new(socket: PathBuf, timeout: Duration) -> io::Result<Self> {
         if timeout.is_zero() || timeout > Duration::from_secs(5) {
             return Err(invalid());
