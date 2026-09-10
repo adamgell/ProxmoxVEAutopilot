@@ -146,7 +146,7 @@ def owned(row, session, role, ident, image, pg_id=None, binds=None):
         require(all(m["Type"] == "tmpfs" and m["Destination"] == DATA
                     and m["RW"] is True for m in row["Mounts"]))
     else:
-        require(host["NetworkMode"] == "container:" + pg_id and not host["Tmpfs"])
+        require(host["NetworkMode"] == "container:" + pg_id and not host.get("Tmpfs", {}))
         actual = {(m["Source"], m["Destination"]) for m in row["Mounts"]}
         require(actual == set(binds) and len(row["Mounts"]) == len(binds))
         require(all(m["Type"] == "bind" and m["RW"] is False for m in row["Mounts"]))
