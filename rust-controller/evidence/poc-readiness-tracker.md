@@ -86,6 +86,8 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 
 - Commit `8707163` fixes the parallel fixture transport flake: accepted Unix sockets inherited listener nonblocking mode, so bounded reads could see `WouldBlock` before an async client finished sending. Accepted streams now switch explicitly to blocking mode while retaining deadlines and frame limits. Thirty consecutive 16-thread feature runs passed; updated feature serial/parallel and default parallel suites, formatting, and strict Clippy passed. This qualifies macOS framing reliability; latest-source Linux and controller/process takeover remain open.
 
+- Commit `c296ce1` completes the populated provisioning-read proof: source config/media round trips and invalid node/VM, timestamp, duplicate/cross-storage media, and zero-error-timestamp cases are covered. Daemon/client tests prove missing-seed unavailable behavior, all six identity fields, startup immutability, two restarts, corrupt replacement failure, and zero mutation attempts. Feature library (30), daemon (11 + 1 ignored), populated schema (2), and default daemon (8 + 1 ignored) tests, strict Clippy, and formatting pass. Target config/power remain explicit errors; no provisioning capability or controller round-trip is claimed.
+
 ## Current resource ruling
 
 After the resource hold, the user reported freeing over100GiB. Main verified113,433,292KiB available on resumption and113,030,064KiB at the storage-admission review checkpoint. The local8GiB guard is cleared; no further cleanup was performed by this worker. These are point-in-time checks, not a promise of future headroom. Recheck the separate18GiB Linux artifact-start guard before that later build. Historical cleanup evidence below remains unchanged.
