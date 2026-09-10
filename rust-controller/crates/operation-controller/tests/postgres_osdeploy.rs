@@ -35,7 +35,7 @@ async fn dispatched_unknown(s: &Scenario) -> postgres_store::LeaseGrant {
         .begin_osdeploy_pve_dispatch(&ready.grant, ready.revision, ready.event, &ready.request)
         .await
         .unwrap();
-    let receipt = permit.submit_fake_once(&s.fake).await.unwrap();
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
     scheduler
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
