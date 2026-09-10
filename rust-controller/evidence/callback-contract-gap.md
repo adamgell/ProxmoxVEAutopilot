@@ -14,7 +14,7 @@ Scope: local Rust controller PoC; production `192.168.2.4` and real Proxmox rema
 
 The next source phase must first restore or approve the authoritative callback contract, including session identity/role/label/credential issuance, callback replay/conflict/late-result semantics, guest-action exposure and result binding, exact timeout serialization, truthful grace activation, and service shutdown/drain behavior. Only then should family-private constructors, migration rows, HTTP handlers, or stage reachability be implemented.
 
-Adding a guessed callback API now would create a second, potentially incompatible execution path and would invalidate the existing strict-readiness claims. This is therefore a specification-availability gap, not permission to touch production or a reason to weaken the sixteen-stage requirement.
+Adding a guessed callback API now would create a second, potentially incompatible execution path and would invalidate the existing strict-readiness claims. This is therefore a specification-availability gap, not permission to touch production or a reason to weaken the sixteen-stage requirement. Independent-process recovery of the already reachable Clone → DiskCapacity → ConfigurePe prefix may proceed without callback changes and is the next bounded proof target.
 
 ## Bounded identity slice implemented
 
