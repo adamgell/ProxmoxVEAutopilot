@@ -8,7 +8,9 @@ mod provisioning_reads;
 pub use clone_reads::{
     FixtureCloneReads, SeedBridge, SeedIdentity, SeedNode, SeedRead, SeedReadError, SeedStorage,
 };
-pub use provisioning_reads::{FixtureProvisioningIdentity, FixtureProvisioningReads, SeedConfig};
+pub use provisioning_reads::{
+    FixtureProvisioningIdentity, FixtureProvisioningReads, SeedConfig, SeedPower,
+};
 mod durable_fixture_log;
 mod fixture_daemon;
 mod inventory_read;

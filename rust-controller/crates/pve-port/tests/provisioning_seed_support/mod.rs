@@ -35,11 +35,22 @@ pub fn populated() -> FixtureProvisioningReads {
         },
         source_power: SeedRead::Observed {
             observed_unix_ms: observed_unix_ms + 2,
-            value: PowerState::Stopped,
+            value: SeedPower {
+                power: PowerState::Stopped,
+                locked: false,
+            },
         },
         target_power: SeedRead::Error {
             observed_unix_ms: observed_unix_ms + 3,
             error: SeedReadError::Forbidden,
+        },
+        source_coverage: SeedRead::Observed {
+            observed_unix_ms,
+            value: ProvisioningCoverageV1::Complete,
+        },
+        target_coverage: SeedRead::Observed {
+            observed_unix_ms,
+            value: ProvisioningCoverageV1::Complete,
         },
         deployment_media: SeedRead::Observed {
             observed_unix_ms,
@@ -62,7 +73,10 @@ pub fn target_present() -> FixtureProvisioningReads {
     };
     seed.target_power = SeedRead::Observed {
         observed_unix_ms: support::time().timestamp_millis() as u64 + 4,
-        value: PowerState::Running,
+        value: SeedPower {
+            power: PowerState::Running,
+            locked: false,
+        },
     };
     seed
 }

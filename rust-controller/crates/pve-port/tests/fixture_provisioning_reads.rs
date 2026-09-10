@@ -4,10 +4,74 @@ use pve_port::fixture_support::FixtureProvisioningReads;
 use serde_json::json;
 
 #[test]
+fn lock_and_coverage_are_explicit_strict_and_never_upgraded() {
+    use pve_port::{ProvisioningCoverageV1, fixture_support::SeedRead};
+    let seed = provisioning_seed_support::target_present();
+    let value = serde_json::to_value(&seed).unwrap();
+    for pointer in [
+        "/source_power/value/locked",
+        "/target_power/value/locked",
+        "/source_coverage/value",
+        "/target_coverage/value",
+    ] {
+        for replacement in [json!(null), json!("invalid"), json!(1)] {
+            let mut invalid = value.clone();
+            *invalid.pointer_mut(pointer).unwrap() = replacement;
+            assert!(
+                FixtureProvisioningReads::decode(
+                    &serde_json::to_vec(&invalid).unwrap(),
+                    &seed.identity
+                )
+                .is_err()
+            );
+        }
+    }
+    let mut missing = value.clone();
+    missing["source_power"]["value"]
+        .as_object_mut()
+        .unwrap()
+        .remove("locked");
+    assert!(
+        FixtureProvisioningReads::decode(&serde_json::to_vec(&missing).unwrap(), &seed.identity)
+            .is_err()
+    );
+    for family in ["source_coverage", "target_coverage"] {
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove(family);
+        assert!(
+            FixtureProvisioningReads::decode(
+                &serde_json::to_vec(&missing).unwrap(),
+                &seed.identity
+            )
+            .is_err()
+        );
+        let mut partial = value.clone();
+        partial[family]["value"] = json!("partial");
+        let decoded = FixtureProvisioningReads::decode(
+            &serde_json::to_vec(&partial).unwrap(),
+            &seed.identity,
+        )
+        .unwrap();
+        let read = if family == "source_coverage" {
+            decoded.source_coverage
+        } else {
+            decoded.target_coverage
+        };
+        assert!(matches!(
+            read,
+            SeedRead::Observed {
+                value: ProvisioningCoverageV1::Partial,
+                ..
+            }
+        ));
+    }
+}
+
+#[test]
 fn target_presence_and_absence_keep_independent_power_observations() {
     use pve_port::{
         PowerState,
-        fixture_support::{SeedConfig, SeedRead, SeedReadError},
+        fixture_support::{SeedConfig, SeedPower, SeedRead, SeedReadError},
     };
     for seed in [
         provisioning_seed_support::target_present(),
@@ -20,7 +84,10 @@ fn target_presence_and_absence_keep_independent_power_observations() {
         assert!(matches!(
             decoded.source_power,
             SeedRead::Observed {
-                value: PowerState::Stopped,
+                value: SeedPower {
+                    power: PowerState::Stopped,
+                    locked: false
+                },
                 ..
             }
         ));
@@ -33,7 +100,10 @@ fn target_presence_and_absence_keep_independent_power_observations() {
                 assert!(matches!(
                     decoded.target_power,
                     SeedRead::Observed {
-                        value: PowerState::Running,
+                        value: SeedPower {
+                            power: PowerState::Running,
+                            locked: false
+                        },
                         ..
                     }
                 ));

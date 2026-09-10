@@ -29,6 +29,33 @@ use uuid::Uuid;
 mod provisioning_seed_support;
 
 #[cfg(feature = "fixture-ipc")]
+#[test]
+fn missing_lock_or_invalid_coverage_prevents_daemon_startup() {
+    for field in ["locked", "coverage"] {
+        let mut daemon = Daemon::start();
+        daemon.child.kill().unwrap();
+        daemon.child.wait().unwrap();
+        daemon.clear_stale_sockets().unwrap();
+        let mut seed = serde_json::to_value(provisioning_seed_support::target_present()).unwrap();
+        if field == "locked" {
+            seed["source_power"]["value"]
+                .as_object_mut()
+                .unwrap()
+                .remove("locked");
+        } else {
+            seed["target_coverage"]["value"] = serde_json::json!("unknown");
+        }
+        fs::write(
+            daemon.directory.join("provisioning_reads.json"),
+            serde_json::to_vec(&seed).unwrap(),
+        )
+        .unwrap();
+        daemon.child = Daemon::spawn(&daemon.directory);
+        daemon.await_failure();
+    }
+}
+
+#[cfg(feature = "fixture-ipc")]
 #[tokio::test]
 async fn target_presence_and_power_survive_restart_without_mutation() {
     use pve_port::fixture_support::FixtureReadClient;

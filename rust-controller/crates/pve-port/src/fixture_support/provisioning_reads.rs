@@ -1,6 +1,8 @@
 //! Historical supervisor facts. Missing facts never imply absence or stopped power.
 use super::SeedRead;
-use crate::{PowerState, ProvisioningMediaInventoryV1, ProvisioningVmConfigV1};
+use crate::{
+    PowerState, ProvisioningCoverageV1, ProvisioningMediaInventoryV1, ProvisioningVmConfigV1,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::File,
@@ -27,13 +29,21 @@ pub enum SeedConfig {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct SeedPower {
+    pub power: PowerState,
+    pub locked: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FixtureProvisioningReads {
     pub version: u8,
     pub identity: FixtureProvisioningIdentity,
     pub source_config: SeedRead<SeedConfig>,
     pub target_config: SeedRead<SeedConfig>,
-    pub source_power: SeedRead<PowerState>,
-    pub target_power: SeedRead<PowerState>,
+    pub source_power: SeedRead<SeedPower>,
+    pub target_power: SeedRead<SeedPower>,
+    pub source_coverage: SeedRead<ProvisioningCoverageV1>,
+    pub target_coverage: SeedRead<ProvisioningCoverageV1>,
     pub deployment_media: SeedRead<ProvisioningMediaInventoryV1>,
     pub driver_media: SeedRead<ProvisioningMediaInventoryV1>,
 }
@@ -115,6 +125,8 @@ impl FixtureProvisioningReads {
             })
             || !valid(&seed.source_power, |_, _| true)
             || !valid(&seed.target_power, |_, _| true)
+            || !valid(&seed.source_coverage, |_, _| true)
+            || !valid(&seed.target_coverage, |_, _| true)
             || !valid(&seed.deployment_media, media)
             || !valid(&seed.driver_media, media)
         {
@@ -154,7 +166,7 @@ mod tests {
         };
         let error =
             serde_json::json!({"state":"error","observed_unix_ms":123,"error":"unavailable"});
-        let value = serde_json::json!({"version":1,"identity":identity,"source_config":error,"target_config":error,"source_power":error,"target_power":error,"deployment_media":error,"driver_media":error});
+        let value = serde_json::json!({"version":1,"identity":identity,"source_config":error,"target_config":error,"source_power":error,"target_power":error,"source_coverage":error,"target_coverage":error,"deployment_media":error,"driver_media":error});
         let bytes = serde_json::to_vec(&value).unwrap();
         let decoded = FixtureProvisioningReads::decode(&bytes, &identity).unwrap();
         assert!(matches!(
