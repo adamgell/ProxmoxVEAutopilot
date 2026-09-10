@@ -149,15 +149,20 @@ async fn publish_clone_outcome(
 /// Only the supervisor observes the committed request and releases its exact digest.
 #[tokio::test]
 async fn fresh_controller_late_clone_records_exact_durable_receipt() {
-    fresh_controller_clone(false).await;
+    fresh_controller_clone(false, false).await;
 }
 
 #[tokio::test]
 async fn fresh_controller_clone_reaches_satisfied_from_supervisor_publication() {
-    fresh_controller_clone(true).await;
+    fresh_controller_clone(true, false).await;
 }
 
-async fn fresh_controller_clone(publish_outcome: bool) {
+#[tokio::test]
+async fn fresh_controller_clone_then_disk_capacity_reaches_satisfied() {
+    fresh_controller_clone(true, true).await;
+}
+
+async fn fresh_controller_clone(publish_outcome: bool, resize_after: bool) {
     let s = Scenario::new(300, true).await;
     let operation = s.ids.operation(osdeploy_adapter::OsDeployStage::Clone);
     let fixture_id = controller_domain::RunId::new().as_uuid();
@@ -505,8 +510,248 @@ async fn fresh_controller_clone(publish_outcome: bool) {
         .close_and_drain(Duration::from_secs(1))
         .await
         .unwrap();
+    if resize_after {
+        fresh_resize_after_clone(
+            &s,
+            &directory,
+            fixture_id,
+            &envelope,
+            effect.receipt().unwrap(),
+            &reads,
+            &infrastructure,
+            &source,
+        )
+        .await;
+    }
     daemon.join().unwrap();
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fresh_resize_after_clone(
+    s: &Scenario,
+    directory: &std::path::Path,
+    fixture_id: sqlx::types::Uuid,
+    predecessor: &FixtureCloneRequest,
+    original_receipt: &[u8],
+    reads: &FixtureProvisioningReadsV2,
+    infrastructure: &FixtureCloneReads,
+    source: &ProvisioningVmConfigV1,
+) {
+    use serde_json::json;
+    let operation = s
+        .ids
+        .operation(osdeploy_adapter::OsDeployStage::DiskCapacity);
+    let supervisor =
+        FixtureCheckpointClient::new(directory.join("supervisor.sock"), Duration::from_secs(2))
+            .unwrap();
+    let generation = supervisor
+        .stage_request(StageCheckpointRequest::Status)
+        .await
+        .unwrap()
+        .generation;
+    let owner = controller_domain::RunId::new().as_uuid();
+    let port = FixtureProvisioningPort::new_late(
+        directory.join("client.sock"),
+        Duration::from_secs(2),
+        FixtureReadIdentity {
+            fixture_id,
+            operation: operation.as_uuid(),
+            node: "node-a".into(),
+            source_vmid: 900,
+            target_vmid: 901,
+        },
+    )
+    .unwrap()
+    .with_late_resize_after_legacy_clone(
+        FixtureCheckpointClient::new(directory.join("client.sock"), Duration::from_secs(2))
+            .unwrap(),
+        generation,
+        owner,
+        predecessor.clone(),
+        original_receipt.to_vec(),
+    )
+    .unwrap();
+    let controller = Arc::new(
+        operation_controller::OsDeployController::new_fixture(
+            s.db.store.clone(),
+            s.db.scheduler(),
+            Arc::new(port),
+            1,
+        )
+        .unwrap(),
+    );
+    controller.open_send_admission().await.unwrap();
+    let worker = tokio::spawn({
+        let controller = controller.clone();
+        async move { controller.run_osdeploy_once(operation).await }
+    });
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let committed = loop {
+        let operation = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+        if operation.dispatch().is_some() {
+            break operation;
+        }
+        assert!(
+            !worker.is_finished(),
+            "resize ended before generated dispatch: {:?}",
+            worker.await
+        );
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    };
+    let dispatch = committed.dispatch().unwrap();
+    let ProvisioningMutationRequestV1::GrowDisk(grow) = dispatch.request() else {
+        panic!("GrowDisk required")
+    };
+    assert!(
+        predecessor
+            .request()
+            .binding()
+            .same_operation_attempt(grow.predecessor_binding())
+    );
+    assert_eq!(grow.predecessor_plan(), predecessor.request().plan());
+    let request = FixtureStageRequest::new(fixture_id, dispatch.request().clone()).unwrap();
+    let identity = FixtureStageIdentity {
+        operation: operation.as_uuid(),
+        stage: FixtureLedgerStage::DiskCapacity,
+        attempt: committed.attempt_id().unwrap().as_uuid(),
+        generation,
+        owner,
+        request_sha256: request.request_sha256(),
+    };
+    identity.validate_request(&request).unwrap();
+    assert!(
+        supervisor
+            .stage_request(StageCheckpointRequest::Arm {
+                identity: identity.clone(),
+                timeout_ms: 3000
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    loop {
+        let state = supervisor
+            .stage_request(StageCheckpointRequest::Status)
+            .await
+            .unwrap();
+        if state.phase == CheckpointPhase::Entered {
+            assert_eq!(state.identity, Some(identity.clone()));
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let reader =
+        FixtureReadClient::new(directory.join("client.sock"), Duration::from_secs(1)).unwrap();
+    assert_eq!(reader.status().await.unwrap().effects, 1);
+    assert!(committed.receipt().is_none());
+    let mut tx = s.db.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE rust_controller.journal_events IN SHARE MODE")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert!(
+        supervisor
+            .stage_request(StageCheckpointRequest::AuthorizeRelease {
+                identity: identity.clone(),
+                request: request.encode().unwrap(),
+                committed_request: request.encode().unwrap(),
+                after: VmState {
+                    disk_bytes: request
+                        .request()
+                        .plan()
+                        .expected()
+                        .effective_capacity_bytes(),
+                    pe_configured: false
+                }
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'INSERT INTO rust_controller.journal_events%osdeploy:receipt%')").fetch_one(&s.db.pool).await.unwrap();
+            if waiting { break; }
+            assert!(!worker.is_finished(), "resize ended before receipt barrier");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }).await.unwrap();
+    async fn exchange(socket: &std::path::Path, value: serde_json::Value) -> serde_json::Value {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::UnixStream::connect(socket).await.unwrap();
+        let bytes = serde_json::to_vec(&value).unwrap();
+        stream.write_u32(bytes.len() as u32).await.unwrap();
+        stream.write_all(&bytes).await.unwrap();
+        let size = stream.read_u32().await.unwrap();
+        assert!(size < 200_000);
+        let mut bytes = vec![0; size as usize];
+        stream.read_exact(&mut bytes).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+    let effect = exchange(
+        &directory.join("client.sock"),
+        json!({"command":"accepted_stage_effect","identity":identity}),
+    )
+    .await;
+    let receipt_bytes: Vec<u8> =
+        serde_json::from_value(effect["accepted_effect"]["receipt"].clone()).unwrap();
+    let receipt = request.decode_receipt(&receipt_bytes).unwrap();
+    let MutationReceipt::Task(upid) = receipt.receipt() else {
+        panic!("resize task")
+    };
+    assert_eq!(upid.worker_type(), "resize");
+    let original = predecessor.decode_receipt(original_receipt).unwrap();
+    let MutationReceipt::Task(clone_upid) = original.receipt() else {
+        panic!()
+    };
+    let mut observation =
+        clone_outcome_document(reads, infrastructure, source, predecessor, clone_upid);
+    observation["provisioning"]["identity"]["operation"] = json!(operation.as_uuid());
+    observation["provisioning"]["identity"]["request_sha256"] = json!(request.request_sha256());
+    observation["provisioning"]["target_config"]["value"]["config"]["primary_disk"]["capacity_bytes"] = json!(
+        request
+            .request()
+            .plan()
+            .expected()
+            .effective_capacity_bytes()
+    );
+    observation["provisioning"]["target_config"]["value"]["config"]["digest"] =
+        json!("c".repeat(64));
+    for vm in observation["inventory"]["cluster_inventory"]["value"]
+        .as_array_mut()
+        .unwrap()
+    {
+        if vm["vmid"] == 901 {
+            vm["config_sha256"] = json!("c".repeat(64));
+        }
+    }
+    observation["task"]["identity"]["operation"] = json!(operation.as_uuid());
+    observation["task"]["identity"]["request_sha256"] = json!(request.request_sha256());
+    observation["task"]["identity"]["upid"] = json!(upid.to_string());
+    retime_outcome(
+        &mut observation,
+        chrono::Utc::now().timestamp_millis() as u64,
+    );
+    let publication = exchange(&directory.join("supervisor.sock"), json!({"command":"publish_stage_post_dispatch","identity":identity,"request":serde_json::from_slice::<serde_json::Value>(&request.encode().unwrap()).unwrap(),"observation":observation})).await;
+    assert!(publication["daemon_generation"].is_string());
+    tx.commit().await.unwrap();
+    assert_eq!(
+        worker.await.unwrap().unwrap(),
+        postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Satisfied)
+    );
+    let durable = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+    assert_eq!(durable.dispatch().unwrap().request(), dispatch.request());
+    assert_eq!(durable.receipt().unwrap().receipt(), receipt.receipt());
+    let status = reader.status().await.unwrap();
+    assert_eq!((status.attempts, status.effects), (2, 2));
+    assert!(s.fake.recorded_provisioning_submissions().is_empty());
+    controller
+        .close_and_drain(Duration::from_secs(1))
+        .await
+        .unwrap();
 }
 
 /// Fresh controller admission must not convert an unseeded IPC world into

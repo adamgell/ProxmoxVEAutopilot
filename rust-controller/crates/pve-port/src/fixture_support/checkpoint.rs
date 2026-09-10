@@ -306,6 +306,23 @@ impl FixtureCheckpointClient {
     pub async fn stage_checkpoint(&self, identity: &super::FixtureStageIdentity) -> io::Result<()> {
         identity.validate()?;
         tokio::time::timeout(self.timeout, async {
+            // A fresh controller creates the exact attempt before the supervisor
+            // can observe its committed dispatch and arm that identity.
+            loop {
+                let state = self
+                    .stage_request(super::StageCheckpointRequest::Status)
+                    .await?;
+                if state.generation != identity.generation {
+                    return Err(invalid());
+                }
+                match state.phase {
+                    CheckpointPhase::Idle if state.identity.is_none() => {
+                        tokio::time::sleep(Duration::from_millis(5)).await
+                    }
+                    CheckpointPhase::Armed if state.identity.as_ref() == Some(identity) => break,
+                    _ => return Err(invalid()),
+                }
+            }
             let entered = self
                 .stage_request(super::StageCheckpointRequest::Enter {
                     identity: identity.clone(),
