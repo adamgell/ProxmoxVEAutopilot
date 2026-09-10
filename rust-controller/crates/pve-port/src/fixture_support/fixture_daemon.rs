@@ -1,4 +1,4 @@
-//! Local test daemon skeleton. Separate sockets separate protocol capabilities;
+//! Local fixture daemon. Separate sockets separate protocol capabilities;
 //! filesystem ownership is the trust boundary, not an authentication claim.
 use super::durable_fixture_log::{FixtureLog, VmState};
 use serde::{Deserialize, Serialize};

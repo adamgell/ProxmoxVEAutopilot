@@ -1,4 +1,4 @@
-#[path = "support/durable_fixture_log.rs"]
+#[path = "../src/fixture_support/durable_fixture_log.rs"]
 mod durable_fixture_log;
 
 use durable_fixture_log::FixtureLog;

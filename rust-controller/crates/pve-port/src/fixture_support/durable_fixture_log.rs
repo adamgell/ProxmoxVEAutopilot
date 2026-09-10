@@ -1,5 +1,5 @@
 //! Local fixture substrate only. The supervisor must own this file exclusively.
-//! No controller or production transport imports this module.
+//! Available only to local tests and the opt-in fixture support module.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{

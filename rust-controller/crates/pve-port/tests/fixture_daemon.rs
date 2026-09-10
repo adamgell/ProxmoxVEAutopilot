@@ -1,9 +1,16 @@
 #![cfg(unix)]
 #[allow(dead_code)]
-#[path = "support/durable_fixture_log.rs"]
+#[path = "../src/fixture_support/durable_fixture_log.rs"]
 mod durable_fixture_log;
-#[path = "support/fixture_daemon.rs"]
+#[cfg(not(feature = "fixture-ipc"))]
+#[path = "../src/fixture_support/fixture_daemon.rs"]
 mod fixture_daemon;
+#[cfg(not(feature = "fixture-ipc"))]
+use durable_fixture_log::VmState;
+#[cfg(feature = "fixture-ipc")]
+use pve_port::fixture_support as fixture_daemon;
+#[cfg(feature = "fixture-ipc")]
+use pve_port::fixture_support::VmState;
 
 use std::{
     fs,
@@ -274,7 +281,7 @@ fn effects_commit_replay_and_reject_duplicates_over_ipc() {
     assert_eq!(accepted.effects, 1);
     assert_eq!(
         accepted.vm,
-        Some(durable_fixture_log::VmState {
+        Some(VmState {
             disk_bytes: 80,
             pe_configured: false
         })
@@ -313,7 +320,7 @@ fn effects_commit_replay_and_reject_duplicates_over_ipc() {
     assert_eq!(updated.effects, 2);
     assert_eq!(
         updated.vm,
-        Some(durable_fixture_log::VmState {
+        Some(VmState {
             disk_bytes: 120,
             pe_configured: true
         })
