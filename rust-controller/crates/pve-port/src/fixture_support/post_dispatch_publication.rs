@@ -30,10 +30,28 @@ pub struct FixturePostDispatchPublication {
     pub observation: FixturePostDispatchV1,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixtureSynchronousPublication {
+    pub daemon_generation: Uuid,
+    pub accepted_unix_ms: u64,
+    pub published_unix_ms: u64,
+    pub observation: super::FixtureSynchronousPostDispatchV1,
+}
+
 #[derive(Deserialize)]
 #[allow(clippy::enum_variant_names)] // Wire command names share their protocol namespace.
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Command {
+    PublishSynchronousStage {
+        identity: super::FixtureStageIdentity,
+        request: serde_json::Value,
+        observation: Box<super::FixtureSynchronousPostDispatchV1>,
+    },
+    SynchronousStage {
+        identity: super::FixtureStageIdentity,
+        request: serde_json::Value,
+    },
     PublishPostDispatch {
         request: serde_json::Value,
         observation: Box<FixturePostDispatchV1>,
@@ -57,6 +75,7 @@ pub(crate) struct Publications {
     generation: Uuid,
     accepted: BTreeMap<(Uuid, String), u64>,
     published: BTreeMap<(Uuid, String), FixturePostDispatchPublication>,
+    synchronous: BTreeMap<(Uuid, String), FixtureSynchronousPublication>,
 }
 
 impl Publications {
@@ -79,6 +98,7 @@ impl Publications {
             generation: Uuid::now_v7(),
             accepted: BTreeMap::new(),
             published: BTreeMap::new(),
+            synchronous: BTreeMap::new(),
         }
     }
 
@@ -105,6 +125,16 @@ impl Publications {
         directory: &Path,
     ) -> io::Result<Vec<u8>> {
         let (value, observation, stage) = match command {
+            Command::PublishSynchronousStage {
+                identity,
+                request,
+                observation,
+            } if supervisor => {
+                return self.synchronous(identity, request, Some(*observation), log, directory);
+            }
+            Command::SynchronousStage { identity, request } if !supervisor => {
+                return self.synchronous(identity, request, None, log, directory);
+            }
             Command::PublishPostDispatch {
                 request,
                 observation,
@@ -213,5 +243,63 @@ impl Publications {
             self.published.insert(key.clone(), publication);
         }
         Ok(serde_json::to_vec(&self.published.get(&key))?)
+    }
+
+    fn synchronous(
+        &mut self,
+        identity: super::FixtureStageIdentity,
+        value: serde_json::Value,
+        observation: Option<super::FixtureSynchronousPostDispatchV1>,
+        log: &FixtureLog,
+        directory: &Path,
+    ) -> io::Result<Vec<u8>> {
+        let request = crate::fixture_ipc::FixtureStageRequest::decode(&serde_json::to_vec(&value)?)
+            .map_err(|_| invalid())?;
+        identity.validate_request(&request)?;
+        if identity.stage != super::FixtureLedgerStage::ConfigurePe {
+            return Err(invalid());
+        }
+        let key = (identity.operation, identity.request_sha256.clone());
+        let effect = log
+            .accepted_stage_effect(key.0, &key.1, identity.ledger_binding())?
+            .ok_or_else(invalid)?;
+        if let Some(observation) = observation {
+            let accepted = *self.accepted.get(&key).ok_or_else(invalid)?;
+            let published = now()?;
+            let observation = super::FixtureSynchronousPostDispatchV1::decode(
+                &serde_json::to_vec(&observation)?,
+                &request,
+                effect.receipt().ok_or_else(invalid)?,
+                accepted,
+                published,
+            )?;
+            if self.synchronous.contains_key(&key) || self.published.contains_key(&key) {
+                return Err(invalid());
+            }
+            let publication = FixtureSynchronousPublication {
+                daemon_generation: self.generation,
+                accepted_unix_ms: accepted,
+                published_unix_ms: published,
+                observation,
+            };
+            let bytes = serde_json::to_vec(
+                &serde_json::json!({"identity":identity,"request":value,"receipt":effect.receipt(),"publication":publication}),
+            )?;
+            let destination = directory.join(format!(
+                "synchronous-{}-{}-{}.json",
+                self.generation, key.0, key.1
+            ));
+            let temporary = directory.join(format!("synchronous-{}.tmp", Uuid::now_v7()));
+            let mut file = fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temporary)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            fs::rename(&temporary, destination)?;
+            fs::File::open(directory)?.sync_all()?;
+            self.synchronous.insert(key.clone(), publication);
+        }
+        Ok(serde_json::to_vec(&self.synchronous.get(&key))?)
     }
 }

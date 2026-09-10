@@ -311,6 +311,248 @@ fn stage_resize_observations_require_exact_digest_and_resize_receipt() {
     assert!(FixturePostDispatchV1::decode_stage(&bytes, &configure, &synchronous, at, at).is_err());
 }
 
+fn synchronous_sample(request: &pve_port::fixture_ipc::FixtureStageRequest, at: u64) -> Value {
+    let (mut sample, _, _, _) = sample();
+    sample.provisioning.identity.operation = request.request().binding().operation_id().as_uuid();
+    sample.provisioning.identity.request_sha256 = request.request_sha256();
+    let mut document =
+        json!({"version":1,"provisioning":sample.provisioning,"inventory":sample.inventory});
+    retime(&mut document, at);
+    document
+}
+
+#[test]
+fn synchronous_contract_requires_configure_receipt_and_rejects_task_fields() {
+    use pve_port::fixture_ipc::FixtureStageRequest;
+    let episodes = provisioning_support::chain();
+    let request =
+        FixtureStageRequest::new(Uuid::from_u128(1), episodes[2].request.clone()).unwrap();
+    let receipt = request
+        .encode_receipt(3, MutationReceipt::SynchronousAccepted)
+        .unwrap();
+    let at = time().timestamp_millis() as u64;
+    let document = synchronous_sample(&request, at);
+    let bytes = serde_json::to_vec(&document).unwrap();
+    FixtureSynchronousPostDispatchV1::decode(&bytes, &request, &receipt, at, at).unwrap();
+    for field in ["task", "upid"] {
+        let mut wrong = document.clone();
+        wrong[field] = json!(null);
+        assert!(
+            FixtureSynchronousPostDispatchV1::decode(
+                &serde_json::to_vec(&wrong).unwrap(),
+                &request,
+                &receipt,
+                at,
+                at
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        FixtureSynchronousPostDispatchV1::decode(&bytes, &request, &receipt, at + 1, at + 1)
+            .is_err()
+    );
+    let resize =
+        FixtureStageRequest::new(request.fixture_id(), episodes[1].request.clone()).unwrap();
+    let resize_receipt = resize
+        .encode_receipt(
+            2,
+            MutationReceipt::Task(
+                Upid::parse("UPID:pve-test:00000002:00000001:00000001:resize:101:fake@pve:")
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    assert!(
+        FixtureSynchronousPostDispatchV1::decode(&bytes, &resize, &resize_receipt, at, at).is_err()
+    );
+    let mut wrong = document;
+    wrong["provisioning"]["identity"]["request_sha256"] = json!("a".repeat(64));
+    assert!(
+        FixtureSynchronousPostDispatchV1::decode(
+            &serde_json::to_vec(&wrong).unwrap(),
+            &request,
+            &receipt,
+            at,
+            at
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn synchronous_configure_publication_requires_resize_and_invalidates_on_restart() {
+    use pve_port::fixture_ipc::FixtureStageRequest;
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        time::{Duration, Instant},
+    };
+    let directory = std::path::PathBuf::from("/tmp").join(format!("sync-pd-{}", Uuid::now_v7()));
+    fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let episodes = provisioning_support::chain();
+    let mut accepted: Vec<(FixtureStageIdentity, FixtureStageRequest, Vec<u8>)> = Vec::new();
+    let mut final_publication = None;
+    for restart in [false, true] {
+        if restart {
+            fs::remove_file(directory.join("client.sock")).unwrap();
+            fs::remove_file(directory.join("supervisor.sock")).unwrap();
+        }
+        let path = directory.clone();
+        let daemon = std::thread::spawn(move || run(&path, Duration::from_secs(5)).unwrap());
+        let client = directory.join("client.sock");
+        let control = directory.join("supervisor.sock");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !control.exists() {
+            assert!(Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let reader = FixtureReadClient::new(client.clone(), Duration::from_secs(1)).unwrap();
+        if restart {
+            let (identity, request, receipt) = &accepted[2];
+            assert!(
+                reader
+                    .synchronous_stage_post_dispatch(identity, request, receipt)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                wire(&control, final_publication.clone().unwrap())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(reader.status().await.unwrap().effects, 3);
+        } else {
+            let supervisor =
+                FixtureCheckpointClient::new(control.clone(), Duration::from_secs(1)).unwrap();
+            let worker =
+                FixtureCheckpointClient::new(client.clone(), Duration::from_secs(1)).unwrap();
+            let generation = supervisor
+                .stage_request(StageCheckpointRequest::Status)
+                .await
+                .unwrap()
+                .generation;
+            for (index, episode) in episodes.iter().take(3).enumerate() {
+                let request =
+                    FixtureStageRequest::new(Uuid::from_u128(1), episode.request.clone()).unwrap();
+                let identity = FixtureStageIdentity {
+                    operation: request.request().binding().operation_id().as_uuid(),
+                    stage: [
+                        FixtureLedgerStage::Clone,
+                        FixtureLedgerStage::DiskCapacity,
+                        FixtureLedgerStage::ConfigurePe,
+                    ][index],
+                    attempt: request.request().binding().attempt_id().as_uuid(),
+                    generation,
+                    owner: Uuid::now_v7(),
+                    request_sha256: request.request_sha256(),
+                };
+                assert!(
+                    supervisor
+                        .stage_request(StageCheckpointRequest::Arm {
+                            identity: identity.clone(),
+                            timeout_ms: 5000
+                        })
+                        .await
+                        .unwrap()
+                        .ok
+                );
+                assert!(
+                    worker
+                        .stage_request(StageCheckpointRequest::Enter {
+                            identity: identity.clone()
+                        })
+                        .await
+                        .unwrap()
+                        .ok
+                );
+                assert!(
+                    supervisor
+                        .stage_request(StageCheckpointRequest::AuthorizeRelease {
+                            identity: identity.clone(),
+                            request: request.encode().unwrap(),
+                            committed_request: request.encode().unwrap(),
+                            after: VmState {
+                                disk_bytes: if index == 0 {
+                                    request
+                                        .request()
+                                        .plan()
+                                        .expected()
+                                        .template_capacity_bytes()
+                                } else {
+                                    request
+                                        .request()
+                                        .plan()
+                                        .expected()
+                                        .effective_capacity_bytes()
+                                },
+                                pe_configured: index == 2
+                            }
+                        })
+                        .await
+                        .unwrap()
+                        .ok
+                );
+                let mut command = json!({"command":"stage_late","binding":identity,"request":serde_json::from_slice::<Value>(&request.encode().unwrap()).unwrap()});
+                if index > 0 {
+                    assert_eq!(wire(&client, command.clone()).await.unwrap()["ok"], false);
+                    let (prior_identity, prior_request, _) = &accepted[index - 1];
+                    command["predecessor"] = json!([
+                        prior_identity,
+                        serde_json::from_slice::<Value>(&prior_request.encode().unwrap()).unwrap()
+                    ]);
+                }
+                let bytes =
+                    serde_json::to_vec(&wire(&client, command.clone()).await.unwrap()).unwrap();
+                let receipt = request.decode_receipt(&bytes).unwrap();
+                assert_eq!(wire(&client, command).await.unwrap()["ok"], false);
+                if index == 2 {
+                    assert_eq!(receipt.receipt(), &MutationReceipt::SynchronousAccepted);
+                    let document =
+                        synchronous_sample(&request, chrono::Utc::now().timestamp_millis() as u64);
+                    let publish = json!({"command":"publish_synchronous_stage","identity":identity,"request":serde_json::from_slice::<Value>(&request.encode().unwrap()).unwrap(),"observation":document});
+                    assert!(wire(&client, publish.clone()).await.is_err());
+                    assert!(
+                        wire(&control, publish.clone()).await.unwrap()["daemon_generation"]
+                            .is_string()
+                    );
+                    let observation = reader
+                        .synchronous_stage_post_dispatch(&identity, &request, &bytes)
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    let value = serde_json::to_value(observation.observation).unwrap();
+                    assert!(value.get("task").is_none());
+                    assert!(value.get("upid").is_none());
+                    assert!(wire(&control, publish.clone()).await.is_err());
+                    for field in ["owner", "generation", "attempt"] {
+                        let mut wrong = serde_json::to_value(&identity).unwrap();
+                        wrong[field] = json!(Uuid::now_v7());
+                        assert!(
+                            reader
+                                .synchronous_stage_post_dispatch(
+                                    &serde_json::from_value(wrong).unwrap(),
+                                    &request,
+                                    &bytes
+                                )
+                                .await
+                                .is_err()
+                        );
+                    }
+                    final_publication = Some(publish);
+                }
+                accepted.push((identity, request, bytes));
+            }
+            let status = reader.status().await.unwrap();
+            assert_eq!((status.attempts, status.effects), (3, 3));
+        }
+        wire(&control, json!({"command":"shutdown"})).await.unwrap();
+        daemon.join().unwrap();
+    }
+}
+
 #[tokio::test]
 async fn stage_publication_binds_owner_attempt_and_restart_for_clone_and_resize() {
     use pve_port::fixture_ipc::FixtureStageRequest;

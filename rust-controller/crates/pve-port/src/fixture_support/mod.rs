@@ -34,11 +34,13 @@ mod fixture_daemon;
 mod inventory_read;
 mod post_dispatch;
 mod post_dispatch_publication;
-pub use post_dispatch_publication::FixturePostDispatchPublication;
+pub use post_dispatch_publication::{
+    FixturePostDispatchPublication, FixtureSynchronousPublication,
+};
 mod read_client;
 mod task;
 pub use clone_mutation::{FixtureCloneSeed, FixtureMutationClient};
-pub use post_dispatch::FixturePostDispatchV1;
+pub use post_dispatch::{FixturePostDispatchV1, FixtureSynchronousPostDispatchV1};
 pub use task::{FixtureTaskIdentity, FixtureTaskObservation, FixtureTaskState};
 
 pub use durable_fixture_log::{Effect, VmState};

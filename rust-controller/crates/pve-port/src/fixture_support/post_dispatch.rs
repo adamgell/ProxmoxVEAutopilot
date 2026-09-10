@@ -23,6 +23,59 @@ pub struct FixturePostDispatchV1 {
     pub inventory: super::FixtureCloneReads,
 }
 
+/// Physical observations for a synchronous ConfigurePe receipt. Task and UPID
+/// fields are intentionally absent and rejected by strict decoding.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixtureSynchronousPostDispatchV1 {
+    pub version: u8,
+    pub provisioning: FixtureProvisioningReads,
+    pub inventory: super::FixtureCloneReads,
+}
+
+impl FixtureSynchronousPostDispatchV1 {
+    pub fn decode(
+        bytes: &[u8],
+        request: &FixtureStageRequest,
+        accepted_receipt: &[u8],
+        accepted_unix_ms: u64,
+        now_unix_ms: u64,
+    ) -> io::Result<Self> {
+        if bytes.is_empty()
+            || bytes.len() > MAX_POST_DISPATCH_BYTES
+            || request.request().plan().action() != crate::ProvisioningActionV1::ConfigurePe
+            || request
+                .decode_receipt(accepted_receipt)
+                .map_err(|_| invalid())?
+                .receipt()
+                != &MutationReceipt::SynchronousAccepted
+        {
+            return Err(invalid());
+        }
+        let result: Self = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+        if result.version != 1 {
+            return Err(invalid());
+        }
+        let vm = request.request().plan().expected().vm();
+        let identity = FixtureProvisioningIdentity {
+            fixture_id: request.fixture_id(),
+            operation: request.request().binding().operation_id().as_uuid(),
+            request_sha256: request.request_sha256(),
+            node: vm.node().to_string(),
+            source_vmid: vm.source_vmid().get(),
+            target_vmid: vm.target_vmid().get(),
+        };
+        validate_facts(
+            &result.provisioning,
+            &result.inventory,
+            &identity,
+            accepted_unix_ms,
+            now_unix_ms,
+        )?;
+        Ok(result)
+    }
+}
+
 fn invalid() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
@@ -135,37 +188,63 @@ impl FixturePostDispatchV1 {
             return Err(invalid());
         }
         FixtureTaskObservation::decode(&serde_json::to_vec(&result.task).map_err(|_| invalid())?)?;
-        FixtureProvisioningReads::decode(
-            &serde_json::to_vec(&result.provisioning).map_err(|_| invalid())?,
-            &identity,
-        )?;
-        super::FixtureCloneReads::decode(
-            &serde_json::to_vec(&result.inventory).map_err(|_| invalid())?,
-            identity.fixture_id,
-        )?;
-        let p = &result.provisioning;
-        let i = &result.inventory;
-        let times = [
-            result.task.observed_unix_ms,
-            timestamp(&p.source_config),
-            timestamp(&p.target_config),
-            timestamp(&p.source_power),
-            timestamp(&p.target_power),
-            timestamp(&p.source_coverage),
-            timestamp(&p.target_coverage),
-            timestamp(&p.deployment_media),
-            timestamp(&p.driver_media),
-            timestamp(&i.node_status),
-            timestamp(&i.storage),
-            timestamp(&i.bridges),
-            timestamp(&i.cluster_inventory),
-        ];
-        if times
-            .into_iter()
-            .any(|time| time < accepted_unix_ms || time > now_unix_ms)
+        if result.task.observed_unix_ms < accepted_unix_ms
+            || result.task.observed_unix_ms > now_unix_ms
         {
             return Err(invalid());
         }
+        validate_facts(
+            &result.provisioning,
+            &result.inventory,
+            &identity,
+            accepted_unix_ms,
+            now_unix_ms,
+        )?;
         Ok(result)
     }
+}
+
+fn validate_facts(
+    p: &FixtureProvisioningReads,
+    i: &super::FixtureCloneReads,
+    identity: &FixtureProvisioningIdentity,
+    accepted_unix_ms: u64,
+    now_unix_ms: u64,
+) -> io::Result<()> {
+    if accepted_unix_ms == 0
+        || accepted_unix_ms > now_unix_ms
+        || i.node != identity.node
+        || i64::try_from(now_unix_ms)
+            .ok()
+            .and_then(chrono::DateTime::from_timestamp_millis)
+            .is_none()
+    {
+        return Err(invalid());
+    }
+    FixtureProvisioningReads::decode(&serde_json::to_vec(p).map_err(|_| invalid())?, identity)?;
+    super::FixtureCloneReads::decode(
+        &serde_json::to_vec(i).map_err(|_| invalid())?,
+        identity.fixture_id,
+    )?;
+    let times = [
+        timestamp(&p.source_config),
+        timestamp(&p.target_config),
+        timestamp(&p.source_power),
+        timestamp(&p.target_power),
+        timestamp(&p.source_coverage),
+        timestamp(&p.target_coverage),
+        timestamp(&p.deployment_media),
+        timestamp(&p.driver_media),
+        timestamp(&i.node_status),
+        timestamp(&i.storage),
+        timestamp(&i.bridges),
+        timestamp(&i.cluster_inventory),
+    ];
+    if times
+        .into_iter()
+        .any(|time| time < accepted_unix_ms || time > now_unix_ms)
+    {
+        return Err(invalid());
+    }
+    Ok(())
 }
