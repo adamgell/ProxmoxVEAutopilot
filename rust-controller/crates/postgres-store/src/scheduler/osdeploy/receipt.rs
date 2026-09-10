@@ -2,8 +2,8 @@
 use super::*;
 use controller_domain::RunId;
 use pve_port::{
-    MutationReceipt, NativeEvidenceSource, NativeFakePve, ProvisioningDispatchV1,
-    ProvisioningFakePort, ProvisioningReceiptV1, PveWriteError,
+    MutationReceipt, NativeEvidenceSource, ProvisioningDispatchV1, ProvisioningFakePort,
+    ProvisioningReceiptV1, PveWriteError,
 };
 
 /// A committed capability consumed by its single fake submission.
@@ -12,6 +12,19 @@ use pve_port::{
 /// async fn moved(permit: postgres_store::OsDeployDispatchPermit, fake: &pve_port::NativeFakePve) {
 ///     drop(permit.submit_fake_once(fake));
 ///     drop(permit.submit_fake_once(fake));
+/// }
+/// ```
+/// The same consuming boundary applies to a sealed trait object.
+/// ```compile_fail,E0382
+/// async fn moved(permit: postgres_store::OsDeployDispatchPermit, fake: &dyn pve_port::ProvisioningFakePort) {
+///     drop(permit.submit_fake_once(fake));
+///     drop(permit.submit_fake_once(fake));
+/// }
+/// ```
+/// A production observer cannot submit through this permit.
+/// ```compile_fail,E0277
+/// async fn observer(permit: postgres_store::OsDeployDispatchPermit, observer: &pve_port::ReqwestPveObserver) {
+///     permit.submit_fake_once(observer).await;
 /// }
 /// ```
 /// ```compile_fail,E0599
@@ -109,9 +122,9 @@ pub(super) fn committed(
 }
 
 impl OsDeployDispatchPermit {
-    pub async fn submit_fake_once(
+    pub async fn submit_fake_once<P: ProvisioningFakePort + ?Sized>(
         self,
-        fake: &NativeFakePve,
+        fake: &P,
     ) -> Result<MutationReceipt, PveWriteError> {
         fake.submit_provisioning(self.dispatch.request()).await
     }
