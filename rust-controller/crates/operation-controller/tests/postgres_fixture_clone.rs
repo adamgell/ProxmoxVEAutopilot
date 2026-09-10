@@ -13,10 +13,151 @@ use pve_port::{fixture_ipc::*, fixture_support::*, *};
 use sqlx::ConnectOptions;
 use std::{fs, os::unix::fs::PermissionsExt, sync::Arc, time::Duration};
 
+fn retime_outcome(value: &mut serde_json::Value, at: u64) {
+    use serde_json::{Value, json};
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                if key == "observed_unix_ms" {
+                    *value = json!(at);
+                } else if key == "observed_at" {
+                    *value = json!(chrono::DateTime::from_timestamp_millis(at as i64).unwrap());
+                } else {
+                    retime_outcome(value, at);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                retime_outcome(value, at);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Supervisor-authored physical observations, bound to the actual accepted
+/// request. The real evaluator must establish ownership and Clone postcondition.
+fn clone_outcome_document(
+    reads: &FixtureProvisioningReadsV2,
+    inventory: &FixtureCloneReads,
+    source: &ProvisioningVmConfigV1,
+    envelope: &FixtureCloneRequest,
+    upid: &Upid,
+) -> serde_json::Value {
+    use serde_json::json;
+    let request = envelope.request().clone_request();
+    let vm = request.vm();
+    let mut target = serde_json::to_value(source).unwrap();
+    target["vmid"] = json!(vm.target_vmid());
+    target["name"] = json!(vm.name());
+    target["template"] = json!(false);
+    target["uuid"] = json!("44444444-4444-4444-8444-444444444491");
+    target["mac"] = json!("02:00:00:00:09:01");
+    target["digest"] = json!("b".repeat(64));
+    target["primary_disk"]["storage"] = json!(vm.storage());
+    target["primary_disk"]["volume"] = json!("vm-901-disk-0");
+    target["fake_clone_provenance"] = json!({
+        "operation_id": request.operation_id(), "request_marker": request.request_marker(),
+        "source_vmid": vm.source_vmid(), "target_vmid": vm.target_vmid(),
+        "request_digest": request.request_digest()
+    });
+    let mut provisioning = serde_json::to_value(reads).unwrap();
+    provisioning["version"] = json!(1);
+    provisioning["identity"]["request_sha256"] = json!(envelope.request_sha256());
+    provisioning["target_power"] = serde_json::to_value(SeedRead::Observed {
+        observed_unix_ms: 1,
+        value: SeedPower {
+            power: PowerState::Stopped,
+            locked: false,
+        },
+    })
+    .unwrap();
+    // Preserve the exact serde representation rather than assuming the SeedRead tag.
+    provisioning["target_config"] = serde_json::to_value(SeedRead::Observed {
+        observed_unix_ms: 1,
+        value: SeedConfig::Present {
+            config: Box::new(serde_json::from_value(target.clone()).unwrap()),
+        },
+    })
+    .unwrap();
+    let mut inventory = serde_json::to_value(inventory).unwrap();
+    let SeedRead::Observed {
+        value: original, ..
+    } = &reads.source_coverage
+    else {
+        panic!("coverage")
+    };
+    let target_identity = SeedIdentity {
+        status: SeedRead::Observed {
+            observed_unix_ms: 1,
+            value: PowerState::Stopped,
+        },
+        coverage: SeedRead::Observed {
+            observed_unix_ms: 1,
+            value: *original,
+        },
+        node: vm.node().to_string(),
+        vmid: vm.target_vmid().get(),
+        name: vm.name().to_string(),
+        template: false,
+        config_sha256: "b".repeat(64),
+        uuid: "44444444-4444-4444-8444-444444444491".parse().unwrap(),
+        mac: "02:00:00:00:09:01".into(),
+        primary_storage: vm.storage().to_string(),
+        primary_volume: "vm-901-disk-0".into(),
+    };
+    // Existing source inventory remains independently present.
+    let mut identities = inventory["cluster_inventory"]["value"]
+        .as_array()
+        .unwrap()
+        .clone();
+    identities.push(serde_json::to_value(target_identity).unwrap());
+    inventory["cluster_inventory"]["value"] = json!(identities);
+    let mut result = json!({"version":1,"provisioning":provisioning,"inventory":inventory,
+        "task":FixtureTaskObservation { version:1, identity:FixtureTaskIdentity {
+            fixture_id:envelope.fixture_id(), operation:request.operation_id().as_uuid(),
+            request_sha256:envelope.request_sha256(), node:vm.node().to_string(), upid:upid.to_string()
+        }, observed_unix_ms:1, result:FixtureTaskState::Succeeded {} }});
+    retime_outcome(&mut result, chrono::Utc::now().timestamp_millis() as u64);
+    result
+}
+
+async fn publish_clone_outcome(
+    socket: &std::path::Path,
+    request: &FixtureCloneRequest,
+    observation: serde_json::Value,
+) -> serde_json::Value {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let request: serde_json::Value = serde_json::from_slice(&request.encode().unwrap()).unwrap();
+    let bytes = serde_json::to_vec(&serde_json::json!({"command":"publish_post_dispatch", "request":request, "observation":observation})).unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        let mut stream = tokio::net::UnixStream::connect(socket).await.unwrap();
+        stream.write_u32(bytes.len() as u32).await.unwrap();
+        stream.write_all(&bytes).await.unwrap();
+        let length = stream.read_u32().await.unwrap() as usize;
+        assert!(length < 200_000);
+        let mut result = vec![0; length];
+        stream.read_exact(&mut result).await.unwrap();
+        serde_json::from_slice(&result).unwrap()
+    })
+    .await
+    .unwrap()
+}
+
 /// A fresh controller collects IPC facts and creates its own attempt and request.
 /// Only the supervisor observes the committed request and releases its exact digest.
 #[tokio::test]
 async fn fresh_controller_late_clone_records_exact_durable_receipt() {
+    fresh_controller_clone(false).await;
+}
+
+#[tokio::test]
+async fn fresh_controller_clone_reaches_satisfied_from_supervisor_publication() {
+    fresh_controller_clone(true).await;
+}
+
+async fn fresh_controller_clone(publish_outcome: bool) {
     let s = Scenario::new(300, true).await;
     let operation = s.ids.operation(osdeploy_adapter::OsDeployStage::Clone);
     let fixture_id = controller_domain::RunId::new().as_uuid();
@@ -276,6 +417,19 @@ async fn fresh_controller_late_clone_records_exact_durable_receipt() {
             .unwrap()
             .is_none()
     );
+    // Hold only the isolated fixture journal insert. Receipt time is allocated
+    // before that insert; the observed lock wait below is our deterministic
+    // supervisor barrier before the controller starts its outcome collection.
+    let mut publication_barrier = if publish_outcome {
+        let mut tx = s.db.pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE rust_controller.journal_events IN SHARE MODE")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        Some(tx)
+    } else {
+        None
+    };
     assert!(
         supervisor
             .request(CheckpointRequest::AuthorizeRelease {
@@ -286,15 +440,51 @@ async fn fresh_controller_late_clone_records_exact_durable_receipt() {
             .unwrap()
             .ok
     );
+    if let Some(tx) = publication_barrier.take() {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'INSERT INTO rust_controller.journal_events%osdeploy:receipt%')")
+                    .fetch_one(&s.db.pool).await.unwrap();
+                if waiting { break; }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.expect("controller receipt insert did not reach publication barrier");
+        let effect = reader
+            .accepted_effect(identity.operation, &envelope.request_sha256())
+            .await
+            .unwrap()
+            .unwrap();
+        let receipt = envelope.decode_receipt(effect.receipt().unwrap()).unwrap();
+        let MutationReceipt::Task(upid) = receipt.receipt() else {
+            panic!("Clone task expected")
+        };
+        let document = clone_outcome_document(&reads, &infrastructure, &source, &envelope, upid);
+        let response =
+            publish_clone_outcome(&directory.join("supervisor.sock"), &envelope, document).await;
+        assert!(!response.is_null());
+        assert!(!worker.is_finished());
+        tx.commit().await.unwrap();
+    }
     let result = worker.await.unwrap().unwrap();
-    // Startup facts cannot establish a post-dispatch outcome. The receipt is
-    // durable, but outcome reconciliation needs fresh task/config observations.
+    // Startup facts alone stay Unknown. Only the supervisor's fresh physical
+    // observations allow the real controller evaluator to establish Satisfied.
     assert_eq!(
         result,
-        postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Unknown)
+        postgres_store::OsDeployProgress::Decided(if publish_outcome {
+            controller_domain::ExecutionState::Satisfied
+        } else {
+            controller_domain::ExecutionState::Unknown
+        })
     );
     let durable = s.db.other.load_osdeploy_operation(operation).await.unwrap();
     assert_eq!(durable.attempt_id(), committed.attempt_id());
+    let attempts: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rust_controller.attempts WHERE operation_id=$1")
+            .bind(operation.as_uuid())
+            .fetch_one(&s.db.pool)
+            .await
+            .unwrap();
+    assert_eq!(attempts, 1);
     let effect = reader
         .accepted_effect(identity.operation, &envelope.request_sha256())
         .await
