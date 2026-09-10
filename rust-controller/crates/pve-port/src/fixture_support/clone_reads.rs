@@ -54,6 +54,8 @@ pub struct SeedBridge {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SeedIdentity {
+    /// Status sampled with this inventory, independently of provisioning reads.
+    pub status: SeedRead<crate::PowerState>,
     pub node: String,
     pub vmid: u32,
     pub name: String,
@@ -149,10 +151,23 @@ impl FixtureCloneReads {
                 items.len() <= 32 && items.iter().all(|b| atom(&b.name) && names.insert(&b.name))
             })
             && valid_read(&seed.cluster_inventory, |items| {
+                let snapshot_time = match &seed.cluster_inventory {
+                    SeedRead::Observed {
+                        observed_unix_ms, ..
+                    } => *observed_unix_ms,
+                    SeedRead::Error { .. } => unreachable!(),
+                };
                 let mut ids = BTreeSet::new();
                 items.len() <= 32
                     && items.iter().all(|v| {
-                        atom(&v.node)
+                        (match &v.status {
+                            SeedRead::Observed {
+                                observed_unix_ms, ..
+                            }
+                            | SeedRead::Error {
+                                observed_unix_ms, ..
+                            } => *observed_unix_ms == snapshot_time,
+                        }) && atom(&v.node)
                             && v.vmid > 0
                             && ids.insert(v.vmid)
                             && atom(&v.name)

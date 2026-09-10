@@ -327,7 +327,12 @@ async fn clone_reads_preserve_seed_errors_identity_and_restart_observations() {
         "node_status":{"state":"observed","observed_unix_ms":123,"value":{"online":true,"uptime_seconds":4}},
         "storage":{"state":"error","observed_unix_ms":124,"error":"forbidden"},
         "bridges":{"state":"observed","observed_unix_ms":125,"value":[]},
-        "cluster_inventory":{"state":"error","observed_unix_ms":126,"error":"unavailable"}
+        "cluster_inventory":{"state":"observed","observed_unix_ms":126,"value":[{
+            "node":"other-node","vmid":777,"name":"unrelated","template":false,
+            "config_sha256":"a".repeat(64),"uuid":Uuid::from_u128(777),
+            "mac":"02:00:00:00:00:77","primary_storage":"local-lvm","primary_volume":"vm-777-disk-0",
+            "status":{"state":"observed","observed_unix_ms":126,"value":"running"}
+        }]}
     });
     let bytes = serde_json::to_vec(&seed).unwrap();
     let expected = FixtureCloneReads::decode(&bytes, id).unwrap();
