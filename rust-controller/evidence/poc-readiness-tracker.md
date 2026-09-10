@@ -16,6 +16,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - An exact-source Linux AMD64 image was rebuilt from `8f07247` (`sha256:82b70282d5c4278b04ed15b67684fdb840235f22b6c27d759047dda59f855e2b`) and passed the repository Compose proof: three competing workers, PostgreSQL fixture, cancellation/recovery, Linux native adapter and descendant cleanup. The bounded run passed 12 lifecycle tests plus 4 native PostgreSQL tests; receipt/logs are `restart-task9-linux-compose-1.*`.
 - These results establish a fresh local Linux artifact and isolated synthetic/native adapter proof. They do not yet establish the full owned-v1 four-package Linux database gate, sixteen-stage service execution, Python/Rust single-writer handoff, or production readiness.
 - Compatibility-side Python contracts were rerun locally with explicit Python 3.12 under the bounded supervisor: producer contract 2/2, proof-wait 5/5, and proof-coordination 1/1. The earlier system-Python 3.9 selector failure is retained as environment evidence; no production Python code changed.
+- The approved owned-v1 launch primitive is committed at `fd18b61`, with nine synthetic contract/supervision tests passing and an independent Astra review. It performs closed resource/receipt admission and bounded smoke/full invocation, but intentionally does not claim periodic resource/catalog observation, binary/export sealing, protected-inventory cleanup, or Linux runtime qualification until those remaining layers are implemented and reviewed.
 
 ## Gates
 
