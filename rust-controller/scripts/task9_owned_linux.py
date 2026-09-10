@@ -123,7 +123,12 @@ def profile_args(session, role, pg_id=None, receipt_path=None, script_path=None,
     return argv + ["--platform", "linux/amd64", "--network", "container:" + pg_id,
                    "--mount", "type=bind,src=" + receipt_path + ",dst=" + RECEIPT + ",readonly",
                    "--mount", "type=bind,src=" + script_path + ",dst=" + SCRIPT + ",readonly",
-                   "-e", "PROXMOXVEAUTOPILOT_LINUX_TEST_DB=owned-v1", "--workdir", "/workspace/rust-controller",
+                   # The durability target exercises deeply nested async
+                   # state on emulated amd64; keep its test-thread stack
+                   # explicit so the qualification result is not host-stack
+                   # dependent. This does not alter controller runtime limits.
+                   "-e", "PROXMOXVEAUTOPILOT_LINUX_TEST_DB=owned-v1",
+                   "-e", "RUST_MIN_STACK=16777216", "--workdir", "/workspace/rust-controller",
                    "--entrypoint", "/usr/bin/python3", RUNNER_IMAGE, "-I", "-B", SCRIPT, "--inside", mode]
 
 
