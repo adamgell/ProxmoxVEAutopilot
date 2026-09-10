@@ -25,6 +25,61 @@ use std::{
     time::{Duration, Instant},
 };
 use uuid::Uuid;
+#[cfg(feature = "fixture-ipc")]
+mod provisioning_seed_support;
+
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
+async fn provisioning_reads_preserve_populated_facts_errors_and_restart_identity() {
+    use pve_port::fixture_support::FixtureReadClient;
+    let mut daemon = Daemon::start();
+    let client =
+        FixtureReadClient::new(daemon.directory.join("client.sock"), Duration::from_secs(1))
+            .unwrap();
+    let seed = provisioning_seed_support::populated();
+    assert_eq!(
+        client.provisioning_reads(&seed.identity).await.unwrap(),
+        None
+    );
+    let path = daemon.directory.join("provisioning_reads.json");
+    fs::write(&path, serde_json::to_vec(&seed).unwrap()).unwrap();
+    assert_eq!(
+        client.provisioning_reads(&seed.identity).await.unwrap(),
+        None
+    );
+    for _ in 0..2 {
+        daemon.child.kill().unwrap();
+        daemon.child.wait().unwrap();
+        daemon.clear_stale_sockets().unwrap();
+        daemon.child = Daemon::spawn(&daemon.directory);
+        daemon.await_ready();
+        assert_eq!(
+            client.provisioning_reads(&seed.identity).await.unwrap(),
+            Some(seed.clone())
+        );
+        let mut mismatches = vec![seed.identity.clone(); 6];
+        mismatches[0].fixture_id = Uuid::now_v7();
+        mismatches[1].operation = Uuid::now_v7();
+        mismatches[2].request_sha256 = "b".repeat(64);
+        mismatches[3].node = "other-node".into();
+        mismatches[4].source_vmid = 901;
+        mismatches[5].target_vmid = 102;
+        for identity in mismatches {
+            assert!(client.provisioning_reads(&identity).await.is_err());
+        }
+        assert_eq!(client.status().await.unwrap().attempts, 0);
+    }
+    fs::write(path, b"{}").unwrap();
+    assert_eq!(
+        client.provisioning_reads(&seed.identity).await.unwrap(),
+        Some(seed)
+    );
+    daemon.child.kill().unwrap();
+    daemon.child.wait().unwrap();
+    daemon.clear_stale_sockets().unwrap();
+    daemon.child = Daemon::spawn(&daemon.directory);
+    daemon.await_failure();
+}
 
 struct Daemon {
     directory: PathBuf,

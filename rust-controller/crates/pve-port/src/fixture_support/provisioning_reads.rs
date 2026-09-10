@@ -44,55 +44,6 @@ fn invalid() -> io::Error {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn errors_remain_explicit_and_identity_and_unknown_fields_fail_closed() {
-        let identity = FixtureProvisioningIdentity {
-            fixture_id: Uuid::from_u128(1),
-            operation: Uuid::from_u128(2),
-            request_sha256: "a".repeat(64),
-            node: "fixture-node".into(),
-            source_vmid: 100,
-            target_vmid: 101,
-        };
-        let error =
-            serde_json::json!({"state":"error","observed_unix_ms":123,"error":"unavailable"});
-        let value = serde_json::json!({"version":1,"identity":identity,"source_config":error,"target_config":error,"source_power":error,"target_power":error,"deployment_media":error,"driver_media":error});
-        let bytes = serde_json::to_vec(&value).unwrap();
-        let decoded = FixtureProvisioningReads::decode(&bytes, &identity).unwrap();
-        assert!(matches!(
-            decoded.target_power,
-            SeedRead::Error {
-                observed_unix_ms: 123,
-                ..
-            }
-        ));
-        let mut other = identity.clone();
-        other.operation = Uuid::from_u128(3);
-        assert!(FixtureProvisioningReads::decode(&bytes, &other).is_err());
-        let mut unknown = value.clone();
-        unknown["source_power"]["extra"] = true.into();
-        assert!(
-            FixtureProvisioningReads::decode(&serde_json::to_vec(&unknown).unwrap(), &identity)
-                .is_err()
-        );
-        assert!(
-            FixtureProvisioningReads::decode(
-                &vec![b' '; MAX_PROVISIONING_READ_BYTES + 1],
-                &identity
-            )
-            .is_err()
-        );
-        let duplicate = String::from_utf8(bytes).unwrap().replacen(
-            "\"version\":1",
-            "\"version\":1,\"version\":1",
-            1,
-        );
-        assert!(FixtureProvisioningReads::decode(duplicate.as_bytes(), &identity).is_err());
-    }
-}
 impl FixtureProvisioningIdentity {
     pub fn validate(&self) -> io::Result<()> {
         if self.fixture_id.is_nil()
@@ -185,5 +136,55 @@ impl FixtureProvisioningReads {
         }
         let seed: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
         Self::decode(&bytes, &seed.identity).map(Some)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn errors_remain_explicit_and_identity_and_unknown_fields_fail_closed() {
+        let identity = FixtureProvisioningIdentity {
+            fixture_id: Uuid::from_u128(1),
+            operation: Uuid::from_u128(2),
+            request_sha256: "a".repeat(64),
+            node: "fixture-node".into(),
+            source_vmid: 100,
+            target_vmid: 101,
+        };
+        let error =
+            serde_json::json!({"state":"error","observed_unix_ms":123,"error":"unavailable"});
+        let value = serde_json::json!({"version":1,"identity":identity,"source_config":error,"target_config":error,"source_power":error,"target_power":error,"deployment_media":error,"driver_media":error});
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let decoded = FixtureProvisioningReads::decode(&bytes, &identity).unwrap();
+        assert!(matches!(
+            decoded.target_power,
+            SeedRead::Error {
+                observed_unix_ms: 123,
+                ..
+            }
+        ));
+        let mut other = identity.clone();
+        other.operation = Uuid::from_u128(3);
+        assert!(FixtureProvisioningReads::decode(&bytes, &other).is_err());
+        let mut unknown = value.clone();
+        unknown["source_power"]["extra"] = true.into();
+        assert!(
+            FixtureProvisioningReads::decode(&serde_json::to_vec(&unknown).unwrap(), &identity)
+                .is_err()
+        );
+        assert!(
+            FixtureProvisioningReads::decode(
+                &vec![b' '; MAX_PROVISIONING_READ_BYTES + 1],
+                &identity
+            )
+            .is_err()
+        );
+        let duplicate = String::from_utf8(bytes).unwrap().replacen(
+            "\"version\":1",
+            "\"version\":1,\"version\":1",
+            1,
+        );
+        assert!(FixtureProvisioningReads::decode(duplicate.as_bytes(), &identity).is_err());
     }
 }
