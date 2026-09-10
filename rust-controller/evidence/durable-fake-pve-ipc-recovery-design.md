@@ -18,6 +18,10 @@ Use a checksummed append-only fixture log as the first implementation (one lengt
 
 The supervisor starts worker A, releases an explicit barrier, terminates it, and starts worker B against the same database and fixture socket. The proof must cover: dispatch-before-IPC death (zero fixture submissions, uncertain durable dispatch); accepted-effect-before-response death (exactly one submission/effect, no resend); receipt-captured restart (same receipt and original attempt, no resend); normal three-stage progression; no-growth zero-submission behavior; fixture-daemon restart preserving world, tasks and counts; and an injected duplicate attempt visible in the ledger and rejected. `StartPe` remains unreachable, so the acceptance claim is limited to independent-process recovery of the three-stage prefix.
 
+## Controller integration seam
+
+The current controller and consuming dispatch permit are concretely bound to `NativeFakePve`, and the sealed provisioning capability is crate-private. The next implementation must add an explicitly opt-in fixture capability seam, then prove one typed `Clone` request round-trip that yields a daemon-owned validated effect and the existing receipt shape. The controller must not send caller-selected raw before/after state over IPC. Until that typed seam and receipt capture exist, this daemon remains a protocol/ledger proof only, not controller recovery evidence.
+
 ## Evidence and approval
 
 Retain source/image bindings, process IDs, barrier events, durable before/after snapshots, fixture submission ledger, receipts, and bounded shutdown/descendant-cleanup records. This is a local test-infrastructure design only. Passing the resulting tests would establish independent-process recovery evidence for the supported three-stage prefix; it would not close full OSDeploy, callback reachability, Python/Ansible handoff, or production readiness.
