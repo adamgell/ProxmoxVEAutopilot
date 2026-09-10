@@ -123,3 +123,26 @@ at daemon read completion. Validate the snapshot through the existing typed
 deserializers. Then implement the read supertraits before granting the private
 mutation seal. The raw caller-supplied `Effect { before, after }` protocol remains
 test bookkeeping and must not become the controller's submission path.
+
+### Adapter inspection: lock and identity coverage prerequisites
+
+The current `FixtureProvisioningReads` source/target power fields carry only
+`PowerState`. They cannot supply `VmPowerStatus::locked()`. The real Clone
+evaluator requires stopped source power with an explicit `Some(false)` lock
+observation. Omitting the lock preserves `None` and closes admission; synthesizing
+`false` would invent a fact. Add a supervisor-observed lock field, preserve its
+timestamp and resource binding, and test unlocked, locked, and unknown states.
+
+`FixtureCloneReads::SeedIdentity` does not carry per-identity provisioning
+coverage. Complete cluster membership does not establish complete configuration
+coverage for each identity. Carry explicit `ProvisioningCoverageV1`, or derive an
+identity from a fully validated seeded provisioning configuration whose coverage
+is already known. Do not upgrade an arbitrary inventory identity to `Complete`.
+
+The executable regressions in `fixture_controller_admission.rs` prove that
+missing/positive source lock observations and partial identity coverage prevent
+the real provisioning evaluator from returning `Ready`, while the existing
+complete baseline remains admitted. This inspection adds no sealed adapter or
+controller round-trip claim. Unsupported inherited reads must use an explicit
+existing typed read error (the contract has no `Unsupported` variant), and the
+controller checkpoint still requires a supervisor-owned bounded barrier.

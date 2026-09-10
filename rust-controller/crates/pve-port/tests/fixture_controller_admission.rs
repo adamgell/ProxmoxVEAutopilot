@@ -72,3 +72,57 @@ fn node_inventory_cannot_be_promoted_to_global_identity_coverage() {
         NativeDecision::Ready
     );
 }
+
+/// A PowerState-only seed cannot assert that the source is unlocked. The
+/// adapter must retain this missing observation until the supervisor supplies it.
+#[test]
+fn source_power_without_explicit_unlocked_observation_blocks_clone() {
+    let episode = chain().remove(0);
+    for lock in [None, Some(1)] {
+        let mut wire = serde_json::json!({"vmid":900,"status":"stopped"});
+        if let Some(lock) = lock {
+            wire["locked"] = serde_json::json!(lock);
+        }
+        let power = VmPowerStatus::from_wire(
+            provisioning_support::node(),
+            Vmid::new(900).unwrap(),
+            wire,
+            time(),
+        )
+        .unwrap();
+        assert_ne!(power.locked(), Some(false));
+        let mut facts = episode.pre_evidence.facts().clone();
+        facts.source_power = Some(NativeRead::new(time(), Ok(power)));
+        let evidence = ProvisioningEvidenceV1::new(facts).unwrap();
+        assert_ne!(
+            evaluate_provisioning_preflight(&episode.pre, &evidence, time()).decision,
+            NativeDecision::Ready,
+            "source lock observation {lock:?} must block dispatch"
+        );
+    }
+}
+
+/// Complete cluster membership says nothing about whether an individual
+/// identity covered all configuration fields needed for provisioning.
+#[test]
+fn complete_inventory_does_not_upgrade_partial_identity_coverage() {
+    let episode = chain().remove(0);
+    let source = provisioning_support::source();
+    let identity = ProvisioningIdentitySnapshotV1::from_provisioning(&source);
+    let mut wire = serde_json::to_value(identity).unwrap();
+    wire["coverage"] = serde_json::json!("partial");
+    let identity: ProvisioningIdentitySnapshotV1 = serde_json::from_value(wire).unwrap();
+    let mut facts = episode.pre_evidence.facts().clone();
+    assert_eq!(facts.inventory_coverage, ProvisioningCoverageV1::Complete);
+    facts.identities[0] = ProvisioningIdentityReadV1::new(
+        source.node().clone(),
+        source.vmid(),
+        NativeRead::new(time(), Ok(identity)),
+    )
+    .unwrap();
+    let evidence = ProvisioningEvidenceV1::new(facts).unwrap();
+    assert_ne!(
+        evaluate_provisioning_preflight(&episode.pre, &evidence, time()).decision,
+        NativeDecision::Ready
+    );
+}
