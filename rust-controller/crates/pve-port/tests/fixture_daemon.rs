@@ -378,11 +378,16 @@ async fn late_authorization_is_supervisor_owned_atomic_and_invalidated_on_restar
             .generation,
         ..binding
     };
+    // Enter must complete before expiry, even when other daemon tests are doing
+    // concurrent process startup and durable writes. The short expiry test below
+    // does not require Enter to succeed; this authorization test does.
+    // Stay within the child fixture's five-second lifetime.
+    const AUTHORIZATION_EXPIRY_MS: u64 = 1_000;
     assert!(
         supervisor
             .request(CheckpointRequest::ArmLate {
                 binding: fresh_binding,
-                timeout_ms: 20,
+                timeout_ms: AUTHORIZATION_EXPIRY_MS,
                 identity: proposal.identity.clone(),
             })
             .await
@@ -398,7 +403,7 @@ async fn late_authorization_is_supervisor_owned_atomic_and_invalidated_on_restar
             .unwrap()
             .ok
     );
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    tokio::time::sleep(Duration::from_millis(AUTHORIZATION_EXPIRY_MS + 10)).await;
     let mut expired = proposal;
     expired.binding = fresh_binding;
     assert!(
