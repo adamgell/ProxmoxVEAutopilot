@@ -5,6 +5,66 @@ use durable_fixture_log::FixtureLog;
 use std::{fs, io::Write, path::PathBuf};
 use uuid::Uuid;
 
+use durable_fixture_log::VmState;
+
+#[test]
+fn acceptance_and_world_transition_recover_together_after_durable_attempt() {
+    let fixture = Fixture::new();
+    let mut log = FixtureLog::create(&fixture.path()).unwrap();
+    let initial = VmState {
+        disk_bytes: 80,
+        pe_configured: false,
+    };
+    assert!(log.record_effect(1, 100, None, initial.clone()).is_err());
+    log.record_attempt(Uuid::now_v7(), &"a".repeat(64)).unwrap();
+    drop(log);
+    let mut log = FixtureLog::recover(&fixture.path()).unwrap();
+    assert!(log.effects().is_empty());
+    assert!(log.world().is_empty());
+    log.record_effect(1, 100, None, initial.clone()).unwrap();
+    assert!(
+        log.record_effect(1, 100, Some(initial.clone()), initial.clone())
+            .is_err()
+    );
+    log.record_attempt(Uuid::now_v7(), &"b".repeat(64)).unwrap();
+    let configured = VmState {
+        disk_bytes: 120,
+        pe_configured: true,
+    };
+    assert!(log.record_effect(2, 100, None, configured.clone()).is_err());
+    log.record_effect(2, 100, Some(initial), configured.clone())
+        .unwrap();
+    drop(log);
+    let log = FixtureLog::recover(&fixture.path()).unwrap();
+    assert_eq!(log.records().len(), 2);
+    assert_eq!(log.effects().len(), 2);
+    assert_eq!(log.world().get(&100), Some(&configured));
+}
+
+#[test]
+fn duplicate_attempt_cannot_accept_and_reordered_valid_frames_fail_recovery() {
+    let fixture = Fixture::new();
+    let operation = Uuid::now_v7();
+    let mut log = FixtureLog::create(&fixture.path()).unwrap();
+    log.record_attempt(operation, &"a".repeat(64)).unwrap();
+    log.record_attempt(operation, &"a".repeat(64)).unwrap();
+    let state = VmState {
+        disk_bytes: 80,
+        pe_configured: false,
+    };
+    assert!(log.record_effect(2, 100, None, state.clone()).is_err());
+    log.record_effect(1, 100, None, state).unwrap();
+    drop(log);
+    let bytes = fs::read(fixture.path()).unwrap();
+    let lines: Vec<_> = bytes.split_inclusive(|b| *b == b'\n').collect();
+    // Individually canonical/checksummed frames cannot be replayed out of order.
+    fs::write(fixture.path(), [lines[2], lines[0], lines[1]].concat()).unwrap();
+    assert!(FixtureLog::recover(&fixture.path()).is_err());
+    // A valid attempt prefix with a partial accepted transition fails closed.
+    fs::write(fixture.path(), &bytes[..bytes.len() - 1]).unwrap();
+    assert!(FixtureLog::recover(&fixture.path()).is_err());
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
