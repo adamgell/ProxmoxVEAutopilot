@@ -146,6 +146,120 @@ async fn provisioning_reads_preserve_populated_facts_errors_and_restart_identity
     daemon.await_failure();
 }
 
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
+async fn supervisor_checkpoint_release_timeout_and_restart_are_owned() {
+    use fixture_daemon::{
+        CheckpointBinding, CheckpointPhase, CheckpointPoint, CheckpointRequest as R,
+        FixtureCheckpointClient as Client,
+    };
+    let mut daemon = Daemon::start();
+    let supervisor = Client::new(
+        daemon.directory.join("supervisor.sock"),
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    let worker = Client::new(daemon.directory.join("client.sock"), Duration::from_secs(2)).unwrap();
+    // Socket path creation precedes listen readiness; use the protocol handshake.
+    let ready_deadline = Instant::now() + Duration::from_secs(2);
+    let state = loop {
+        match supervisor.request(R::Status).await {
+            Ok(reply) => break reply.state,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ConnectionRefused
+                    && Instant::now() < ready_deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await
+            }
+            Err(error) => panic!("checkpoint readiness failed: {error}"),
+        }
+    };
+    let binding = CheckpointBinding {
+        generation: state.generation,
+        owner: Uuid::now_v7(),
+        operation: Uuid::now_v7(),
+        point: CheckpointPoint::DispatchCommitted,
+    };
+    assert!(
+        !worker
+            .request(R::Arm {
+                binding,
+                timeout_ms: 1000
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    assert!(
+        supervisor
+            .request(R::Arm {
+                binding,
+                timeout_ms: 1000
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    let pending = tokio::spawn(async move { worker.checkpoint(binding).await });
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        if supervisor.request(R::Status).await.unwrap().state.phase == CheckpointPhase::Entered {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(!pending.is_finished());
+    let persisted: fixture_daemon::CheckpointState =
+        serde_json::from_slice(&fs::read(daemon.directory.join("checkpoint.json")).unwrap())
+            .unwrap();
+    assert_eq!(persisted.phase, CheckpointPhase::Entered);
+    let stale = CheckpointBinding {
+        owner: Uuid::now_v7(),
+        ..binding
+    };
+    assert!(
+        !supervisor
+            .request(R::Release { binding: stale })
+            .await
+            .unwrap()
+            .ok
+    );
+    assert!(supervisor.request(R::Release { binding }).await.unwrap().ok);
+    pending.await.unwrap().unwrap();
+    daemon.child.kill().unwrap();
+    daemon.child.wait().unwrap();
+    daemon.clear_stale_sockets().unwrap();
+    daemon.child = Daemon::spawn(&daemon.directory);
+    daemon.await_ready();
+    assert!(!supervisor.request(R::Release { binding }).await.unwrap().ok);
+    let fresh = supervisor.request(R::Status).await.unwrap().state;
+    assert_ne!(fresh.generation, binding.generation);
+    assert_eq!(fresh.phase, CheckpointPhase::Idle);
+    let fresh_binding = CheckpointBinding {
+        generation: fresh.generation,
+        ..binding
+    };
+    assert!(
+        supervisor
+            .request(R::Arm {
+                binding: fresh_binding,
+                timeout_ms: 20
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    let worker = Client::new(daemon.directory.join("client.sock"), Duration::from_secs(1)).unwrap();
+    assert!(worker.checkpoint(fresh_binding).await.is_err());
+    assert_eq!(
+        supervisor.request(R::Status).await.unwrap().state.phase,
+        CheckpointPhase::Expired
+    );
+    let status = daemon.request("client.sock", br#"{"command":"status"}"#);
+    assert_eq!((status.attempts, status.effects), (0, 0));
+}
+
 struct Daemon {
     directory: PathBuf,
     child: Child,

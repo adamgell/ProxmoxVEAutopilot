@@ -152,6 +152,8 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
     };
     let client = UnixListener::bind(directory.join("client.sock"))?;
     let control = UnixListener::bind(directory.join("supervisor.sock"))?;
+    #[cfg(feature = "fixture-ipc")]
+    let mut barrier = super::checkpoint::Barrier::new(directory)?;
     client.set_nonblocking(true)?;
     control.set_nonblocking(true)?;
     let deadline = Instant::now() + lifetime;
@@ -169,6 +171,25 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
             let Ok(bytes) = read_frame(&mut stream) else {
                 continue;
             };
+            #[cfg(feature = "fixture-ipc")]
+            {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct CheckpointEnvelope {
+                    command: String,
+                    request: super::CheckpointRequest,
+                }
+                if let Ok(envelope) = serde_json::from_slice::<CheckpointEnvelope>(&bytes)
+                    && envelope.command == "checkpoint"
+                {
+                    let result = barrier.handle(envelope.request, supervisor)?;
+                    let payload = serde_json::to_vec(&result)?;
+                    let _ = stream
+                        .write_all(&(payload.len() as u32).to_be_bytes())
+                        .and_then(|()| stream.write_all(&payload));
+                    continue;
+                }
+            }
             let mut response = Reply {
                 ok: false,
                 attempts: log.records().len(),

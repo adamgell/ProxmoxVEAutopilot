@@ -3,7 +3,12 @@
 //! The ledger is private; callers can run the bounded daemon and inspect its
 //! protocol replies. `FixtureProvisioningPort` supplies a sealed synthetic Clone
 //! capability; it has no controller checkpoint implementation.
+mod checkpoint;
 mod clone_mutation;
+pub use checkpoint::{
+    CheckpointBinding, CheckpointPhase, CheckpointPoint, CheckpointReply, CheckpointRequest,
+    CheckpointState, FixtureCheckpointClient,
+};
 mod clone_reads;
 mod provisioning_port;
 mod provisioning_reads;
