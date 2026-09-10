@@ -6,10 +6,12 @@
 //! checkpoint configuration fails closed before controller dispatch.
 mod checkpoint;
 mod clone_mutation;
+mod late_authorization;
 pub use checkpoint::{
     CheckpointBinding, CheckpointPhase, CheckpointPoint, CheckpointReply, CheckpointRequest,
     CheckpointState, FixtureCheckpointClient,
 };
+pub use late_authorization::{FixtureReadIdentity, LateCloneAuthorizationV1};
 mod clone_reads;
 mod provisioning_port;
 mod provisioning_reads;

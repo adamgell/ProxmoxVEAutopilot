@@ -22,6 +22,75 @@ fn request() -> FixtureCloneRequest {
     .unwrap()
 }
 
+#[test]
+fn late_authorization_candidate_requires_exact_dispatch_and_entered_owner() {
+    use pve_port::fixture_support::*;
+    let request = request();
+    let vm = request.request().clone_request().vm();
+    let identity = FixtureReadIdentity {
+        fixture_id: request.fixture_id(),
+        operation: request.request().binding().operation_id().as_uuid(),
+        node: vm.node().as_str().into(),
+        source_vmid: vm.source_vmid().get(),
+        target_vmid: vm.target_vmid().get(),
+    };
+    let binding = CheckpointBinding {
+        generation: Uuid::from_u128(12),
+        owner: Uuid::from_u128(13),
+        operation: identity.operation,
+        point: CheckpointPoint::DispatchCommitted,
+    };
+    let barrier = CheckpointState {
+        generation: binding.generation,
+        binding: Some(binding),
+        phase: CheckpointPhase::Entered,
+    };
+    let mut candidate = LateCloneAuthorizationV1 {
+        version: 1,
+        binding,
+        identity: identity.clone(),
+        request_sha256: request.request_sha256(),
+        request: request.encode().unwrap(),
+    };
+    let valid = |candidate: &LateCloneAuthorizationV1, state: &CheckpointState| {
+        candidate.validate_candidate(&identity, binding, state, &request)
+    };
+    assert!(valid(&candidate, &barrier).is_ok());
+    for phase in [
+        CheckpointPhase::Idle,
+        CheckpointPhase::Armed,
+        CheckpointPhase::Released,
+        CheckpointPhase::Expired,
+    ] {
+        let mut state = barrier.clone();
+        state.phase = phase;
+        assert!(valid(&candidate, &state).is_err());
+    }
+    candidate.request_sha256 = "0".repeat(64);
+    assert!(valid(&candidate, &barrier).is_err());
+    candidate.request_sha256 = request.request_sha256();
+    candidate.binding.owner = Uuid::from_u128(14);
+    assert!(valid(&candidate, &barrier).is_err());
+    candidate.binding = binding;
+    candidate.identity.target_vmid += 1;
+    assert!(valid(&candidate, &barrier).is_err());
+    candidate.identity = identity;
+    candidate.version = 2;
+    assert!(
+        candidate
+            .validate_candidate(&candidate.identity, binding, &barrier, &request)
+            .is_err()
+    );
+    let mut state = barrier;
+    state.generation = Uuid::from_u128(99);
+    candidate.version = 1;
+    assert!(
+        candidate
+            .validate_candidate(&candidate.identity, binding, &state, &request)
+            .is_err()
+    );
+}
+
 fn upid() -> Upid {
     Upid::parse("UPID:pve-test:00000001:00000001:00000001:qmclone:900:fake@pve:").unwrap()
 }
