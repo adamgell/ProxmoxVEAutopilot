@@ -5,13 +5,14 @@ use pve_port::{ClusterVmInventory, PveReadError, fixture_support::SeedIdentity};
 use serde_json::json;
 
 #[test]
-fn unrelated_inventory_identity_does_not_establish_configuration_coverage() {
+fn unrelated_inventory_identity_preserves_its_own_configuration_coverage() {
     use pve_port::ProvisioningIdentitySnapshotV1;
     let seed: SeedIdentity = serde_json::from_value(json!({
         "node":"other-node", "vmid":777, "name":"unrelated", "template":false,
         "config_sha256":"a".repeat(64), "uuid":uuid::Uuid::from_u128(2),
         "mac":"02:00:00:00:00:02", "primary_storage":"local-lvm",
         "primary_volume":"vm-777-disk-0",
+        "coverage":{"state":"observed","observed_unix_ms":1800000000000u64,"value":"partial"},
         "status":{"state":"observed","observed_unix_ms":1800000000000u64,"value":"running"}
     }))
     .unwrap();
@@ -26,7 +27,15 @@ fn unrelated_inventory_identity_does_not_establish_configuration_coverage() {
     // The collector reads every inventory member's identity, including this VM
     // outside the request's source/target. Their coverage cannot bind this VM.
     assert!(serde_json::from_value::<ProvisioningIdentitySnapshotV1>(projection.clone()).is_err());
-    projection["coverage"] = json!("partial");
+    let pve_port::fixture_support::SeedRead::Observed {
+        observed_unix_ms,
+        value,
+    } = seed.coverage
+    else {
+        panic!("expected observed coverage")
+    };
+    assert_eq!(observed_unix_ms, at.timestamp_millis() as u64);
+    projection["coverage"] = serde_json::to_value(value).unwrap();
     let partial: ProvisioningIdentitySnapshotV1 =
         serde_json::from_value(projection.clone()).unwrap();
     projection["coverage"] = json!("complete");
@@ -35,8 +44,10 @@ fn unrelated_inventory_identity_does_not_establish_configuration_coverage() {
     assert_eq!(partial.vmid(), complete.vmid());
     assert_eq!(partial.observed_at(), at);
     assert_eq!(complete.observed_at(), at);
-    // Both configuration-coverage worlds fit the same seeded membership/status.
-    // A future adapter must obtain the additional fact before claiming Complete.
+    assert_eq!(
+        partial.coverage(),
+        pve_port::ProvisioningCoverageV1::Partial
+    );
 }
 
 #[test]
@@ -47,6 +58,7 @@ fn seeded_inventory_status_supplies_its_own_power_observation() {
         "uuid": "550e8400-e29b-41d4-a716-446655440000",
         "mac": "02:00:00:00:00:01", "primary_storage": "local-lvm",
         "primary_volume": "vm-900-disk-0",
+        "coverage":{"state":"observed","observed_unix_ms":1800000000000u64,"value":"complete"},
         "status": {"state":"observed", "observed_unix_ms":1800000000000u64,"value":"running"}
     }))
     .unwrap();
@@ -93,6 +105,7 @@ fn inventory_status_requires_explicit_valid_snapshot_bound_observation() {
         "node":"other-node", "vmid":777, "name":"unrelated", "template":false,
         "config_sha256":"a".repeat(64),"uuid":uuid::Uuid::from_u128(2),
         "mac":"02:00:00:00:00:02","primary_storage":"local-lvm","primary_volume":"vm-777-disk-0",
+        "coverage":{"state":"observed","observed_unix_ms":126,"value":"partial"},
         "status":{"state":"observed","observed_unix_ms":126,"value":"running"}
     });
     let seed = json!({"version":1,"fixture_id":id,"node":"pve",
@@ -124,7 +137,34 @@ fn inventory_status_requires_explicit_valid_snapshot_bound_observation() {
             "case {case}"
         );
     }
+    for case in 0..6 {
+        let mut bad = seed.clone();
+        let entry = &mut bad["cluster_inventory"]["value"][0];
+        match case {
+            0 => {
+                entry.as_object_mut().unwrap().remove("coverage");
+            }
+            1 => entry["coverage"]["observed_unix_ms"] = json!(127),
+            2 => entry["coverage"]["value"] = json!("unknown"),
+            3 => entry["coverage"]["extra"] = json!(true),
+            4 => entry["coverage"]["observed_unix_ms"] = json!(0),
+            _ => {
+                entry["coverage"] = json!({"state":"error","observed_unix_ms":126,"error":"unavailable","value":"complete"})
+            }
+        }
+        assert!(
+            FixtureCloneReads::decode(&serde_json::to_vec(&bad).unwrap(), id).is_err(),
+            "coverage case {case}"
+        );
+    }
+    let duplicate = text.replace(
+        "\"value\":\"partial\"",
+        "\"value\":\"partial\",\"value\":\"complete\"",
+    );
+    assert!(FixtureCloneReads::decode(duplicate.as_bytes(), id).is_err());
     let mut unavailable = seed;
+    unavailable["cluster_inventory"]["value"][0]["coverage"] =
+        json!({"state":"error","observed_unix_ms":126,"error":"unavailable"});
     unavailable["cluster_inventory"]["value"][0]["status"] =
         json!({"state":"error","observed_unix_ms":126,"error":"unavailable"});
     assert!(FixtureCloneReads::decode(&serde_json::to_vec(&unavailable).unwrap(), id).is_ok());

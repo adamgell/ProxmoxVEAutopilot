@@ -56,6 +56,8 @@ pub struct SeedBridge {
 pub struct SeedIdentity {
     /// Status sampled with this inventory, independently of provisioning reads.
     pub status: SeedRead<crate::PowerState>,
+    /// Configuration coverage observed for this member at the inventory time.
+    pub coverage: SeedRead<crate::ProvisioningCoverageV1>,
     pub node: String,
     pub vmid: u32,
     pub name: String,
@@ -161,6 +163,13 @@ impl FixtureCloneReads {
                 items.len() <= 32
                     && items.iter().all(|v| {
                         (match &v.status {
+                            SeedRead::Observed {
+                                observed_unix_ms, ..
+                            }
+                            | SeedRead::Error {
+                                observed_unix_ms, ..
+                            } => *observed_unix_ms == snapshot_time,
+                        }) && (match &v.coverage {
                             SeedRead::Observed {
                                 observed_unix_ms, ..
                             }

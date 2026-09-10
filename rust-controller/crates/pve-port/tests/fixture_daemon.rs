@@ -331,6 +331,7 @@ async fn clone_reads_preserve_seed_errors_identity_and_restart_observations() {
             "node":"other-node","vmid":777,"name":"unrelated","template":false,
             "config_sha256":"a".repeat(64),"uuid":Uuid::from_u128(777),
             "mac":"02:00:00:00:00:77","primary_storage":"local-lvm","primary_volume":"vm-777-disk-0",
+            "coverage":{"state":"observed","observed_unix_ms":126,"value":"partial"},
             "status":{"state":"observed","observed_unix_ms":126,"value":"running"}
         }]}
     });
