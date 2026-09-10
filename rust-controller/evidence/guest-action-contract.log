@@ -1,0 +1,106 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/osdeploy_adapter-418aeffb73d741e3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/guest_action.rs (target/debug/deps/guest_action-c3e98476e24ee62f)
+
+running 3 tests
+test identity_uses_operation_as_stable_step_and_zero_retry ... ok
+test non_guest_stage_and_nil_identities_fail_closed ... ok
+test only_the_five_guest_stages_admit_identity ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/input_values.rs (target/debug/deps/input_values-911d2e826308ff5c)
+
+running 12 tests
+test disk_capacity_checks_binary_gib_overflow_before_comparing_template ... ok
+test disk_capacity_rejects_subminimum_requests_and_empty_templates ... ok
+test every_phase_duration_independently_enforces_inclusive_bounds ... ok
+test freshness_is_positive_at_most_300_and_no_larger_than_mutation_budget ... ok
+test equivalent_normalized_names_share_agent_id_without_claiming_uniqueness ... ok
+test disk_capacity_is_grow_only_and_preserves_exact_template_bytes ... ok
+test legacy_normalization_uses_literal_ascii_golden_examples ... ok
+test names_preserve_requested_and_independent_pve_identity_and_derive_agent_id ... ok
+test names_reject_invalid_original_utf8_byte_length_and_controls ... ok
+test native_names_reject_unsupported_normalized_outputs ... ok
+test policy_retains_short_phase_budgets_independently_of_freshness ... ok
+test production_defaults_pin_all_budgets_and_preserve_force_stop_choice ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/plan.rs (target/debug/deps/plan-6c032f8225c9c4a4)
+
+running 15 tests
+test artifact_apply_index_fits_signed_guest_consumer_and_retains_source_provenance ... ok
+test payload_hash_presence_controls_only_declared_or_unverified_claim ... ok
+test complete_snapshot_pins_all_inputs_fixed_native_fields_and_nested_claims ... ok
+test profile_references_are_required_non_nil_opaque_ids ... ok
+test vm_admission_requires_four_gib_and_consistent_independent_pve_name ... ok
+test payload_and_template_hashes_reject_length_nonhex_unicode_and_controls ... ok
+test both_serials_require_bounded_ascii_tokens_with_alphanumeric_endpoints ... ok
+test equivalent_hash_case_normalizes_before_complete_fingerprinting ... ok
+test both_media_fields_admit_only_narrow_native_iso_references ... ok
+test os_labels_and_language_are_bounded_declarations_without_commands_or_paths ... ok
+test canonical_fingerprint_matches_independently_hashed_literal_snapshot_on_reconstruction ... ok
+test fingerprint_binds_every_artifact_input_and_output_index_provenance ... ok
+test fingerprint_binds_names_capacity_every_phase_and_force_stop_policy ... ok
+test fingerprint_binds_every_vm_identity_resource_and_free_storage_field ... ok
+test fingerprint_binds_every_media_payload_serial_os_and_profile_reference ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/provisioning.rs (target/debug/deps/provisioning-9d43bd8804be8d60)
+
+running 3 tests
+test serial_20_succeeds_and_21_fails_without_narrowing_declarations ... ok
+test derives_every_pve_field_and_retains_effective_capacity ... ok
+test non_pve_inputs_change_workflow_digest_without_changing_pve_subset ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/restore.rs (target/debug/deps/restore-f0a69360a86dc7d3)
+
+running 14 tests
+test rejects_duplicate_fields_before_value_normalization ... ok
+test rejects_malformed_trailing_and_deep_json_with_payload_free_errors ... ok
+test broad_serial_declaration_restores_but_does_not_grant_dispatch_compatibility ... ok
+test input_limit_counts_utf8_bytes_and_accepts_exactly_65536 ... ok
+test restores_complete_admitted_plan ... ok
+test equivalent_json_layout_roundtrips_but_wrong_or_noncanonical_hashes_do_not ... ok
+test nonintegral_retained_capacity_and_phase_policy_boundaries_roundtrip ... ok
+test valid_source_fallback_and_all_required_null_payloads_roundtrip ... ok
+test fixed_fields_cannot_be_changed_even_with_a_matching_forged_digest ... ok
+test normalized_and_derived_claims_cannot_be_forged ... ok
+test every_object_rejects_unknown_fields_scalars_null_and_positional_arrays ... ok
+test constructors_revalidate_identities_resources_and_input_limits ... ok
+test every_top_level_and_nested_field_is_required_unique_and_typed ... ok
+test every_string_field_rejects_enum_objects_numbers_booleans_and_null ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/stages.rs (target/debug/deps/stages-9806c3cbf21dfb9c)
+
+running 4 tests
+test only_ensure_stopped_has_the_guarded_escalation_dependency ... ok
+test stage_kinds_preserve_mutation_callback_observation_and_guest_boundaries ... ok
+test fixed_manifest_preserves_all_sixteen_operation_identities_in_order ... ok
+test serialization_pins_every_stage_kind_and_dependency_encoding ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests osdeploy_adapter
+
+running 6 tests
+test crates/osdeploy-adapter/src/plan.rs - plan::OsDeployPlanV1 (line 87) - compile fail ... ok
+test crates/osdeploy-adapter/src/input_values.rs - input_values::DiskCapacity (line 9) - compile fail ... ok
+test crates/osdeploy-adapter/src/plan.rs - plan::PayloadDeclaration (line 17) - compile fail ... ok
+test crates/osdeploy-adapter/src/plan.rs - plan::OsDeployPlanV1 (line 94) - compile fail ... ok
+test crates/osdeploy-adapter/src/plan.rs - plan::PayloadDeclaration (line 24) - compile fail ... ok
+test crates/osdeploy-adapter/src/input_values.rs - input_values::PhasePolicy (line 124) - compile fail ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+

@@ -1,5 +1,6 @@
 //! Pure OSDeploy stage and validated input contract.
 
+mod guest_action;
 mod input_values;
 mod plan;
 mod provisioning;
@@ -8,6 +9,7 @@ mod stages;
 pub use provisioning::pve_expectations;
 pub use restore::restore_osdeploy_plan_v1;
 
+pub use guest_action::GuestActionIdentity;
 pub use input_values::{
     DeploymentNames, DiskCapacity, PhasePolicy, PhasePolicyInput, normalize_legacy_windows_name,
 };
@@ -17,6 +19,10 @@ pub use stages::{OsDeployStage, StageDependency, StageKind};
 /// Fixed errors never retain rejected input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ContractError {
+    #[error("stage is not a guest action")]
+    InvalidGuestActionStage,
+    #[error("guest action operation and attempt identities must be non-nil")]
+    InvalidGuestActionIdentity,
     #[error("persisted deployment plan is invalid")]
     InvalidPersistedPlan,
     #[error("desired PVE disk serial exceeds the 20-byte dispatch limit")]
