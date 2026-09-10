@@ -38,6 +38,15 @@ must be supervisor-controlled to prove crash placement after durable dispatch.
 
 ## Next implementation and acceptance proof
 
+The opt-in `FixtureCloneReads` envelope now represents supervisor observations
+for node status, storage, bridges, and complete cluster inventory with identities.
+Its bounded loader validates the expected fixture UUID, rejects unknown fields,
+duplicate inventory VM IDs and duplicate resource names, and preserves each read's
+timestamp and explicit error. Missing files return unavailable. This is a seed
+schema prefix only: the daemon does not yet load or serve it, and it grants no
+preflight or mutation capability. Full config/media facts and replay projections
+remain required. Focused schema tests and feature library Clippy passed.
+
 1. Add a bounded, typed supervisor seed for the read families above. Preserve
    source observation times and explicit read errors. Bind the seed, Clone
    authorization and daemon state to one fixture identity.
