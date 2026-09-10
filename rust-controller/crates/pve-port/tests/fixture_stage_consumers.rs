@@ -27,7 +27,7 @@ async fn checkpoint(socket: &Path, request: StageCheckpointRequest) -> StageChec
 }
 
 #[tokio::test]
-async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
+async fn durable_clone_resize_configure_requires_exact_accepted_predecessor() {
     use std::os::unix::fs::PermissionsExt;
     let directory = std::path::PathBuf::from("/tmp").join(format!("se-{}", Uuid::now_v7()));
     std::fs::create_dir(&directory).unwrap();
@@ -35,9 +35,9 @@ async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
     let fixture = Uuid::now_v7();
     let episodes = provisioning_support::chain();
     let mut prior: Option<(FixtureStageIdentity, FixtureStageRequest)> = None;
-    let mut accepted = Vec::new();
+    let mut accepted: Vec<(FixtureStageIdentity, serde_json::Value)> = Vec::new();
     let mut submitted = Vec::new();
-    for (index, episode) in episodes.iter().take(2).enumerate() {
+    for (index, episode) in episodes.iter().take(3).enumerate() {
         if index > 0 {
             std::fs::remove_file(directory.join("client.sock")).unwrap();
             std::fs::remove_file(directory.join("supervisor.sock")).unwrap();
@@ -59,8 +59,10 @@ async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
             operation: episode.request.binding().operation_id().as_uuid(),
             stage: if index == 0 {
                 FixtureLedgerStage::Clone
-            } else {
+            } else if index == 1 {
                 FixtureLedgerStage::DiskCapacity
+            } else {
+                FixtureLedgerStage::ConfigurePe
             },
             attempt: episode.request.binding().attempt_id().as_uuid(),
             generation,
@@ -110,7 +112,7 @@ async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
                     committed_request: request.encode().unwrap(),
                     after: VmState {
                         disk_bytes,
-                        pe_configured: false
+                        pe_configured: index == 2
                     }
                 }
             )
@@ -146,6 +148,21 @@ async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
             .decode_receipt(&serde_json::to_vec(&reply).unwrap())
             .unwrap_or_else(|error| panic!("stage {index}: {error:?}, {reply}"));
         assert_eq!(receipt.submission_sequence(), (index + 1) as u64);
+        if index == 2 {
+            assert_eq!(
+                receipt.receipt(),
+                &pve_port::MutationReceipt::SynchronousAccepted
+            );
+            // ConfigurePe cannot acquire an asynchronous task identity, even
+            // when the receipt envelope otherwise matches its exact request.
+            let mut wrong_kind = reply.clone();
+            wrong_kind["receipt"] = accepted[1].1["receipt"].clone();
+            assert!(
+                request
+                    .decode_receipt(&serde_json::to_vec(&wrong_kind).unwrap())
+                    .is_err()
+            );
+        }
         assert_eq!(send(&client, message).await["ok"], false);
         assert!(
             !checkpoint(
@@ -178,7 +195,7 @@ async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
         send(&supervisor, serde_json::json!({"command":"shutdown"})).await;
         daemon.join().unwrap();
     }
-    // A fresh daemon reloads both committed effects; every read uses a new
+    // A fresh daemon reloads all three committed effects; every read uses a new
     // connection, without retaining the submitting worker's transport state.
     std::fs::remove_file(directory.join("client.sock")).unwrap();
     std::fs::remove_file(directory.join("supervisor.sock")).unwrap();
@@ -202,8 +219,8 @@ async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
         )
         .await;
         assert_eq!(recovered["ok"], true);
-        assert_eq!(recovered["attempts"], 2);
-        assert_eq!(recovered["effects"], 2);
+        assert_eq!(recovered["attempts"], 3);
+        assert_eq!(recovered["effects"], 3);
         let bytes: Vec<u8> =
             serde_json::from_value(recovered["accepted_effect"]["receipt"].clone()).unwrap();
         assert_eq!(
@@ -221,7 +238,7 @@ async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
         ] {
             let mut wrong = serde_json::to_value(identity).unwrap();
             wrong[field] = if field == "stage" {
-                serde_json::json!("configure_pe")
+                serde_json::json!("unsupported_stage")
             } else if field == "request_sha256" {
                 serde_json::json!("f".repeat(64))
             } else {
@@ -233,11 +250,11 @@ async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
             )
             .await;
             assert!(response["ok"] == false || response["accepted_effect"].is_null());
-            assert_eq!(response["attempts"], 2);
-            assert_eq!(response["effects"], 2);
+            assert_eq!(response["attempts"], 3);
+            assert_eq!(response["effects"], 3);
         }
     }
-    let (_, resize_request) = prior.unwrap();
+    let resize_request = FixtureStageRequest::new(fixture, episodes[1].request.clone()).unwrap();
     let mut capacity_rebound = submitted[1].clone();
     let capacity = &mut capacity_rebound["request"]["request"]["request"]["plan"]["expected"]["effective_capacity_bytes"];
     assert_eq!(capacity.as_u64(), Some(120 * 1_073_741_824));
@@ -272,8 +289,8 @@ async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
             .is_err()
     );
     let status = send(&client, serde_json::json!({"command":"status"})).await;
-    assert_eq!(status["attempts"], 2);
-    assert_eq!(status["effects"], 2);
+    assert_eq!(status["attempts"], 3);
+    assert_eq!(status["effects"], 3);
     send(&supervisor, serde_json::json!({"command":"shutdown"})).await;
     daemon.join().unwrap();
 }

@@ -110,8 +110,8 @@ impl FixtureMutationClient {
         self.send_stage(serde_json::to_value(binding)?, request, None)
             .await
     }
-    /// Stage protocol identity. Clone can submit directly; resize additionally
-    /// requires `stage_late_with_predecessor`. ConfigurePe remains rejected.
+    /// Stage protocol identity. Clone can submit directly; resize and ConfigurePe
+    /// additionally require `stage_late_with_predecessor`.
     pub async fn stage_late_bound(
         &self,
         binding: super::FixtureStageIdentity,
@@ -122,7 +122,8 @@ impl FixtureMutationClient {
             .await
     }
     /// Supplies the original predecessor as evidence. The daemon verifies its
-    /// digest and binding against durable acceptance before permitting resize.
+    /// digest and binding against durable acceptance before permitting resize
+    /// or synchronous ConfigurePe acceptance.
     pub async fn stage_late_with_predecessor(
         &self,
         binding: super::FixtureStageIdentity,
