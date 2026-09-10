@@ -11,6 +11,11 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 
 ## Restarted verification checkpoint (2026-09-10)
 
+### Stage-aware publication/readback seam (2026-09-10)
+
+- Commit `857b485` binds post-dispatch fixture publication and readback to the exact durable stage effect. Clone and DiskCapacity/resize receipts are decoded with stage-specific UPID rules, and publication validates operation, stage, attempt, generation, owner, request digest, effect identity, observation bounds, and duplicate/restart invalidation. Seven focused `fixture_post_dispatch` tests, feature-enabled strict Clippy, formatting, and diff checks pass. The adapter remains legacy Clone-only pending stage checkpoint/submit wiring; ConfigurePe and full three-stage controller progression remain open.
+- Independent Astra audit found the retained Linux owned-v1 evidence stale for this source: the current branch is `857b485` while the retained image/source seal is `ac03e96c...`; 47 Rust inputs differ. The approved OrbStack Linux runner and feature-gated `pve-port` runtime coverage must be rebuilt and executed before claiming current-source Linux qualification. No production or real Proxmox state was changed.
+
 ### Final owned Linux full-run result (2026-09-10)
 
 - The corrected exact-source Linux/amd64 owned-v1 run completed successfully in `restart-task9-owned-full-4`. The bounded Docker invocation exited `0` within its 1,820-second bound; the retained invocation record is `0025.json` and the complete stdout/stderr are `0025.stdout` / `0025.stderr`.

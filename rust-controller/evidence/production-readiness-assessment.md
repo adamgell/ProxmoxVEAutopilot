@@ -10,6 +10,9 @@ Production and `192.168.2.4`: read-only throughout
 
 ## Proven locally
 
+- Commit `857b485` verifies stage-aware Clone and DiskCapacity/resize post-dispatch publication/readback with exact durable-effect identity, owner/generation/attempt/digest binding, restart invalidation, duplicate refusal, and seven focused tests. The `FixtureProvisioningPort` adapter and full three-stage controller progression are still incomplete.
+- Current-source Linux qualification is not established: the retained owned-v1 image is sealed to `ac03e96c...`, while the current Rust source is later and differs in 47 inputs. A fresh approved OrbStack Linux build must explicitly execute feature-gated `pve-port` runtime tests; existing Linux compilation and other-package runs are insufficient.
+
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
 - The final macOS four-package regression at `557bd12` passed 665 tests, with 3 intentionally ignored, under a bounded supervisor.
 - The prior full Linux/amd64 qualification image was built from `49b0877` and inspected as `sha256:d2a7622623953ba9342e11ed1d6df00d8dc62c1d62713bdf94e70f9135cb459c`. After the guest-action change, a fresh exact-source image was built as `sha256:6c2c32025ce3a2d610c5f3be18d27b1f78a60e6b2e60257023ba8c36503fcdda`; the owned-v1 smoke and changed-source full Linux gates both passed. Full evidence is retained in `restart-task9-owned-full-guest-1/`.
