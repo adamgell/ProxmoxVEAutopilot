@@ -17,8 +17,8 @@ import time
 import uuid
 
 PG_IMAGE = "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
-RUNNER_IMAGE = "sha256:d2a7622623953ba9342e11ed1d6df00d8dc62c1d62713bdf94e70f9135cb459c"
-IMAGE_SOURCE = "49b08779edb1d9d5f3c2b6247cbce77bd6f33751"
+RUNNER_IMAGE = "sha256:4dd13f3c600b2da07c580d5a7d0bf2263a0429ee2029c8e35524a394fd9c740b"
+IMAGE_SOURCE = "da8a40218db163ff367041bb8814b0a33321fee1"
 SOCKET = "unix:///Users/Adam.Gell/.orbstack/run/docker.sock"
 LABEL = "io.proxmoxveautopilot.task9-owned"
 DATA = "/var/lib/postgresql/data"
