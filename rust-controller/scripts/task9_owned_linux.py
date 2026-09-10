@@ -234,7 +234,13 @@ def inside(mode):
     if mode == "smoke":
         require(b"test result: ok. 1 passed; 0 failed;" in out
                 and ("test " + SMOKE + " ... ok").encode() in out, "exact smoke result missing")
-    return 1 if result["failure"] or result["exit"] != 0 or b"native_fake_cleanup_unconfirmed" in out + err else 0
+    # The marker is forbidden for the one-test smoke proof, where it would
+    # indicate that unrelated cleanup work leaked into the invocation. The
+    # full suite intentionally exercises and emits that diagnostic, so its
+    # authoritative pass/fail signal is the bounded Cargo exit status.
+    return 1 if result["failure"] or result["exit"] != 0 or (
+        mode == "smoke" and b"native_fake_cleanup_unconfirmed" in out + err
+    ) else 0
 
 
 INSPECT = '{"Id":{{json .Id}},"Name":{{json .Name}},"Image":{{json .Image}},"Labels":{{json .Config.Labels}},"Host":{{json .HostConfig}},"Mounts":{{json .Mounts}},"State":{{json .State}},"RestartCount":{{json .RestartCount}},"Ports":{{json .NetworkSettings.Ports}}}'
