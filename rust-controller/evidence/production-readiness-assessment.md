@@ -12,8 +12,8 @@ Production and `192.168.2.4`: read-only throughout
 
 - Current Rust source is committed through `d9f8949811d600faf308b565f8666213d82609af`; the guest-action contract implementation is `da8a40218db163ff367041bb8814b0a33321fee1`.
 - The final macOS four-package regression at `557bd12` passed 665 tests, with 3 intentionally ignored, under a bounded supervisor.
-- The prior full Linux/amd64 qualification image was built from `49b0877` and inspected as `sha256:d2a7622623953ba9342e11ed1d6df00d8dc62c1d62713bdf94e70f9135cb459c`. After the guest-action change, a fresh exact-source image was built as `sha256:4dd13f3c600b2da07c580d5a7d0bf2263a0429ee2029c8e35524a394fd9c740b` and passed the owned-v1 smoke gate; the changed-source full Linux run is still pending.
-- The owned-v1 Linux full run completed with exit 0 under the bounded 1,820-second supervisor. All executed Rust targets reported zero failures; evidence is retained in `restart-task9-owned-full-4/`.
+- The prior full Linux/amd64 qualification image was built from `49b0877` and inspected as `sha256:d2a7622623953ba9342e11ed1d6df00d8dc62c1d62713bdf94e70f9135cb459c`. After the guest-action change, a fresh exact-source image was built as `sha256:6c2c32025ce3a2d610c5f3be18d27b1f78a60e6b2e60257023ba8c36503fcdda`; the owned-v1 smoke and changed-source full Linux gates both passed. Full evidence is retained in `restart-task9-owned-full-guest-1/`.
+- The changed-source full run completed with exit 0 under the bounded supervisor. Its 23 test-result groups reported zero failures, with zero cgroup memory OOM/event counters and exact source/image/launcher bindings.
 - The isolated Linux Compose proof passed the three-worker synthetic scheduling, PostgreSQL, cancellation/recovery, native adapter, and descendant-cleanup scenarios (12 lifecycle plus 4 native PostgreSQL tests).
 - Python compatibility-side contracts passed with explicit Python 3.12: producer 2/2, proof-wait 5/5, and proof-coordination 1/1.
 - Rust formatting, strict offline/locked Clippy, focused protocol checks, and bounded child/process cleanup evidence passed for the accepted local source changes.
@@ -49,4 +49,5 @@ Decision owner: Adam, after the remaining service, independent-process handoff/r
 - [Python contract receipt](../../restart-task9-python-contracts-3.receipt.json)
 - [Readiness tracker](poc-readiness-tracker.md)
 - [Owned Linux full-run evidence](restart-task9-owned-full-4/)
+- [Changed-source owned Linux full-run evidence](restart-task9-owned-full-guest-1/)
 - [Restart/recovery and compatibility evidence](restart-recovery-1/acceptance.md)
