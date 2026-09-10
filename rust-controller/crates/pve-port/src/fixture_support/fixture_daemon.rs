@@ -25,6 +25,13 @@ const IO_BOUND: Duration = Duration::from_millis(100);
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum ClientRequest {
     #[cfg(feature = "fixture-ipc")]
+    StageLate {
+        #[serde(rename = "binding")]
+        _binding: super::CheckpointBinding,
+        #[serde(rename = "request")]
+        _request: serde_json::Value,
+    },
+    #[cfg(feature = "fixture-ipc")]
     ProvisioningReadsV2 {
         identity: super::FixtureReadIdentity,
     },
@@ -236,6 +243,11 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                 }
             } else {
                 match serde_json::from_slice::<ClientRequest>(&bytes) {
+                    // Reserved v2 command: legacy operation-only authorization
+                    // cannot safely authorize multiple stages of one operation.
+                    // Rejection must precede checkpoint consumption or log writes.
+                    #[cfg(feature = "fixture-ipc")]
+                    Ok(ClientRequest::StageLate { .. }) => {}
                     #[cfg(feature = "fixture-ipc")]
                     Ok(ClientRequest::ProvisioningReadsV2 { identity }) => {
                         if identity.validate().is_ok()

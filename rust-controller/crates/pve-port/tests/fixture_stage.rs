@@ -3,6 +3,61 @@ mod provisioning_support;
 use provisioning_support::chain;
 use pve_port::{fixture_ipc::*, *};
 
+#[tokio::test]
+async fn stage_transport_rejects_without_attempts_or_effects_across_restart() {
+    use pve_port::fixture_support::*;
+    use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let directory = std::path::PathBuf::from("/tmp").join(format!("fs-{}", uuid::Uuid::now_v7()));
+    fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    for restart in [false, true] {
+        if restart {
+            fs::remove_file(directory.join("client.sock")).unwrap();
+            fs::remove_file(directory.join("supervisor.sock")).unwrap();
+        }
+        let path = directory.clone();
+        let daemon = std::thread::spawn(move || run(&path, Duration::from_secs(1)).unwrap());
+        let socket = directory.join("client.sock");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !socket.exists() {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let client = FixtureMutationClient::new(socket.clone(), Duration::from_secs(1)).unwrap();
+        for episode in chain().iter().take(3) {
+            let request =
+                FixtureStageRequest::new(uuid::Uuid::now_v7(), episode.request.clone()).unwrap();
+            let binding = CheckpointBinding {
+                generation: uuid::Uuid::now_v7(),
+                owner: uuid::Uuid::now_v7(),
+                operation: episode.request.binding().operation_id().as_uuid(),
+                point: CheckpointPoint::DispatchCommitted,
+            };
+            assert_eq!(
+                client
+                    .stage_late(binding, &request)
+                    .await
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::InvalidData
+            );
+        }
+        let mut stream = tokio::net::UnixStream::connect(&socket).await.unwrap();
+        let payload = br#"{"command":"status"}"#;
+        stream.write_u32(payload.len() as u32).await.unwrap();
+        stream.write_all(payload).await.unwrap();
+        let size = stream.read_u32().await.unwrap();
+        let mut bytes = vec![0; size as usize];
+        stream.read_exact(&mut bytes).await.unwrap();
+        let reply: Reply = serde_json::from_slice(&bytes).unwrap();
+        assert!(reply.ok);
+        assert_eq!(reply.attempts, 0);
+        assert_eq!(reply.effects, 0);
+        daemon.join().unwrap();
+    }
+}
+
 #[test]
 fn first_three_stages_bind_exact_request_and_receipt_kind() {
     let episodes = chain();

@@ -99,6 +99,39 @@ pub struct FixtureMutationClient {
     timeout: Duration,
 }
 impl FixtureMutationClient {
+    /// Reserved three-stage transport. The daemon rejects this command until
+    /// stage-scoped durable authorization and attempt identity are implemented.
+    /// A valid message does not grant permission to submit a mutation.
+    pub async fn stage_late(
+        &self,
+        binding: super::CheckpointBinding,
+        request: &crate::fixture_ipc::FixtureStageRequest,
+    ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
+        tokio::time::timeout(self.timeout, async {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "command": "stage_late",
+                "binding": binding,
+                "request": serde_json::from_slice::<serde_json::Value>(
+                    &request.encode().map_err(|_| invalid())?
+                )?,
+            }))?;
+            if payload.len() > MAX_CLONE_FRAME {
+                return Err(invalid());
+            }
+            let mut stream = tokio::net::UnixStream::connect(&self.socket).await?;
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(&payload).await?;
+            let length = stream.read_u32().await? as usize;
+            if length == 0 || length > MAX_CLONE_FRAME {
+                return Err(invalid());
+            }
+            let mut bytes = vec![0; length];
+            stream.read_exact(&mut bytes).await?;
+            request.decode_receipt(&bytes).map_err(|_| invalid())
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "fixture stage deadline"))?
+    }
     pub fn new(socket: PathBuf, timeout: Duration) -> io::Result<Self> {
         if timeout.is_zero() || timeout > Duration::from_secs(5) {
             return Err(invalid());
