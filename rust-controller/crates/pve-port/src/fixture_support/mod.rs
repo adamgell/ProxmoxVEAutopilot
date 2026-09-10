@@ -4,9 +4,13 @@
 //! protocol replies. This module grants no provisioning mutation capability.
 mod durable_fixture_log;
 mod fixture_daemon;
+mod inventory_read;
 mod read_client;
 
 pub use durable_fixture_log::{Effect, VmState};
 pub use fixture_daemon::snapshot::{FixtureInventory, FixtureSnapshot, FixtureVmConfig};
 pub use fixture_daemon::{Reply, run};
+pub use inventory_read::{
+    FixtureFact, FixtureInventoryRead, FixtureProjectionError, FixtureVmRead,
+};
 pub use read_client::{FixtureReadClient, FixtureStatus};
