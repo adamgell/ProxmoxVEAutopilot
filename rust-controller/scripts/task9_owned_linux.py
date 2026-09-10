@@ -69,7 +69,7 @@ def cgroup(raw, role):
     for line in lines[4:]:
         fields = line.split(" ")
         require(len(fields) == 2 and fields[0] not in events)
-        require(fields[0] in {"low", "high", "max", "oom", "oom_kill", "oom_group_kill"})
+        require(fields[0] in {"low", "high", "max", "oom", "oom_kill", "oom_group_kill", "sock_throttled"})
         events[fields[0]] = u64(fields[1])
     require({"low", "high", "max", "oom", "oom_kill"} <= events.keys())
     require(maximum == CAPS[role] and current <= maximum and swap == swap_max == 0)

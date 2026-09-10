@@ -57,7 +57,7 @@ class ContractTests(unittest.TestCase):
 
     def test_cgroup_exact_caps_and_pressure_refusal(self):
         for role in gate.CAPS:
-            raw = (f"10\n{gate.CAPS[role]}\n0\n0\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\n").encode()
+            raw = (f"10\n{gate.CAPS[role]}\n0\n0\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\nsock_throttled 0\n").encode()
             self.assertEqual(gate.cgroup(raw, role)["current"], 10)
             for broken in (raw.replace(b"oom 0", b"oom 1"), raw + b"oom 0\n",
                            raw.replace(b"high 0\n", b""), raw.replace(b"max 0", b"max 1"),
