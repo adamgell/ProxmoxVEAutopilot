@@ -2,7 +2,10 @@
 use super::{
     FixtureProvisioningIdentity, FixtureProvisioningReads, FixtureTaskObservation, SeedRead,
 };
-use crate::{MutationReceipt, fixture_ipc::FixtureCloneRequest};
+use crate::{
+    MutationReceipt,
+    fixture_ipc::{FixtureCloneRequest, FixtureStageRequest},
+};
 use serde::{Deserialize, Serialize};
 use std::io;
 
@@ -49,6 +52,63 @@ impl FixturePostDispatchV1 {
         accepted_unix_ms: u64,
         now_unix_ms: u64,
     ) -> io::Result<Self> {
+        let receipt = request
+            .decode_receipt(accepted_receipt)
+            .map_err(|_| invalid())?;
+        let vm = request.request().clone_request().vm();
+        Self::decode_bound(
+            bytes,
+            FixtureProvisioningIdentity {
+                fixture_id: request.fixture_id(),
+                operation: request.request().binding().operation_id().as_uuid(),
+                request_sha256: request.request_sha256(),
+                node: vm.node().as_str().to_owned(),
+                source_vmid: vm.source_vmid().get(),
+                target_vmid: vm.target_vmid().get(),
+            },
+            receipt.receipt(),
+            accepted_unix_ms,
+            now_unix_ms,
+        )
+    }
+
+    /// Validate stage-specific task receipts and bind all facts to the exact
+    /// stage request digest. Synchronous stages require a separate observation
+    /// contract and are refused here.
+    pub fn decode_stage(
+        bytes: &[u8],
+        request: &FixtureStageRequest,
+        accepted_receipt: &[u8],
+        accepted_unix_ms: u64,
+        now_unix_ms: u64,
+    ) -> io::Result<Self> {
+        let receipt = request
+            .decode_receipt(accepted_receipt)
+            .map_err(|_| invalid())?;
+        let vm = request.request().plan().expected().vm();
+        Self::decode_bound(
+            bytes,
+            FixtureProvisioningIdentity {
+                fixture_id: request.fixture_id(),
+                operation: request.request().binding().operation_id().as_uuid(),
+                request_sha256: request.request_sha256(),
+                node: vm.node().as_str().to_owned(),
+                source_vmid: vm.source_vmid().get(),
+                target_vmid: vm.target_vmid().get(),
+            },
+            receipt.receipt(),
+            accepted_unix_ms,
+            now_unix_ms,
+        )
+    }
+
+    fn decode_bound(
+        bytes: &[u8],
+        identity: FixtureProvisioningIdentity,
+        receipt: &MutationReceipt,
+        accepted_unix_ms: u64,
+        now_unix_ms: u64,
+    ) -> io::Result<Self> {
         if bytes.is_empty()
             || bytes.len() > MAX_POST_DISPATCH_BYTES
             || accepted_unix_ms == 0
@@ -61,20 +121,8 @@ impl FixturePostDispatchV1 {
             return Err(invalid());
         }
         let result: Self = serde_json::from_slice(bytes).map_err(|_| invalid())?;
-        let receipt = request
-            .decode_receipt(accepted_receipt)
-            .map_err(|_| invalid())?;
-        let MutationReceipt::Task(upid) = receipt.receipt() else {
+        let MutationReceipt::Task(upid) = receipt else {
             return Err(invalid());
-        };
-        let vm = request.request().clone_request().vm();
-        let identity = FixtureProvisioningIdentity {
-            fixture_id: request.fixture_id(),
-            operation: request.request().binding().operation_id().as_uuid(),
-            request_sha256: request.request_sha256(),
-            node: vm.node().as_str().to_owned(),
-            source_vmid: vm.source_vmid().get(),
-            target_vmid: vm.target_vmid().get(),
         };
         if result.version != 1
             || result.task.identity.fixture_id != identity.fixture_id

@@ -299,6 +299,7 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                                     || stage_barrier.consume(&binding, &request).map(|_| ()),
                                 ) {
                                     Ok(payload) => {
+                                        publications.accepted_stage(&binding)?;
                                         let _ = stream
                                             .write_all(&(payload.len() as u32).to_be_bytes())
                                             .and_then(|()| stream.write_all(&payload));

@@ -1,5 +1,31 @@
 # Fixture post-dispatch publication
 
+## Stage publication transport
+
+`publish_stage_post_dispatch` and `stage_post_dispatch` add stage-aware
+publication and readback for accepted v2 Clone and DiskCapacity effects. The
+daemon validates operation, stage, attempt, generation, owner, and request digest
+against the durable accepted effect before reading or publishing facts.
+`FixturePostDispatchV1::decode_stage` validates the stage receipt (`qmclone` for
+the source or `resize` for the target) and applies the same config, power, media,
+inventory, task, identity, and observation-time checks as legacy Clone decoding.
+Stage publications have distinct digest-qualified evidence filenames. Duplicate
+publication is refused. Restart invalidates their observations and acceptance
+clocks; a historical effect alone cannot authorize republication.
+
+Focused validation: `cargo test --offline --locked -p pve-port --features
+fixture-ipc --test fixture_post_dispatch` passes seven tests, including real
+daemon Clone then resize publication, owner/generation/attempt mismatches,
+duplicate refusal, restart invalidation, and resize receipt/digest/time checks.
+Strict feature all-target Clippy also passes.
+
+The controller adapter remains unchanged: `FixtureProvisioningPort` still holds
+a legacy Clone dispatched request and legacy checkpoint binding. It needs stage
+checkpoint ownership, exact predecessor retention, stage submission, accepted
+stage-effect lookup, and `stage_post_dispatch` selection before controller resize
+progression can be claimed. Synchronous ConfigurePe observations are explicitly
+refused by this task-bearing observation contract and need separate support.
+
 The local fixture daemon accepts `publish_post_dispatch` only on its supervisor
 socket. The command carries the exact typed Clone request and a
 `FixturePostDispatchV1` observation. An accepted Clone effect with the exact

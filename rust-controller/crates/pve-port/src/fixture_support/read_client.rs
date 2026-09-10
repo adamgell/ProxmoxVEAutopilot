@@ -67,6 +67,34 @@ fn invalid() -> io::Error {
 }
 
 impl FixtureReadClient {
+    /// Read current observations for an exact stage effect and ownership binding.
+    pub async fn stage_post_dispatch(
+        &self,
+        identity: &super::FixtureStageIdentity,
+        request: &crate::fixture_ipc::FixtureStageRequest,
+        accepted_receipt: &[u8],
+    ) -> io::Result<Option<super::FixturePostDispatchPublication>> {
+        identity.validate_request(request)?;
+        tokio::time::timeout(self.timeout, async {
+            let request: serde_json::Value = serde_json::from_slice(&request.encode().map_err(|_| invalid())?)?;
+            let payload = serde_json::to_vec(&serde_json::json!({"command":"stage_post_dispatch","identity":identity,"request":request}))?;
+            let mut stream = UnixStream::connect(&self.socket).await?;
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(&payload).await?;
+            let length = stream.read_u32().await? as usize;
+            if length == 0 || length > super::post_dispatch::MAX_POST_DISPATCH_BYTES + 4096 { return Err(invalid()); }
+            let mut bytes = vec![0; length];
+            stream.read_exact(&mut bytes).await?;
+            let publication: Option<super::FixturePostDispatchPublication> = serde_json::from_slice(&bytes)?;
+            if let Some(value) = &publication {
+                if value.daemon_generation.is_nil() || value.published_unix_ms > super::post_dispatch_publication::now()? { return Err(invalid()); }
+                let request = crate::fixture_ipc::FixtureStageRequest::decode(&serde_json::to_vec(&request)?).map_err(|_| invalid())?;
+                super::FixturePostDispatchV1::decode_stage(&serde_json::to_vec(&value.observation)?, &request, accepted_receipt, value.accepted_unix_ms, value.published_unix_ms)?;
+            }
+            Ok(publication)
+        }).await.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "fixture stage post-dispatch deadline"))?
+    }
+
     /// Read a supervisor publication for an exact accepted Clone receipt.
     /// A daemon restart returns `None`; historical files never refresh facts.
     pub async fn post_dispatch(

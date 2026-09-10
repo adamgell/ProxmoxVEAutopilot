@@ -1,6 +1,7 @@
 #![cfg(feature = "fixture-ipc")]
 #[allow(dead_code)]
 mod provisioning_seed_support;
+use provisioning_seed_support::support as provisioning_support;
 use provisioning_seed_support::support::*;
 use pve_port::{fixture_ipc::FixtureCloneRequest, fixture_support::*, *};
 use serde_json::{Value, json};
@@ -249,6 +250,234 @@ fn sample() -> (FixturePostDispatchV1, FixtureCloneRequest, Vec<u8>, u64) {
         },
     };
     (observation, request, receipt, at)
+}
+
+#[test]
+fn stage_resize_observations_require_exact_digest_and_resize_receipt() {
+    use pve_port::fixture_ipc::FixtureStageRequest;
+    let episodes = provisioning_support::chain();
+    let (mut observation, legacy, _, at) = sample();
+    let request =
+        FixtureStageRequest::new(legacy.fixture_id(), episodes[1].request.clone()).unwrap();
+    observation.provisioning.identity.operation =
+        request.request().binding().operation_id().as_uuid();
+    observation.provisioning.identity.request_sha256 = request.request_sha256();
+    observation.task.identity.operation = observation.provisioning.identity.operation;
+    observation.task.identity.request_sha256 = request.request_sha256();
+    let upid =
+        Upid::parse("UPID:pve-test:00000001:00000001:00000001:resize:101:fake@pve:").unwrap();
+    observation.task.identity.upid = upid.as_str().into();
+    let mut timed = serde_json::to_value(&observation).unwrap();
+    retime(&mut timed, at);
+    observation = serde_json::from_value(timed).unwrap();
+    let receipt = request
+        .encode_receipt(1, MutationReceipt::Task(upid))
+        .unwrap();
+    let bytes = serde_json::to_vec(&observation).unwrap();
+    FixturePostDispatchV1::decode_stage(&bytes, &request, &receipt, at, at).unwrap();
+    observation.task.identity.upid =
+        "UPID:pve-test:00000001:00000001:00000001:qmclone:900:fake@pve:".into();
+    assert!(
+        FixturePostDispatchV1::decode_stage(
+            &serde_json::to_vec(&observation).unwrap(),
+            &request,
+            &receipt,
+            at,
+            at
+        )
+        .is_err()
+    );
+    observation.task.identity.upid =
+        "UPID:pve-test:00000001:00000001:00000001:resize:101:fake@pve:".into();
+    observation.provisioning.identity.request_sha256 = legacy.request_sha256();
+    assert!(
+        FixturePostDispatchV1::decode_stage(
+            &serde_json::to_vec(&observation).unwrap(),
+            &request,
+            &receipt,
+            at,
+            at
+        )
+        .is_err()
+    );
+    assert!(
+        FixturePostDispatchV1::decode_stage(&bytes, &request, &receipt, at + 1, at + 1).is_err()
+    );
+    let configure =
+        FixtureStageRequest::new(legacy.fixture_id(), episodes[2].request.clone()).unwrap();
+    let synchronous = configure
+        .encode_receipt(1, MutationReceipt::SynchronousAccepted)
+        .unwrap();
+    assert!(FixturePostDispatchV1::decode_stage(&bytes, &configure, &synchronous, at, at).is_err());
+}
+
+#[tokio::test]
+async fn stage_publication_binds_owner_attempt_and_restart_for_clone_and_resize() {
+    use pve_port::fixture_ipc::FixtureStageRequest;
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        time::{Duration, Instant},
+    };
+    let directory = std::path::PathBuf::from("/tmp").join(format!("stage-pd-{}", Uuid::now_v7()));
+    fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let episodes = provisioning_support::chain();
+    let fixture = Uuid::from_u128(1);
+    let mut prior: Option<(FixtureStageIdentity, FixtureStageRequest)> = None;
+    let mut publications: Vec<(FixtureStageIdentity, FixtureStageRequest, Vec<u8>, Value)> =
+        Vec::new();
+    for restart in [false, true] {
+        if restart {
+            fs::remove_file(directory.join("client.sock")).unwrap();
+            fs::remove_file(directory.join("supervisor.sock")).unwrap();
+        }
+        let path = directory.clone();
+        let daemon = std::thread::spawn(move || run(&path, Duration::from_secs(5)).unwrap());
+        let client = directory.join("client.sock");
+        let control = directory.join("supervisor.sock");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !control.exists() {
+            assert!(Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let reader = FixtureReadClient::new(client.clone(), Duration::from_secs(1)).unwrap();
+        if restart {
+            for (identity, request, receipt, publish) in &publications {
+                assert!(
+                    reader
+                        .stage_post_dispatch(identity, request, receipt)
+                        .await
+                        .unwrap()
+                        .is_none()
+                );
+                assert!(wire(&control, publish.clone()).await.is_err());
+            }
+        } else {
+            let state = wire(
+                &control,
+                json!({"command":"stage_checkpoint","request":{"action":"status"}}),
+            )
+            .await
+            .unwrap();
+            let generation: Uuid = serde_json::from_value(state["generation"].clone()).unwrap();
+            for (index, episode) in episodes.iter().take(2).enumerate() {
+                let request = FixtureStageRequest::new(fixture, episode.request.clone()).unwrap();
+                let identity = FixtureStageIdentity {
+                    operation: request.request().binding().operation_id().as_uuid(),
+                    stage: if index == 0 {
+                        FixtureLedgerStage::Clone
+                    } else {
+                        FixtureLedgerStage::DiskCapacity
+                    },
+                    attempt: request.request().binding().attempt_id().as_uuid(),
+                    generation,
+                    owner: Uuid::now_v7(),
+                    request_sha256: request.request_sha256(),
+                };
+                for (socket, command) in [
+                    (
+                        &control,
+                        StageCheckpointRequest::Arm {
+                            identity: identity.clone(),
+                            timeout_ms: 5000,
+                        },
+                    ),
+                    (
+                        &client,
+                        StageCheckpointRequest::Enter {
+                            identity: identity.clone(),
+                        },
+                    ),
+                    (
+                        &control,
+                        StageCheckpointRequest::AuthorizeRelease {
+                            identity: identity.clone(),
+                            request: request.encode().unwrap(),
+                            committed_request: request.encode().unwrap(),
+                            after: VmState {
+                                disk_bytes: if index == 0 {
+                                    request
+                                        .request()
+                                        .plan()
+                                        .expected()
+                                        .template_capacity_bytes()
+                                } else {
+                                    request
+                                        .request()
+                                        .plan()
+                                        .expected()
+                                        .effective_capacity_bytes()
+                                },
+                                pe_configured: false,
+                            },
+                        },
+                    ),
+                ] {
+                    assert_eq!(
+                        wire(
+                            socket,
+                            json!({"command":"stage_checkpoint","request":command})
+                        )
+                        .await
+                        .unwrap()["ok"],
+                        true
+                    );
+                }
+                let value: Value = serde_json::from_slice(&request.encode().unwrap()).unwrap();
+                let predecessor = prior.as_ref().map(|(identity, request)| {
+                    json!([
+                        identity,
+                        serde_json::from_slice::<Value>(&request.encode().unwrap()).unwrap()
+                    ])
+                });
+                let receipt = wire(&client, json!({"command":"stage_late","binding":identity,"request":value,"predecessor":predecessor})).await.unwrap();
+                let receipt = serde_json::to_vec(&receipt).unwrap();
+                let parsed = request.decode_receipt(&receipt).unwrap();
+                let MutationReceipt::Task(upid) = parsed.receipt() else {
+                    panic!("task receipt required")
+                };
+                let (mut observation, _, _, _) = sample();
+                observation.provisioning.identity.operation = identity.operation;
+                observation.provisioning.identity.request_sha256 = identity.request_sha256.clone();
+                observation.task.identity.operation = identity.operation;
+                observation.task.identity.request_sha256 = identity.request_sha256.clone();
+                observation.task.identity.upid = upid.as_str().into();
+                let mut observation = serde_json::to_value(observation).unwrap();
+                retime(
+                    &mut observation,
+                    chrono::Utc::now().timestamp_millis() as u64,
+                );
+                let publish = json!({"command":"publish_stage_post_dispatch","identity":identity,"request":value,"observation":observation});
+                assert!(
+                    wire(&control, publish.clone()).await.unwrap()["daemon_generation"].is_string()
+                );
+                assert!(
+                    reader
+                        .stage_post_dispatch(&identity, &request, &receipt)
+                        .await
+                        .unwrap()
+                        .is_some()
+                );
+                assert!(wire(&control, publish.clone()).await.is_err());
+                for field in ["owner", "generation", "attempt"] {
+                    let mut wrong = serde_json::to_value(&identity).unwrap();
+                    wrong[field] = json!(Uuid::now_v7());
+                    let wrong: FixtureStageIdentity = serde_json::from_value(wrong).unwrap();
+                    assert!(
+                        reader
+                            .stage_post_dispatch(&wrong, &request, &receipt)
+                            .await
+                            .is_err()
+                    );
+                }
+                publications.push((identity.clone(), request.clone(), receipt, publish));
+                prior = Some((identity, request));
+            }
+        }
+        let _ = wire(&control, json!({"command":"shutdown"})).await;
+        daemon.join().unwrap();
+    }
 }
 
 #[test]
