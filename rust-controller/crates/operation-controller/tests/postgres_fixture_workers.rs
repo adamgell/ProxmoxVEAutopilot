@@ -63,12 +63,27 @@ async fn child_context() -> (std::path::PathBuf, PgStore, OperationId, String) {
 
 #[tokio::test]
 async fn worker_loss_preserves_original_attempt_and_exact_receipt() {
+    prove_worker_loss(false).await;
+}
+
+#[tokio::test]
+async fn accepted_effect_without_journal_receipt_stays_unknown_after_worker_loss() {
+    prove_worker_loss(true).await;
+}
+
+async fn prove_worker_loss(before_receipt: bool) {
     let s = Scenario::new(300, true).await;
     let operation = s.ids.operation(osdeploy_adapter::OsDeployStage::Clone);
     let fixture_id = controller_domain::RunId::new().as_uuid();
     let directory = std::path::PathBuf::from("/tmp").join(format!("pgfw-{fixture_id}"));
     fs::create_dir(&directory).unwrap();
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    if before_receipt {
+        publish(
+            &directory.join("pause-before-receipt"),
+            b"owned test boundary",
+        );
+    }
     publish(
         &directory.join("operation.json"),
         &serde_json::to_vec(&operation).unwrap(),
@@ -144,25 +159,33 @@ async fn worker_loss_preserves_original_attempt_and_exact_receipt() {
     // The kill gate depends on independent durable reads, never a child marker.
     tokio::time::timeout(Duration::from_secs(4), async {
         loop {
-            let snapshot = s.db.other.load_osdeploy_operation(operation).await.unwrap();
-            if let Some(receipt) = snapshot.receipt() {
-                let effect = reader
-                    .accepted_effect(operation.as_uuid(), &envelope.request_sha256())
-                    .await
-                    .unwrap()
-                    .expect("journal receipt without fixture effect");
+            if let Some(effect) = reader
+                .accepted_effect(operation.as_uuid(), &envelope.request_sha256())
+                .await
+                .unwrap()
+            {
+                // Read PostgreSQL after the effect observation: an earlier read
+                // could legitimately precede the child's dispatch commit.
+                let snapshot = s.db.other.load_osdeploy_operation(operation).await.unwrap();
                 let original = envelope.decode_receipt(effect.receipt().unwrap()).unwrap();
                 assert_eq!(snapshot.attempt_id(), Some(attempt));
                 assert_eq!(snapshot.state(), controller_domain::ExecutionState::Running);
                 assert!(snapshot.dispatch().is_some());
-                assert_eq!(receipt.receipt(), original.receipt());
-                break;
+                if before_receipt {
+                    assert!(snapshot.receipt().is_none());
+                    assert_eq!(original.submission_sequence(), 1);
+                    break;
+                }
+                if let Some(receipt) = snapshot.receipt() {
+                    assert_eq!(receipt.receipt(), original.receipt());
+                    break;
+                }
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("worker A durable receipt boundary exceeded bound");
+    .expect("worker A durable effect/receipt boundary exceeded bound");
     assert!(
         worker_a.try_wait().unwrap().is_none(),
         "worker A exited before forced loss"
@@ -253,6 +276,12 @@ async fn worker_loss_preserves_original_attempt_and_exact_receipt() {
             .await
             .unwrap();
     assert_eq!(count, 1);
+    let final_snapshot = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+    assert_eq!(
+        final_snapshot.state(),
+        controller_domain::ExecutionState::Unknown
+    );
+    assert_eq!(final_snapshot.receipt().is_none(), before_receipt);
     assert_eq!(
         s.db.other
             .load_osdeploy_operation(operation)
@@ -313,6 +342,13 @@ async fn dispatching_worker_a() {
         .await
         .unwrap();
     let receipt = permit.submit_fake_once(&port).await.unwrap();
+    // Explicit test-process fault seam: the receipt remains only in worker A's
+    // address space. The supervisor observes durable effect + absent journal
+    // independently before killing us; no marker claims effect durability.
+    if directory.join("pause-before-receipt").exists() {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        panic!("supervisor failed to terminate worker before receipt persistence");
+    }
     scheduler
         .record_osdeploy_pve_receipt(&capture, &receipt)
         .await
@@ -341,7 +377,11 @@ async fn recovering_worker_b() {
         .unwrap();
     let original = envelope.decode_receipt(effect.receipt().unwrap()).unwrap();
     assert_eq!(original.submission_sequence(), 1);
-    assert_eq!(snapshot.receipt().unwrap().receipt(), original.receipt());
+    let before_receipt = directory.join("pause-before-receipt").exists();
+    assert_eq!(snapshot.receipt().is_none(), before_receipt);
+    if let Some(receipt) = snapshot.receipt() {
+        assert_eq!(receipt.receipt(), original.receipt());
+    }
     let scheduler =
         Scheduler::new(store.clone(), ExecutorKind::Rust, 1, "process-worker-b").unwrap();
     assert!(
@@ -391,7 +431,7 @@ async fn recovering_worker_b() {
         controller_domain::ExecutionState::Unknown
     );
     assert_eq!(recovered.attempt_id(), Some(attempt));
-    assert_eq!(recovered.receipt().unwrap().receipt(), original.receipt());
+    assert_eq!(recovered.receipt(), snapshot.receipt());
     let (event, revision): (EventId, i64) =
         serde_json::from_slice(&wait_file(&directory.join("reconciliation.json")).await).unwrap();
     assert_eq!(
@@ -399,9 +439,22 @@ async fn recovering_worker_b() {
             .reconcile_osdeploy_unknown(operation, attempt, revision, event, &workflow,)
             .await
             .unwrap(),
-        postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Unknown)
+        if before_receipt {
+            // A task-based dispatch without its journal receipt is explicitly
+            // ineligible for reconciliation; scheduler returns without progress.
+            postgres_store::OsDeployProgress::Idle
+        } else {
+            postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Unknown)
+        }
     );
     let reconciled = store.load_osdeploy_operation(operation).await.unwrap();
+    assert_eq!(
+        reconciled.state(),
+        controller_domain::ExecutionState::Unknown
+    );
+    if before_receipt {
+        assert_eq!(reconciled.revision(), revision);
+    }
     let after = reader
         .accepted_effect(operation.as_uuid(), &envelope.request_sha256())
         .await
@@ -411,7 +464,7 @@ async fn recovering_worker_b() {
     assert_eq!(after.submission_sequence(), 1);
     assert_eq!(after.receipt(), original.receipt());
     assert_eq!(reconciled.attempt_id(), Some(attempt));
-    assert_eq!(reconciled.receipt().unwrap().receipt(), original.receipt());
+    assert_eq!(reconciled.receipt(), snapshot.receipt());
     assert!(
         scheduler
             .claim_osdeploy_bound(operation, &workflow, 1)
