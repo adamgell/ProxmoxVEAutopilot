@@ -130,6 +130,60 @@ impl Drop for Daemon {
     }
 }
 
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
+async fn snapshot_is_daemon_owned_and_survives_restart() {
+    use pve_port::fixture_support::{
+        FixtureInventory, FixtureReadClient, FixtureSnapshot, FixtureVmConfig,
+    };
+    let mut daemon = Daemon::start();
+    let client =
+        FixtureReadClient::new(daemon.directory.join("client.sock"), Duration::from_secs(1))
+            .unwrap();
+    assert_eq!(
+        client.snapshot().await.unwrap(),
+        FixtureSnapshot::Unavailable {}
+    );
+    let inventory = FixtureSnapshot::Inventory {
+        inventory: FixtureInventory {
+            version: 1,
+            fixture_id: Uuid::now_v7(),
+            node: "fixture-node".into(),
+            observed_unix_ms: 123,
+            vms: vec![FixtureVmConfig {
+                vmid: 900,
+                name: "template".into(),
+                template: true,
+                disk_bytes: 1024,
+            }],
+        },
+    };
+    fs::write(
+        daemon.directory.join("inventory.json"),
+        serde_json::to_vec(&inventory).unwrap(),
+    )
+    .unwrap();
+    // The daemon owns its startup observation; changing the seed is not a live update.
+    assert_eq!(
+        client.snapshot().await.unwrap(),
+        FixtureSnapshot::Unavailable {}
+    );
+    for _ in 0..2 {
+        daemon.child.kill().unwrap();
+        daemon.child.wait().unwrap();
+        daemon.clear_stale_sockets().unwrap();
+        daemon.child = Daemon::spawn(&daemon.directory);
+        daemon.await_ready();
+        assert_eq!(client.snapshot().await.unwrap(), inventory);
+    }
+    fs::write(daemon.directory.join("inventory.json"), b"{}").unwrap();
+    daemon.child.kill().unwrap();
+    daemon.child.wait().unwrap();
+    daemon.clear_stale_sockets().unwrap();
+    daemon.child = Daemon::spawn(&daemon.directory);
+    daemon.await_failure();
+}
+
 #[test]
 #[ignore = "subprocess entry point only"]
 fn fixture_daemon_child() {

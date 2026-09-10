@@ -15,12 +15,16 @@ use std::{
 };
 use uuid::Uuid;
 
+#[path = "snapshot.rs"]
+pub mod snapshot;
+
 const MAX_REQUEST: usize = 1024;
 const IO_BOUND: Duration = Duration::from_millis(100);
 
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum ClientRequest {
+    Snapshot {},
     Status {},
     AcceptedEffect {
         operation: Uuid,
@@ -115,6 +119,7 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
         ));
     }
     let ledger = directory.join("fixture.log");
+    let inventory = snapshot::FixtureSnapshot::load(&directory.join("inventory.json"))?;
     let mut log = if ledger.exists() {
         FixtureLog::recover(&ledger)?
     } else {
@@ -151,6 +156,13 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                 }
             } else {
                 match serde_json::from_slice::<ClientRequest>(&bytes) {
+                    Ok(ClientRequest::Snapshot {}) => {
+                        let payload = serde_json::to_vec(&inventory)?;
+                        let _ = stream
+                            .write_all(&(payload.len() as u32).to_be_bytes())
+                            .and_then(|()| stream.write_all(&payload));
+                        continue;
+                    }
                     Ok(ClientRequest::Status {}) => response.ok = true,
                     Ok(ClientRequest::AcceptedEffect {
                         operation,

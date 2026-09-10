@@ -67,6 +67,25 @@ fn invalid() -> io::Error {
 }
 
 impl FixtureReadClient {
+    /// Reads daemon-owned startup inventory. An empty inventory proves absence
+    /// only at its recorded observation time; unavailable proves nothing.
+    pub async fn snapshot(&self) -> io::Result<super::FixtureSnapshot> {
+        tokio::time::timeout(self.timeout, async {
+            let mut stream = UnixStream::connect(&self.socket).await?;
+            let payload = br#"{"command":"snapshot"}"#;
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(payload).await?;
+            let length = stream.read_u32().await? as usize;
+            if length == 0 || length > super::fixture_daemon::snapshot::MAX_SNAPSHOT {
+                return Err(invalid());
+            }
+            let mut bytes = vec![0; length];
+            stream.read_exact(&mut bytes).await?;
+            super::FixtureSnapshot::decode(&bytes)
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "fixture snapshot deadline"))?
+    }
     pub fn new(socket: PathBuf, timeout: Duration) -> io::Result<Self> {
         if timeout.is_zero() || timeout > Duration::from_secs(10) {
             return Err(io::Error::new(
