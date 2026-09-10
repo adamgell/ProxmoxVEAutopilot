@@ -103,3 +103,84 @@ fn clone_task_receipt_requires_source_node_worker_and_synthetic_user() {
         assert!(original.decode_receipt(&bad).is_err());
     }
 }
+
+#[tokio::test]
+async fn daemon_clone_commits_receipt_and_rejects_duplicate_after_restart() {
+    use pve_port::fixture_support::*;
+    use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
+    struct Directory(std::path::PathBuf);
+    impl Directory {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+    let directory =
+        Directory(std::path::PathBuf::from("/tmp").join(format!("fc-{}", Uuid::now_v7())));
+    fs::create_dir(directory.path()).unwrap();
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let original = request();
+    let seed = FixtureCloneSeed::new(
+        &original,
+        VmState {
+            disk_bytes: 4096,
+            pe_configured: false,
+        },
+    )
+    .unwrap();
+    fs::write(directory.path().join("clone.json"), seed.encode().unwrap()).unwrap();
+    for restart in [false, true] {
+        if restart {
+            fs::remove_file(directory.path().join("client.sock")).unwrap();
+            fs::remove_file(directory.path().join("supervisor.sock")).unwrap();
+        }
+        let path = directory.path().to_owned();
+        let daemon = std::thread::spawn(move || run(&path, Duration::from_secs(1)).unwrap());
+        let socket = directory.path().join("client.sock");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !socket.exists() {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let client = FixtureMutationClient::new(socket.clone(), Duration::from_secs(1)).unwrap();
+        if !restart {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut stream = tokio::net::UnixStream::connect(&socket).await.unwrap();
+            let payload = br#"{"command":"clone","request":{},"extra":true}"#;
+            stream.write_u32(payload.len() as u32).await.unwrap();
+            stream.write_all(payload).await.unwrap();
+            let size = stream.read_u32().await.unwrap();
+            let mut bytes = vec![0; size as usize];
+            stream.read_exact(&mut bytes).await.unwrap();
+            let reply: Reply = serde_json::from_slice(&bytes).unwrap();
+            assert!(!reply.ok);
+            assert_eq!(reply.attempts, 0);
+        }
+        let result = client.clone_vm(&original).await;
+        if restart {
+            assert!(result.is_err());
+        } else {
+            assert_eq!(result.unwrap().submission_sequence(), 1);
+        }
+        let reader = FixtureReadClient::new(socket, Duration::from_secs(1)).unwrap();
+        let effect = reader
+            .accepted_effect(
+                original.request().binding().operation_id().as_uuid(),
+                &original.request_sha256(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            original
+                .decode_receipt(effect.receipt().unwrap())
+                .unwrap()
+                .submission_sequence(),
+            1
+        );
+        assert!(client.clone_vm(&original).await.is_err());
+        let stale =
+            FixtureCloneRequest::new(Uuid::from_u128(99), original.request().clone()).unwrap();
+        assert!(client.clone_vm(&stale).await.is_err());
+        daemon.join().unwrap();
+    }
+}

@@ -18,12 +18,17 @@ use uuid::Uuid;
 #[path = "snapshot.rs"]
 pub mod snapshot;
 
-const MAX_REQUEST: usize = 1024;
+const MAX_REQUEST: usize = 65_536;
 const IO_BOUND: Duration = Duration::from_millis(100);
 
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum ClientRequest {
+    #[cfg(feature = "fixture-ipc")]
+    Clone {
+        request: serde_json::Value,
+    },
+    #[cfg(feature = "fixture-ipc")]
     Task {
         identity: super::FixtureTaskIdentity,
     },
@@ -122,7 +127,10 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
         ));
     }
     let ledger = directory.join("fixture.log");
+    #[cfg(feature = "fixture-ipc")]
+    let clone_seed = super::clone_mutation::FixtureCloneSeed::load(&directory.join("clone.json"))?;
     let inventory = snapshot::FixtureSnapshot::load(&directory.join("inventory.json"))?;
+    #[cfg(feature = "fixture-ipc")]
     let task = super::FixtureTaskObservation::load(&directory.join("task.json"))?;
     let mut log = if ledger.exists() {
         FixtureLog::recover(&ledger)?
@@ -160,6 +168,22 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                 }
             } else {
                 match serde_json::from_slice::<ClientRequest>(&bytes) {
+                    #[cfg(feature = "fixture-ipc")]
+                    Ok(ClientRequest::Clone { request }) => {
+                        if let Some(seed) = &clone_seed {
+                            match seed.submit(&serde_json::to_vec(&request)?, &mut log) {
+                                Ok(payload) => {
+                                    let _ = stream
+                                        .write_all(&(payload.len() as u32).to_be_bytes())
+                                        .and_then(|()| stream.write_all(&payload));
+                                    continue;
+                                }
+                                Err(e) if e.kind() == io::ErrorKind::InvalidData => {}
+                                Err(e) => return Err(e),
+                            }
+                        }
+                    }
+                    #[cfg(feature = "fixture-ipc")]
                     Ok(ClientRequest::Task { identity }) => {
                         if identity.validate().is_ok()
                             && let Some(observation) =

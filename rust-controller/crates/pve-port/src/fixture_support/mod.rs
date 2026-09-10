@@ -2,11 +2,13 @@
 //!
 //! The ledger is private; callers can run the bounded daemon and inspect its
 //! protocol replies. This module grants no provisioning mutation capability.
+mod clone_mutation;
 mod durable_fixture_log;
 mod fixture_daemon;
 mod inventory_read;
 mod read_client;
 mod task;
+pub use clone_mutation::{FixtureCloneSeed, FixtureMutationClient};
 pub use task::{FixtureTaskIdentity, FixtureTaskObservation, FixtureTaskState};
 
 pub use durable_fixture_log::{Effect, VmState};

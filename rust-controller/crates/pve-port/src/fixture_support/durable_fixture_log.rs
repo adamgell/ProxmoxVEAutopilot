@@ -41,9 +41,15 @@ pub struct Effect {
     vmid: u32,
     before: Option<VmState>,
     after: VmState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    receipt: Option<Vec<u8>>,
 }
 
 impl Effect {
+    #[allow(dead_code)] // Also compiled directly by legacy ledger-only integration tests.
+    pub fn receipt(&self) -> Option<&[u8]> {
+        self.receipt.as_deref()
+    }
     pub(super) fn matches(&self, operation: Uuid, digest: &str) -> bool {
         self.effect_version == 1
             && self.sequence != 0
@@ -216,6 +222,17 @@ impl FixtureLog {
         before: Option<VmState>,
         after: VmState,
     ) -> io::Result<()> {
+        self.record_effect_receipt(attempt_sequence, vmid, before, after, None)
+    }
+
+    pub fn record_effect_receipt(
+        &mut self,
+        attempt_sequence: u64,
+        vmid: u32,
+        before: Option<VmState>,
+        after: VmState,
+        receipt: Option<Vec<u8>>,
+    ) -> io::Result<()> {
         if self.poisoned {
             return Err(io::Error::other("fixture log requires recovery"));
         }
@@ -233,9 +250,13 @@ impl FixtureLog {
             vmid,
             before,
             after,
+            receipt,
         };
         validate_effect(&effect, &self.records, &self.effects, &self.world)?;
         let bytes = frame(&effect)?;
+        if bytes.len() > MAX_LINE {
+            return Err(invalid());
+        }
         self.poisoned = true;
         self.file.write_all(&bytes)?;
         self.file.sync_data()?;
