@@ -1,5 +1,5 @@
 //! Owned worker address-space loss after durable Clone dispatch and receipt.
-//! Preflight collection is supervisor-assisted; lease-expiry reconciliation remains separate.
+//! Workers use real lease expiry and scheduler reconciliation; collection is supervisor-assisted.
 #![cfg(feature = "fixture-ipc")]
 #[allow(dead_code)]
 #[path = "../../postgres-store/tests/osdeploy_execution_support/mod.rs"]
@@ -153,6 +153,7 @@ async fn worker_loss_preserves_original_attempt_and_exact_receipt() {
                     .expect("journal receipt without fixture effect");
                 let original = envelope.decode_receipt(effect.receipt().unwrap()).unwrap();
                 assert_eq!(snapshot.attempt_id(), Some(attempt));
+                assert_eq!(snapshot.state(), controller_domain::ExecutionState::Running);
                 assert!(snapshot.dispatch().is_some());
                 assert_eq!(receipt.receipt(), original.receipt());
                 break;
@@ -173,6 +174,73 @@ async fn worker_loss_preserves_original_attempt_and_exact_receipt() {
         &serde_json::to_vec(&attempt).unwrap(),
     );
     let mut worker_b = child(&directory, &dsn, "recovering_worker_b");
+    tokio::time::timeout(Duration::from_secs(35), async {
+        loop {
+            if s.db
+                .other
+                .load_osdeploy_operation(operation)
+                .await
+                .unwrap()
+                .state()
+                == controller_domain::ExecutionState::Unknown
+            {
+                break;
+            }
+            assert!(
+                worker_b.try_wait().unwrap().is_none(),
+                "worker B exited before reaping"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("worker B natural lease expiry exceeded bound");
+    daemon.join().unwrap();
+    fs::remove_file(directory.join("client.sock")).unwrap();
+    fs::remove_file(directory.join("supervisor.sock")).unwrap();
+    let daemon_directory = directory.clone();
+    let daemon =
+        std::thread::spawn(move || run(&daemon_directory, Duration::from_secs(4)).unwrap());
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while reader
+            .accepted_effect(operation.as_uuid(), &envelope.request_sha256())
+            .await
+            .is_err()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let snapshot = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+    assert_eq!(snapshot.attempt_id(), Some(attempt));
+    let context =
+        s.db.other
+            .load_osdeploy_pve_context(
+                operation,
+                snapshot.revision(),
+                ProvisioningEvaluationModeV1::Reconciliation,
+            )
+            .await
+            .unwrap();
+    // This supervisor fake has no task observation for the IPC-generated UPID.
+    // The supported evaluator must retain uncertainty rather than invent success.
+    let evidence = s.collect(&context).await;
+    let event =
+        s.db.other
+            .record_osdeploy_pve_evidence(operation, attempt, snapshot.revision(), &evidence)
+            .await
+            .unwrap();
+    let revision =
+        s.db.other
+            .load_osdeploy_operation(operation)
+            .await
+            .unwrap()
+            .revision();
+    publish(
+        &directory.join("reconciliation.json"),
+        &serde_json::to_vec(&(event, revision)).unwrap(),
+    );
     let result = tokio::time::timeout(Duration::from_secs(3), worker_b.wait())
         .await
         .unwrap()
@@ -283,9 +351,77 @@ async fn recovering_worker_b() {
             .unwrap()
             .is_none()
     );
+    let before = snapshot.revision();
     assert!(
         scheduler
-            .resume_osdeploy_bound(operation, attempt, snapshot.revision(), &workflow, 1)
+            .resume_osdeploy_bound(operation, attempt, before, &workflow, 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let observer = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(1))
+        .connect(&std::env::var("PVA_WORKER_PROOF_DSN").unwrap())
+        .await
+        .unwrap();
+    scheduler.reap_osdeploy_expired().await.unwrap();
+    assert_eq!(
+        store
+            .load_osdeploy_operation(operation)
+            .await
+            .unwrap()
+            .revision(),
+        before
+    );
+    // Observe database time against the actual persisted deadline. No lease rows,
+    // timestamps, or production durations are rewritten by this proof.
+    tokio::time::timeout(Duration::from_secs(33), async {
+        loop {
+            let expired: bool = sqlx::query_scalar("SELECT lease_expires_at <= clock_timestamp() FROM rust_controller.worker_leases WHERE operation_id=$1")
+                .bind(operation.as_uuid()).fetch_one(&observer).await.unwrap();
+            if expired { break; }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }).await.expect("actual worker lease did not expire");
+    scheduler.reap_osdeploy_expired().await.unwrap();
+    let recovered = store.load_osdeploy_operation(operation).await.unwrap();
+    assert_eq!(
+        recovered.state(),
+        controller_domain::ExecutionState::Unknown
+    );
+    assert_eq!(recovered.attempt_id(), Some(attempt));
+    assert_eq!(recovered.receipt().unwrap().receipt(), original.receipt());
+    let (event, revision): (EventId, i64) =
+        serde_json::from_slice(&wait_file(&directory.join("reconciliation.json")).await).unwrap();
+    assert_eq!(
+        scheduler
+            .reconcile_osdeploy_unknown(operation, attempt, revision, event, &workflow,)
+            .await
+            .unwrap(),
+        postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Unknown)
+    );
+    let reconciled = store.load_osdeploy_operation(operation).await.unwrap();
+    let after = reader
+        .accepted_effect(operation.as_uuid(), &envelope.request_sha256())
+        .await
+        .unwrap()
+        .unwrap();
+    let after = envelope.decode_receipt(after.receipt().unwrap()).unwrap();
+    assert_eq!(after.submission_sequence(), 1);
+    assert_eq!(after.receipt(), original.receipt());
+    assert_eq!(reconciled.attempt_id(), Some(attempt));
+    assert_eq!(reconciled.receipt().unwrap().receipt(), original.receipt());
+    assert!(
+        scheduler
+            .claim_osdeploy_bound(operation, &workflow, 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        scheduler
+            .resume_osdeploy_bound(operation, attempt, reconciled.revision(), &workflow, 1)
             .await
             .unwrap()
             .is_none()
