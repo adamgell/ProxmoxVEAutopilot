@@ -665,7 +665,11 @@ async fn load_evidence(
                     == f.plan.fingerprint().map_err(|_| Error::Validation)?
                 && b.evidence_fence()
                     == u64::try_from(e.revision - 1).map_err(|_| Error::Validation)?
-                && e.at == f.collected_at,
+                // PostgreSQL timestamptz persists microseconds; the typed
+                // evidence JSON may retain additional Rust nanoseconds.
+                // Preserve the database-precision instant without rejecting
+                // otherwise identical evidence on reload.
+                && e.at.timestamp_micros() == f.collected_at.timestamp_micros(),
         )?;
         out.insert(
             event.as_uuid(),
