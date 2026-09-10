@@ -82,12 +82,29 @@ async fn supervisor_publication_requires_accepted_effect_and_invalidates_on_rest
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         let reader = FixtureReadClient::new(socket.clone(), Duration::from_secs(1)).unwrap();
+        let identity: FixtureProvisioningIdentity =
+            serde_json::from_value(document["provisioning"]["identity"].clone()).unwrap();
+        let port =
+            FixtureProvisioningPort::new(socket.clone(), Duration::from_secs(1), identity).unwrap();
+        let node = request.request().clone_request().vm().node();
+        let target = request.request().clone_request().vm().target_vmid();
+        let port = if restart {
+            port.with_dispatched_request(request.clone()).unwrap()
+        } else {
+            port
+        };
         let publish = |observation: &Value| json!({"command":"publish_post_dispatch","request":request_json,"observation":observation});
         assert!(wire(&control, publish(&document)).await.is_err());
         if !restart {
-            let mutation =
-                FixtureMutationClient::new(socket.clone(), Duration::from_secs(1)).unwrap();
-            mutation.clone_vm(&request).await.unwrap();
+            port.submit_provisioning(&ProvisioningMutationRequestV1::Clone(
+                request.request().clone(),
+            ))
+            .await
+            .unwrap();
+            assert_eq!(
+                port.provisioning_vm_config(node, target).await,
+                Err(PveReadError::TransportUnavailable)
+            );
             receipt = reader
                 .accepted_effect(
                     request.request().binding().operation_id().as_uuid(),
@@ -122,6 +139,25 @@ async fn supervisor_publication_requires_accepted_effect_and_invalidates_on_rest
                 .unwrap()
                 .unwrap();
             assert_eq!(serde_json::to_value(fetched.observation).unwrap(), document);
+            let MutationReceipt::Task(upid) =
+                request.decode_receipt(&receipt).unwrap().receipt().clone()
+            else {
+                panic!("expected task");
+            };
+            assert!(port.task_status(node, &upid).await.is_ok());
+            assert_eq!(
+                port.cluster_vms().await,
+                Err(PveReadError::TransportUnavailable)
+            );
+            assert!(port.provisioning_vm_config(node, target).await.is_ok());
+            assert!(port.vm_status(node, target).await.is_ok());
+            let wrong =
+                Upid::parse("UPID:pve-test:00000002:00000001:00000001:qmclone:900:fake@pve:")
+                    .unwrap();
+            assert_eq!(
+                port.task_status(node, &wrong).await,
+                Err(PveReadError::InvalidResponse)
+            );
             assert!(wire(&control, publish(&document)).await.is_err());
             assert!(fs::read_dir(&directory).unwrap().any(|file| {
                 file.unwrap()
@@ -130,6 +166,14 @@ async fn supervisor_publication_requires_accepted_effect_and_invalidates_on_rest
                     .starts_with("post-dispatch-")
             }));
         } else {
+            assert_eq!(
+                port.cluster_vms().await,
+                Err(PveReadError::TransportUnavailable)
+            );
+            assert_eq!(
+                port.provisioning_vm_config(node, target).await,
+                Err(PveReadError::TransportUnavailable)
+            );
             assert!(
                 reader
                     .post_dispatch(&request, &receipt)

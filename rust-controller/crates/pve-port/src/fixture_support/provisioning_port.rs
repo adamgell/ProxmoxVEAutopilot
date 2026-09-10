@@ -17,6 +17,7 @@ pub struct FixtureProvisioningPort {
     identity: FixtureReadIdentity,
     exact_identity: Option<FixtureProvisioningIdentity>,
     checkpoint: Option<(FixtureCheckpointClient, CheckpointBinding)>,
+    dispatched: std::sync::Mutex<Option<crate::fixture_ipc::FixtureCloneRequest>>,
 }
 fn transport(e: io::Error) -> PveReadError {
     match e.kind() {
@@ -65,6 +66,7 @@ impl FixtureProvisioningPort {
             identity: stable,
             exact_identity: Some(identity),
             checkpoint: None,
+            dispatched: std::sync::Mutex::new(None),
         })
     }
     /// Collect v2 facts before the controller constructs its exact request.
@@ -81,8 +83,36 @@ impl FixtureProvisioningPort {
             identity,
             exact_identity: None,
             checkpoint: None,
+            dispatched: std::sync::Mutex::new(None),
         })
     }
+    /// Restore the exact journaled request when reconstructing an adapter.
+    /// This grants no publication authority: reads still require the daemon's
+    /// accepted effect and a current supervisor publication.
+    pub fn with_dispatched_request(
+        self,
+        request: crate::fixture_ipc::FixtureCloneRequest,
+    ) -> io::Result<Self> {
+        let vm = request.request().clone_request().vm();
+        if request.fixture_id() != self.identity.fixture_id
+            || request.request().binding().operation_id().as_uuid() != self.identity.operation
+            || vm.node().as_str() != self.identity.node
+            || vm.source_vmid().get() != self.identity.source_vmid
+            || vm.target_vmid().get() != self.identity.target_vmid
+            || self
+                .exact_identity
+                .as_ref()
+                .is_some_and(|i| i.request_sha256 != request.request_sha256())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid recovered Clone request",
+            ));
+        }
+        *self.dispatched.lock().unwrap() = Some(request);
+        Ok(self)
+    }
+
     /// Bind this single-operation adapter to a supervisor generation and owner.
     pub fn with_checkpoint(
         mut self,
@@ -109,6 +139,9 @@ impl FixtureProvisioningPort {
         }
     }
     async fn clone_reads(&self) -> Result<FixtureCloneReads, PveReadError> {
+        if self.dispatched.lock().unwrap().is_some() {
+            return Ok(self.post_dispatch().await?.inventory);
+        }
         let facts = self
             .reads
             .clone_reads(self.identity.fixture_id)
@@ -121,6 +154,13 @@ impl FixtureProvisioningPort {
         Ok(facts)
     }
     async fn provisioning(&self) -> Result<FixtureProvisioningReadsV2, PveReadError> {
+        if self.dispatched.lock().unwrap().is_some() {
+            return Ok(self
+                .post_dispatch()
+                .await?
+                .provisioning
+                .map_identity(self.identity.clone()));
+        }
         if let Some(exact) = &self.exact_identity {
             self.reads
                 .provisioning_reads(exact)
@@ -135,6 +175,27 @@ impl FixtureProvisioningPort {
                 .map_err(transport)?
                 .ok_or(PveReadError::TransportUnavailable)
         }
+    }
+    async fn post_dispatch(&self) -> Result<FixturePostDispatchV1, PveReadError> {
+        let request = self
+            .dispatched
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(PveReadError::TransportUnavailable)?;
+        let effect = self
+            .reads
+            .accepted_effect(self.identity.operation, &request.request_sha256())
+            .await
+            .map_err(transport)?
+            .ok_or(PveReadError::TransportUnavailable)?;
+        let receipt = effect.receipt().ok_or(PveReadError::InvalidResponse)?;
+        self.reads
+            .post_dispatch(&request, receipt)
+            .await
+            .map_err(transport)?
+            .map(|p| p.observation)
+            .ok_or(PveReadError::TransportUnavailable)
     }
 }
 impl crate::native::sealed::FakeMutationCapability for FixtureProvisioningPort {}
@@ -159,8 +220,23 @@ impl PveReadPort for FixtureProvisioningPort {
     async fn vm_config(&self, _: &NodeName, _: Vmid) -> Result<VmConfig, PveReadError> {
         Err(PveReadError::TransportUnavailable)
     }
-    async fn task_status(&self, _: &NodeName, _: &Upid) -> Result<TaskStatus, PveReadError> {
-        Err(PveReadError::TransportUnavailable)
+    async fn task_status(&self, node: &NodeName, upid: &Upid) -> Result<TaskStatus, PveReadError> {
+        self.bind(node)?;
+        let task = self.post_dispatch().await?.task;
+        if task.identity.upid != upid.as_str() {
+            return Err(PveReadError::InvalidResponse);
+        }
+        let state = match task.result {
+            FixtureTaskState::Absent {} => return Err(PveReadError::NotFound),
+            FixtureTaskState::Running {} => TaskState::Running,
+            FixtureTaskState::Succeeded {} => TaskState::CompleteSuccess,
+            FixtureTaskState::Failed { .. } => TaskState::CompleteFailure,
+        };
+        let time = i64::try_from(task.observed_unix_ms)
+            .ok()
+            .and_then(DateTime::from_timestamp_millis)
+            .ok_or(PveReadError::InvalidResponse)?;
+        Ok(TaskStatus::new(upid.clone(), state, time))
     }
     async fn storage_content(
         &self,
@@ -328,6 +404,18 @@ impl ProvisioningFakePort for FixtureProvisioningPort {
             || vm.target_vmid().get() != self.identity.target_vmid
         {
             return Err(PveWriteError::Rejected);
+        }
+        // Switch before sending: an ambiguous transport result must never expose
+        // the pre-dispatch absence snapshot as current evidence.
+        {
+            let mut dispatched = self.dispatched.lock().unwrap();
+            if dispatched
+                .as_ref()
+                .is_some_and(|prior| prior.request_sha256() != envelope.request_sha256())
+            {
+                return Err(PveWriteError::Rejected);
+            }
+            *dispatched = Some(envelope.clone());
         }
         let receipt = if self.exact_identity.is_some() {
             self.mutation.clone_vm(&envelope).await
