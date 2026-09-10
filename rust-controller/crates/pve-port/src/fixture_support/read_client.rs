@@ -67,6 +67,38 @@ fn invalid() -> io::Error {
 }
 
 impl FixtureReadClient {
+    /// Reads immutable supervisor facts bound to the complete expected request identity.
+    pub async fn provisioning_reads(
+        &self,
+        identity: &super::FixtureProvisioningIdentity,
+    ) -> io::Result<Option<super::FixtureProvisioningReads>> {
+        identity.validate()?;
+        tokio::time::timeout(self.timeout, async {
+            let payload = serde_json::to_vec(
+                &serde_json::json!({"command":"provisioning_reads","identity":identity}),
+            )?;
+            let mut stream = UnixStream::connect(&self.socket).await?;
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(&payload).await?;
+            let length = stream.read_u32().await? as usize;
+            if length == 0 || length > super::provisioning_reads::MAX_PROVISIONING_READ_BYTES {
+                return Err(invalid());
+            }
+            let mut bytes = vec![0; length];
+            stream.read_exact(&mut bytes).await?;
+            if bytes == b"null" {
+                return Ok(None);
+            }
+            super::FixtureProvisioningReads::decode(&bytes, identity).map(Some)
+        })
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                "fixture provisioning reads deadline",
+            )
+        })?
+    }
     /// Returns historical supervisor facts, or `None` when the seed is unavailable.
     /// The caller must supply the expected fixture identity; times are never refreshed.
     pub async fn clone_reads(

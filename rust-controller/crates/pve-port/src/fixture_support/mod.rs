@@ -4,9 +4,11 @@
 //! protocol replies. This module grants no provisioning mutation capability.
 mod clone_mutation;
 mod clone_reads;
+mod provisioning_reads;
 pub use clone_reads::{
     FixtureCloneReads, SeedBridge, SeedIdentity, SeedNode, SeedRead, SeedReadError, SeedStorage,
 };
+pub use provisioning_reads::{FixtureProvisioningIdentity, FixtureProvisioningReads, SeedConfig};
 mod durable_fixture_log;
 mod fixture_daemon;
 mod inventory_read;
