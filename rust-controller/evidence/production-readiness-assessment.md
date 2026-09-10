@@ -10,14 +10,15 @@ Production and `192.168.2.4`: read-only throughout
 
 ## Proven locally
 
-- Current Rust source is committed through `49b08779edb1d9d5f3c2b6247cbce77bd6f33751`; launcher-only qualification fixes are committed through `2d977b0b8727ff3aded6277a0ddc44aa0b4ee5d7`.
+- Current Rust source is committed through `d9f8949811d600faf308b565f8666213d82609af`; the guest-action contract implementation is `da8a40218db163ff367041bb8814b0a33321fee1`.
 - The final macOS four-package regression at `557bd12` passed 665 tests, with 3 intentionally ignored, under a bounded supervisor.
-- An exact-source Linux/amd64 image was built from `49b0877` and inspected as `sha256:d2a7622623953ba9342e11ed1d6df00d8dc62c1d62713bdf94e70f9135cb459c`.
+- The prior full Linux/amd64 qualification image was built from `49b0877` and inspected as `sha256:d2a7622623953ba9342e11ed1d6df00d8dc62c1d62713bdf94e70f9135cb459c`. After the guest-action change, a fresh exact-source image was built as `sha256:4dd13f3c600b2da07c580d5a7d0bf2263a0429ee2029c8e35524a394fd9c740b` and passed the owned-v1 smoke gate; the changed-source full Linux run is still pending.
 - The owned-v1 Linux full run completed with exit 0 under the bounded 1,820-second supervisor. All executed Rust targets reported zero failures; evidence is retained in `restart-task9-owned-full-4/`.
 - The isolated Linux Compose proof passed the three-worker synthetic scheduling, PostgreSQL, cancellation/recovery, native adapter, and descendant-cleanup scenarios (12 lifecycle plus 4 native PostgreSQL tests).
 - Python compatibility-side contracts passed with explicit Python 3.12: producer 2/2, proof-wait 5/5, and proof-coordination 1/1.
 - Rust formatting, strict offline/locked Clippy, focused protocol checks, and bounded child/process cleanup evidence passed for the accepted local source changes.
 - Native real-PostgreSQL restart/recovery cases passed for restart fencing, unknown-state reconciliation, receipt reload, aged-infrastructure continuation, and response-loss handling; the combined record is `restart-recovery-1/acceptance.md`.
+- The guest-action identity slice is locally verified, but authoritative callback/session decisions are missing; no authenticated callback exposure or result-ingest claim is made.
 
 ## Not yet proven
 
