@@ -13,6 +13,96 @@ use pve_port::{fixture_ipc::*, fixture_support::*, *};
 use sqlx::ConnectOptions;
 use std::{fs, os::unix::fs::PermissionsExt, sync::Arc, time::Duration};
 
+/// Fresh controller admission must not convert an unseeded IPC world into
+/// vacancy or borrow the native Scenario's Ready authorization.
+#[tokio::test]
+async fn fresh_controller_ipc_collection_without_seed_cannot_dispatch() {
+    let s = Scenario::new(300, true).await;
+    let operation = s.ids.operation(osdeploy_adapter::OsDeployStage::Clone);
+    let fixture_id = controller_domain::RunId::new().as_uuid();
+    let directory = std::path::PathBuf::from("/tmp").join(format!("pgentry-{fixture_id}"));
+    fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    let daemon_path = directory.clone();
+    let daemon = std::thread::spawn(move || run(&daemon_path, Duration::from_secs(4)).unwrap());
+    let supervisor =
+        FixtureCheckpointClient::new(directory.join("supervisor.sock"), Duration::from_secs(1))
+            .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let state = loop {
+        if let Ok(reply) = supervisor.request(CheckpointRequest::Status).await {
+            break reply.state;
+        }
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    };
+    let port = FixtureProvisioningPort::new(
+        directory.join("client.sock"),
+        Duration::from_secs(1),
+        FixtureProvisioningIdentity {
+            fixture_id,
+            operation: operation.as_uuid(),
+            request_sha256: "a".repeat(64),
+            node: "node-a".into(),
+            source_vmid: 900,
+            target_vmid: 101,
+        },
+    )
+    .unwrap()
+    .with_checkpoint(
+        FixtureCheckpointClient::new(directory.join("client.sock"), Duration::from_secs(1))
+            .unwrap(),
+        CheckpointBinding {
+            generation: state.generation,
+            owner: fixture_id,
+            operation: operation.as_uuid(),
+            point: CheckpointPoint::DispatchCommitted,
+        },
+    )
+    .unwrap();
+    let controller = operation_controller::OsDeployController::new_fixture(
+        s.db.store.clone(),
+        s.db.scheduler(),
+        Arc::new(port),
+        1,
+    )
+    .unwrap();
+    controller.open_send_admission().await.unwrap();
+    let progress = controller.run_osdeploy_once(operation).await.unwrap();
+    assert_eq!(
+        progress,
+        postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Unknown)
+    );
+    let snapshot = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+    assert!(snapshot.dispatch().is_none());
+    assert!(snapshot.receipt().is_none());
+    assert!(s.fake.recorded_provisioning_submissions().is_empty());
+    let reader =
+        FixtureReadClient::new(directory.join("client.sock"), Duration::from_secs(1)).unwrap();
+    assert!(
+        reader
+            .accepted_effect(operation.as_uuid(), &"a".repeat(64))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        supervisor
+            .request(CheckpointRequest::Status)
+            .await
+            .unwrap()
+            .state
+            .phase,
+        state.phase
+    );
+    controller
+        .close_and_drain(Duration::from_secs(1))
+        .await
+        .unwrap();
+    daemon.join().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[tokio::test]
 async fn committed_dispatch_captures_ipc_clone_receipt_in_independent_store() {
     let s = Scenario::new(300, true).await;
