@@ -24,6 +24,9 @@ const IO_BOUND: Duration = Duration::from_millis(100);
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum ClientRequest {
+    Task {
+        identity: super::FixtureTaskIdentity,
+    },
     Snapshot {},
     Status {},
     AcceptedEffect {
@@ -120,6 +123,7 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
     }
     let ledger = directory.join("fixture.log");
     let inventory = snapshot::FixtureSnapshot::load(&directory.join("inventory.json"))?;
+    let task = super::FixtureTaskObservation::load(&directory.join("task.json"))?;
     let mut log = if ledger.exists() {
         FixtureLog::recover(&ledger)?
     } else {
@@ -156,6 +160,18 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                 }
             } else {
                 match serde_json::from_slice::<ClientRequest>(&bytes) {
+                    Ok(ClientRequest::Task { identity }) => {
+                        if identity.validate().is_ok()
+                            && let Some(observation) =
+                                task.as_ref().filter(|task| task.identity == identity)
+                        {
+                            let payload = serde_json::to_vec(observation)?;
+                            let _ = stream
+                                .write_all(&(payload.len() as u32).to_be_bytes())
+                                .and_then(|()| stream.write_all(&payload));
+                            continue;
+                        }
+                    }
                     Ok(ClientRequest::Snapshot {}) => {
                         let payload = serde_json::to_vec(&inventory)?;
                         let _ = stream

@@ -6,6 +6,8 @@ mod durable_fixture_log;
 mod fixture_daemon;
 mod inventory_read;
 mod read_client;
+mod task;
+pub use task::{FixtureTaskIdentity, FixtureTaskObservation, FixtureTaskState};
 
 pub use durable_fixture_log::{Effect, VmState};
 pub use fixture_daemon::snapshot::{FixtureInventory, FixtureSnapshot, FixtureVmConfig};

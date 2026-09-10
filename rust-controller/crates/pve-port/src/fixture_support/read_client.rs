@@ -67,6 +67,34 @@ fn invalid() -> io::Error {
 }
 
 impl FixtureReadClient {
+    /// Reads an explicitly recorded historical task observation. Missing or
+    /// mismatched records are errors, never inferred absence or success.
+    pub async fn task(
+        &self,
+        identity: &super::FixtureTaskIdentity,
+    ) -> io::Result<super::FixtureTaskObservation> {
+        identity.validate()?;
+        tokio::time::timeout(self.timeout, async {
+            let payload =
+                serde_json::to_vec(&serde_json::json!({"command":"task", "identity":identity}))?;
+            let mut stream = UnixStream::connect(&self.socket).await?;
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(&payload).await?;
+            let length = stream.read_u32().await? as usize;
+            if length == 0 || length > super::task::MAX_TASK_BYTES {
+                return Err(invalid());
+            }
+            let mut bytes = vec![0; length];
+            stream.read_exact(&mut bytes).await?;
+            let observation = super::FixtureTaskObservation::decode(&bytes)?;
+            if observation.identity != *identity {
+                return Err(invalid());
+            }
+            Ok(observation)
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "fixture task deadline"))?
+    }
     /// Reads daemon-owned startup inventory. An empty inventory proves absence
     /// only at its recorded observation time; unavailable proves nothing.
     pub async fn snapshot(&self) -> io::Result<super::FixtureSnapshot> {
