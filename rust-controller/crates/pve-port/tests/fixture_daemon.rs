@@ -328,3 +328,49 @@ fn effects_commit_replay_and_reject_duplicates_over_ipc() {
         })
     );
 }
+
+#[test]
+fn accepted_effect_lookup_binds_request_and_survives_restart() {
+    let mut daemon = Daemon::start();
+    let operation = Uuid::now_v7();
+    let digest = "a".repeat(64);
+    let query = serde_json::to_vec(&serde_json::json!({"command":"accepted_effect", "operation":operation, "request_sha256":digest})).unwrap();
+    let absent = daemon.request("client.sock", &query);
+    assert!(absent.ok);
+    assert!(absent.accepted_effect.is_none());
+    assert!(!daemon.request("supervisor.sock", &query).ok);
+    let attempt = serde_json::to_vec(
+        &serde_json::json!({"command":"attempt", "operation":operation, "request_sha256":digest}),
+    )
+    .unwrap();
+    assert!(daemon.request("client.sock", &attempt).ok);
+    assert!(
+        daemon
+            .request("client.sock", &query)
+            .accepted_effect
+            .is_none()
+    );
+    let wrong = serde_json::to_vec(&serde_json::json!({"command":"accepted_effect", "operation":operation, "request_sha256":"b".repeat(64)})).unwrap();
+    assert!(!daemon.request("client.sock", &wrong).ok);
+    let effect = br#"{"command":"effect","attempt_sequence":1,"vmid":100,"before":null,"after":{"disk_bytes":80,"pe_configured":false}}"#;
+    assert!(daemon.request("client.sock", effect).ok);
+    let accepted = daemon.request("client.sock", &query);
+    assert!(accepted.ok);
+    let facts = serde_json::to_value(accepted.accepted_effect.as_ref().unwrap()).unwrap();
+    assert_eq!(facts["operation"], operation.to_string());
+    assert_eq!(facts["request_sha256"], digest);
+    assert_eq!(facts["vmid"], 100);
+    assert_eq!(facts["attempt_sequence"], 1);
+    assert_eq!(facts["after"]["disk_bytes"], 80);
+    daemon.child.kill().unwrap();
+    daemon.child.wait().unwrap();
+    daemon.clear_stale_sockets().unwrap();
+    daemon.child = Daemon::spawn(&daemon.directory);
+    daemon.await_ready();
+    let recovered = daemon.request("client.sock", &query);
+    assert!(recovered.ok);
+    assert_eq!(recovered.accepted_effect, accepted.accepted_effect);
+    assert_eq!(recovered.attempts, 1);
+    assert_eq!(recovered.effects, 1);
+    assert!(!daemon.request("client.sock", &wrong).ok);
+}

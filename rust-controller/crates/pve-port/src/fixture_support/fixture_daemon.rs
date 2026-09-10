@@ -1,6 +1,6 @@
 //! Local fixture daemon. Separate sockets separate protocol capabilities;
 //! filesystem ownership is the trust boundary, not an authentication claim.
-use super::durable_fixture_log::{FixtureLog, VmState};
+use super::durable_fixture_log::{Effect, FixtureLog, VmState};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -22,6 +22,10 @@ const IO_BOUND: Duration = Duration::from_millis(100);
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum ClientRequest {
     Status {},
+    AcceptedEffect {
+        operation: Uuid,
+        request_sha256: String,
+    },
     World {
         vmid: u32,
     },
@@ -51,6 +55,7 @@ pub struct Reply {
     pub duplicate: Option<bool>,
     pub effects: usize,
     pub vm: Option<VmState>,
+    pub accepted_effect: Option<Effect>,
 }
 
 fn read_frame(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
@@ -136,6 +141,7 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                 duplicate: None,
                 effects: log.effects().len(),
                 vm: None,
+                accepted_effect: None,
             };
             let mut shutdown = false;
             if supervisor {
@@ -146,6 +152,15 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
             } else {
                 match serde_json::from_slice::<ClientRequest>(&bytes) {
                     Ok(ClientRequest::Status {}) => response.ok = true,
+                    Ok(ClientRequest::AcceptedEffect {
+                        operation,
+                        request_sha256,
+                    }) => {
+                        if let Ok(effect) = log.accepted_effect(operation, &request_sha256) {
+                            response.ok = true;
+                            response.accepted_effect = effect.cloned();
+                        }
+                    }
                     Ok(ClientRequest::World { vmid }) => {
                         response.ok = vmid != 0;
                         response.vm = log.world().get(&vmid).cloned();

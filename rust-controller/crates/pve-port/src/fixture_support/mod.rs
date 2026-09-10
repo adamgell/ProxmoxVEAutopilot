@@ -5,5 +5,5 @@
 mod durable_fixture_log;
 mod fixture_daemon;
 
-pub use durable_fixture_log::VmState;
+pub use durable_fixture_log::{Effect, VmState};
 pub use fixture_daemon::{Reply, run};

@@ -8,6 +8,22 @@ use uuid::Uuid;
 use durable_fixture_log::VmState;
 
 #[test]
+fn effect_lookup_rejects_invalid_identity_without_appending() {
+    let fixture = Fixture::new();
+    let log = FixtureLog::create(&fixture.path()).unwrap();
+    assert!(log.accepted_effect(Uuid::nil(), &"a".repeat(64)).is_err());
+    assert!(log.accepted_effect(Uuid::now_v7(), "invalid").is_err());
+    assert!(
+        log.accepted_effect(Uuid::now_v7(), &"a".repeat(64))
+            .unwrap()
+            .is_none()
+    );
+    assert!(log.records().is_empty());
+    assert!(log.effects().is_empty());
+    assert!(fs::read(fixture.path()).unwrap().is_empty());
+}
+
+#[test]
 fn acceptance_and_world_transition_recover_together_after_durable_attempt() {
     let fixture = Fixture::new();
     let mut log = FixtureLog::create(&fixture.path()).unwrap();

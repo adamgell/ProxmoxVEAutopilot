@@ -30,7 +30,7 @@ pub struct VmState {
     pub pe_configured: bool,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Effect {
     effect_version: u8,
@@ -239,6 +239,24 @@ impl FixtureLog {
     }
     pub fn effects(&self) -> &[Effect] {
         &self.effects
+    }
+
+    /// Reads a committed synthetic effect for the exact original request.
+    /// An admitted attempt alone never constitutes acceptance. A reused operation
+    /// with another digest is a binding error, even before any effect exists.
+    pub fn accepted_effect(&self, operation: Uuid, digest: &str) -> io::Result<Option<&Effect>> {
+        if operation.is_nil() || !valid_digest(digest) || self.poisoned {
+            return Err(invalid());
+        }
+        if let Some(original) = self.records.iter().find(|a| a.operation == operation)
+            && original.request_sha256 != digest
+        {
+            return Err(invalid());
+        }
+        Ok(self
+            .effects
+            .iter()
+            .find(|effect| effect.operation == operation))
     }
 }
 
