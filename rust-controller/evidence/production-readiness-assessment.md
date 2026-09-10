@@ -19,6 +19,7 @@ Production and `192.168.2.4`: read-only throughout
 - Rust formatting, strict offline/locked Clippy, focused protocol checks, and bounded child/process cleanup evidence passed for the accepted local source changes.
 - Native real-PostgreSQL restart/recovery cases passed for restart fencing, unknown-state reconciliation, receipt reload, aged-infrastructure continuation, and response-loss handling; the combined record is `restart-recovery-1/acceptance.md`.
 - The guest-action identity slice is locally verified, but authoritative callback/session decisions are missing; no authenticated callback exposure or result-ingest claim is made.
+- Independent-process recovery is explicitly unproven. Existing Clone → DiskCapacity → ConfigurePe and native restart tests reconstruct controller objects in one process; `NativeFakePve` is in-memory, so a true worker-death/takeover proof requires a separately approved durable deterministic fake-PVE service or IPC fixture.
 
 ## Not yet proven
 
