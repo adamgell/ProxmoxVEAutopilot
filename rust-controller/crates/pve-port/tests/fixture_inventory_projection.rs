@@ -5,6 +5,41 @@ use pve_port::{ClusterVmInventory, PveReadError, fixture_support::SeedIdentity};
 use serde_json::json;
 
 #[test]
+fn unrelated_inventory_identity_does_not_establish_configuration_coverage() {
+    use pve_port::ProvisioningIdentitySnapshotV1;
+    let seed: SeedIdentity = serde_json::from_value(json!({
+        "node":"other-node", "vmid":777, "name":"unrelated", "template":false,
+        "config_sha256":"a".repeat(64), "uuid":uuid::Uuid::from_u128(2),
+        "mac":"02:00:00:00:00:02", "primary_storage":"local-lvm",
+        "primary_volume":"vm-777-disk-0",
+        "status":{"state":"observed","observed_unix_ms":1800000000000u64,"value":"running"}
+    }))
+    .unwrap();
+    let at = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
+    let mut projection = json!({
+        "contract_version":1, "source":"fake_pve", "node":seed.node,
+        "vmid":seed.vmid, "name":seed.name, "is_template":seed.template,
+        "config_digest":seed.config_sha256, "uuid":seed.uuid, "mac":seed.mac,
+        "primary_storage":seed.primary_storage, "primary_volume":seed.primary_volume,
+        "observed_at":at
+    });
+    // The collector reads every inventory member's identity, including this VM
+    // outside the request's source/target. Their coverage cannot bind this VM.
+    assert!(serde_json::from_value::<ProvisioningIdentitySnapshotV1>(projection.clone()).is_err());
+    projection["coverage"] = json!("partial");
+    let partial: ProvisioningIdentitySnapshotV1 =
+        serde_json::from_value(projection.clone()).unwrap();
+    projection["coverage"] = json!("complete");
+    let complete: ProvisioningIdentitySnapshotV1 = serde_json::from_value(projection).unwrap();
+    assert_ne!(partial.coverage(), complete.coverage());
+    assert_eq!(partial.vmid(), complete.vmid());
+    assert_eq!(partial.observed_at(), at);
+    assert_eq!(complete.observed_at(), at);
+    // Both configuration-coverage worlds fit the same seeded membership/status.
+    // A future adapter must obtain the additional fact before claiming Complete.
+}
+
+#[test]
 fn seeded_inventory_status_supplies_its_own_power_observation() {
     let seed: SeedIdentity = serde_json::from_value(json!({
         "node": "pve", "vmid": 900, "name": "template", "template": true,

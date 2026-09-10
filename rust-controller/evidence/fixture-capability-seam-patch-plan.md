@@ -164,3 +164,21 @@ stopped, infer it from template status, or borrow another observation timestamp.
 Then revalidate the adapter's entire read projection before implementing the
 sealed provisioning capability. The supervisor checkpoint remains a separate
 required protocol, and no adapter or controller round-trip is claimed here.
+
+### Adapter reinspection: unrelated identity coverage
+
+With per-entry inventory status available, cluster membership/power can now be
+projected. The earlier coverage addition covers only the source and target in
+`FixtureProvisioningReads`; `SeedIdentity` still has no configuration-coverage
+observation for unrelated cluster members. `osdeploy/collect.rs` requests
+`provisioning_identity` for every inventory member. Consequently a general
+adapter cannot label those unrelated identities `Complete` from membership or
+status. `unrelated_inventory_identity_does_not_establish_configuration_coverage`
+proves the typed identity rejects omitted coverage and that both Partial and
+Complete configurations are consistent with the same inventory seed.
+
+Add a timestamped coverage observation to every seeded identity, bound to that
+identity's observation, preserving explicit errors and Partial. Alternatively,
+provide a validated configuration for every inventory member and derive coverage
+from it. This is separate from the still-required supervisor checkpoint IPC.
+No sealed adapter or controller capability is implemented by this regression.
