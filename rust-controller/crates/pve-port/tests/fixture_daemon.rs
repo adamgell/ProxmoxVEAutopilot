@@ -30,6 +30,44 @@ mod provisioning_seed_support;
 
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
+async fn target_presence_and_power_survive_restart_without_mutation() {
+    use pve_port::fixture_support::FixtureReadClient;
+    let mut daemon = Daemon::start();
+    let client =
+        FixtureReadClient::new(daemon.directory.join("client.sock"), Duration::from_secs(1))
+            .unwrap();
+    let mut previous = None;
+    for seed in [
+        provisioning_seed_support::target_present(),
+        provisioning_seed_support::target_absent(),
+    ] {
+        fs::write(
+            daemon.directory.join("provisioning_reads.json"),
+            serde_json::to_vec(&seed).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            client.provisioning_reads(&seed.identity).await.unwrap(),
+            previous
+        );
+        for _ in 0..2 {
+            daemon.child.kill().unwrap();
+            daemon.child.wait().unwrap();
+            daemon.clear_stale_sockets().unwrap();
+            daemon.child = Daemon::spawn(&daemon.directory);
+            daemon.await_ready();
+            assert_eq!(
+                client.provisioning_reads(&seed.identity).await.unwrap(),
+                Some(seed.clone())
+            );
+            assert_eq!(client.status().await.unwrap().attempts, 0);
+        }
+        previous = Some(seed);
+    }
+}
+
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
 async fn provisioning_reads_preserve_populated_facts_errors_and_restart_identity() {
     use pve_port::fixture_support::FixtureReadClient;
     let mut daemon = Daemon::start();

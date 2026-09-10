@@ -51,3 +51,31 @@ pub fn populated() -> FixtureProvisioningReads {
         },
     }
 }
+
+pub fn target_present() -> FixtureProvisioningReads {
+    let mut seed = populated();
+    seed.target_config = SeedRead::Observed {
+        observed_unix_ms: support::time().timestamp_millis() as u64,
+        value: SeedConfig::Present {
+            config: Box::new(support::intermediate()),
+        },
+    };
+    seed.target_power = SeedRead::Observed {
+        observed_unix_ms: support::time().timestamp_millis() as u64 + 4,
+        value: PowerState::Running,
+    };
+    seed
+}
+
+pub fn target_absent() -> FixtureProvisioningReads {
+    let mut seed = populated();
+    seed.target_config = SeedRead::Observed {
+        observed_unix_ms: support::time().timestamp_millis() as u64 + 5,
+        value: SeedConfig::Absent {},
+    };
+    seed.target_power = SeedRead::Error {
+        observed_unix_ms: support::time().timestamp_millis() as u64 + 6,
+        error: SeedReadError::Unavailable,
+    };
+    seed
+}
