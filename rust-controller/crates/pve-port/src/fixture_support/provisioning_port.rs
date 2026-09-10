@@ -308,9 +308,7 @@ impl ProvisioningFakePort for FixtureProvisioningPort {
         &self,
         request: &ProvisioningMutationRequestV1,
     ) -> Result<MutationReceipt, PveWriteError> {
-        // V2 collection does not grant mutation authority. A separate bound late
-        // command must carry the released generation/owner before this can open.
-        if self.exact_identity.is_none() {
+        if self.exact_identity.is_none() && self.checkpoint.is_none() {
             return Err(PveWriteError::Rejected);
         }
         let ProvisioningMutationRequestV1::Clone(request) = request else {
@@ -331,11 +329,13 @@ impl ProvisioningFakePort for FixtureProvisioningPort {
         {
             return Err(PveWriteError::Rejected);
         }
-        let receipt = self
-            .mutation
-            .clone_vm(&envelope)
-            .await
-            .map_err(|_| PveWriteError::OutcomeUnknown)?;
+        let receipt = if self.exact_identity.is_some() {
+            self.mutation.clone_vm(&envelope).await
+        } else {
+            let (_, binding) = self.checkpoint.as_ref().ok_or(PveWriteError::Rejected)?;
+            self.mutation.clone_vm_late(*binding, &envelope).await
+        }
+        .map_err(|_| PveWriteError::OutcomeUnknown)?;
         Ok(receipt.receipt().clone())
     }
 }

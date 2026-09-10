@@ -94,6 +94,31 @@ struct PersistedBarrier {
     authorization: Option<super::LateCloneAuthorizationV1>,
 }
 impl Barrier {
+    pub(crate) fn consume_clone(
+        &mut self,
+        binding: CheckpointBinding,
+        request: &crate::fixture_ipc::FixtureCloneRequest,
+    ) -> io::Result<super::FixtureCloneSeed> {
+        let authorization = self.authorization.as_ref().ok_or_else(invalid)?;
+        if self.state.phase != CheckpointPhase::Released
+            || self.state.binding != Some(binding)
+            || self.state.generation != binding.generation
+            || self
+                .deadline
+                .is_none_or(|deadline| Instant::now() >= deadline)
+            || authorization.binding != binding
+            || authorization.request != request.encode().map_err(|_| invalid())?
+            || authorization.request_sha256 != request.request_sha256()
+        {
+            return Err(invalid());
+        }
+        let seed = super::FixtureCloneSeed::new(request, authorization.after.clone())?;
+        // Persist consumption before granting the in-process effect capability.
+        // A crash between consumption and effect remains fail-closed.
+        self.authorization = None;
+        self.persist()?;
+        Ok(seed)
+    }
     pub(crate) fn new(directory: &Path) -> io::Result<Self> {
         let path = directory.join("checkpoint.json");
         // Reject corrupt prior state; old state can never authorize a new process.

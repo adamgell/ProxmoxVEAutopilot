@@ -51,6 +51,10 @@ fn late_authorization_candidate_requires_exact_dispatch_and_entered_owner() {
         identity: identity.clone(),
         request_sha256: request.request_sha256(),
         request: request.encode().unwrap(),
+        after: pve_port::fixture_support::VmState {
+            disk_bytes: 4096,
+            pe_configured: false,
+        },
     };
     let valid = |candidate: &LateCloneAuthorizationV1, state: &CheckpointState| {
         candidate.validate_candidate(&identity, binding, state, &request)
@@ -92,7 +96,7 @@ fn late_authorization_candidate_requires_exact_dispatch_and_entered_owner() {
 }
 
 #[tokio::test]
-async fn stable_read_adapter_cannot_submit_through_legacy_clone_command() {
+async fn bound_stable_read_adapter_reports_unavailable_late_transport() {
     use pve_port::fixture_support::*;
     let request = request();
     let vm = request.request().clone_request().vm();
@@ -126,7 +130,7 @@ async fn stable_read_adapter_cannot_submit_through_legacy_clone_command() {
             request.request().clone()
         ))
         .await,
-        Err(PveWriteError::Rejected)
+        Err(PveWriteError::OutcomeUnknown)
     );
 }
 

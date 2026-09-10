@@ -41,6 +41,11 @@ enum ClientRequest {
         request: serde_json::Value,
     },
     #[cfg(feature = "fixture-ipc")]
+    CloneLate {
+        binding: super::CheckpointBinding,
+        request: serde_json::Value,
+    },
+    #[cfg(feature = "fixture-ipc")]
     Task {
         identity: super::FixtureTaskIdentity,
     },
@@ -260,6 +265,26 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                     Ok(ClientRequest::Clone { request }) => {
                         if let Some(seed) = &clone_seed {
                             match seed.submit(&serde_json::to_vec(&request)?, &mut log) {
+                                Ok(payload) => {
+                                    let _ = stream
+                                        .write_all(&(payload.len() as u32).to_be_bytes())
+                                        .and_then(|()| stream.write_all(&payload));
+                                    continue;
+                                }
+                                Err(e) if e.kind() == io::ErrorKind::InvalidData => {}
+                                Err(e) => return Err(e),
+                            }
+                        }
+                    }
+                    #[cfg(feature = "fixture-ipc")]
+                    Ok(ClientRequest::CloneLate { binding, request }) => {
+                        let bytes = serde_json::to_vec(&request)?;
+                        if let Ok(request) = crate::fixture_ipc::FixtureCloneRequest::decode(&bytes)
+                        {
+                            match barrier
+                                .consume_clone(binding, &request)
+                                .and_then(|seed| seed.submit(&bytes, &mut log))
+                            {
                                 Ok(payload) => {
                                     let _ = stream
                                         .write_all(&(payload.len() as u32).to_be_bytes())

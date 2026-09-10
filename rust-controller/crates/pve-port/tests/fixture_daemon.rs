@@ -30,6 +30,197 @@ mod provisioning_seed_support;
 
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
+async fn bound_late_clone_consumes_exact_authorization_once() {
+    bound_late_clone_case(false).await;
+}
+
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
+async fn bound_late_clone_persistence_failure_creates_no_effect() {
+    bound_late_clone_case(true).await;
+}
+
+#[cfg(feature = "fixture-ipc")]
+async fn bound_late_clone_case(fail_consumption: bool) {
+    use provisioning_seed_support::support as s;
+    use pve_port::{fixture_ipc::FixtureCloneRequest, fixture_support::*, *};
+    let mut daemon = Daemon::start();
+    let socket = daemon.directory.join("client.sock");
+    let supervisor = FixtureCheckpointClient::new(
+        daemon.directory.join("supervisor.sock"),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let worker = FixtureCheckpointClient::new(socket.clone(), Duration::from_secs(1)).unwrap();
+    let mutation = FixtureMutationClient::new(socket.clone(), Duration::from_secs(1)).unwrap();
+    let reads = FixtureReadClient::new(socket.clone(), Duration::from_secs(1)).unwrap();
+    let request = FixtureCloneRequest::new(
+        Uuid::from_u128(1),
+        CloneProvisioningRequestV1::new(
+            s::binding(ProvisioningActionV1::Clone, 10, 0),
+            s::plan(ProvisioningActionV1::Clone),
+            s::clone_request(),
+            s::before(s::source(), false),
+            s::time(),
+            30,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let vm = request.request().clone_request().vm();
+    let identity = FixtureReadIdentity {
+        fixture_id: request.fixture_id(),
+        operation: request.request().binding().operation_id().as_uuid(),
+        node: vm.node().as_str().into(),
+        source_vmid: vm.source_vmid().get(),
+        target_vmid: vm.target_vmid().get(),
+    };
+    let binding = CheckpointBinding {
+        generation: supervisor
+            .request(CheckpointRequest::Status)
+            .await
+            .unwrap()
+            .state
+            .generation,
+        owner: Uuid::now_v7(),
+        operation: identity.operation,
+        point: CheckpointPoint::DispatchCommitted,
+    };
+    assert!(
+        supervisor
+            .request(CheckpointRequest::ArmLate {
+                binding,
+                timeout_ms: 5000,
+                identity: identity.clone()
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    assert!(
+        worker
+            .request(CheckpointRequest::Enter { binding })
+            .await
+            .unwrap()
+            .ok
+    );
+    assert!(mutation.clone_vm_late(binding, &request).await.is_err());
+    let proposal = LateCloneAuthorizationV1 {
+        version: 1,
+        binding,
+        identity: identity.clone(),
+        request_sha256: request.request_sha256(),
+        request: request.encode().unwrap(),
+        after: VmState {
+            disk_bytes: 4096,
+            pe_configured: false,
+        },
+    };
+    assert!(
+        supervisor
+            .request(CheckpointRequest::AuthorizeRelease {
+                proposal: proposal.clone(),
+                committed_request: request.encode().unwrap()
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    for wrong in [
+        CheckpointBinding {
+            owner: Uuid::now_v7(),
+            ..binding
+        },
+        CheckpointBinding {
+            generation: Uuid::now_v7(),
+            ..binding
+        },
+        CheckpointBinding {
+            operation: Uuid::now_v7(),
+            ..binding
+        },
+    ] {
+        assert!(mutation.clone_vm_late(wrong, &request).await.is_err());
+    }
+    let altered = FixtureCloneRequest::new(Uuid::now_v7(), request.request().clone()).unwrap();
+    assert!(mutation.clone_vm_late(binding, &altered).await.is_err());
+    // The legacy command cannot consume a late authorization.
+    assert!(mutation.clone_vm(&request).await.is_err());
+    assert_eq!(reads.status().await.unwrap().attempts, 0);
+    if fail_consumption {
+        fs::rename(
+            daemon.directory.join("checkpoint.json"),
+            daemon.directory.join("checkpoint.saved.json"),
+        )
+        .unwrap();
+        fs::create_dir(daemon.directory.join("checkpoint.json")).unwrap();
+        assert!(mutation.clone_vm_late(binding, &request).await.is_err());
+        daemon.await_failure();
+        // The effect ledger remains empty because no seed capability escaped
+        // the failed synchronized consumption transition.
+        let ledger =
+            durable_fixture_log::FixtureLog::recover(&daemon.directory.join("fixture.log"))
+                .unwrap();
+        assert!(ledger.records().is_empty());
+        return;
+    }
+    let port = FixtureProvisioningPort::new_late(socket, Duration::from_secs(1), identity)
+        .unwrap()
+        .with_checkpoint(worker, binding)
+        .unwrap();
+    let receipt = port
+        .submit_provisioning(&ProvisioningMutationRequestV1::Clone(
+            request.request().clone(),
+        ))
+        .await
+        .unwrap();
+    let effect = reads
+        .accepted_effect(binding.operation, &request.request_sha256())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        request
+            .decode_receipt(effect.receipt().unwrap())
+            .unwrap()
+            .receipt(),
+        &receipt
+    );
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(daemon.directory.join("checkpoint.json")).unwrap())
+            .unwrap();
+    assert!(persisted["authorization"].is_null());
+    assert_eq!(reads.status().await.unwrap().attempts, 1);
+    assert_eq!(reads.status().await.unwrap().effects, 1);
+    assert!(mutation.clone_vm_late(binding, &request).await.is_err());
+    assert!(
+        !supervisor
+            .request(CheckpointRequest::AuthorizeRelease {
+                proposal,
+                committed_request: request.encode().unwrap()
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    daemon.child.kill().unwrap();
+    daemon.child.wait().unwrap();
+    daemon.clear_stale_sockets().unwrap();
+    daemon.child = Daemon::spawn(&daemon.directory);
+    daemon.await_ready();
+    assert!(mutation.clone_vm_late(binding, &request).await.is_err());
+    assert_eq!(
+        reads
+            .accepted_effect(binding.operation, &request.request_sha256())
+            .await
+            .unwrap()
+            .unwrap(),
+        effect
+    );
+}
+
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
 async fn late_authorization_is_supervisor_owned_atomic_and_invalidated_on_restart() {
     use provisioning_seed_support::support as s;
     use pve_port::{fixture_ipc::FixtureCloneRequest, fixture_support::*, *};
@@ -101,7 +292,15 @@ async fn late_authorization_is_supervisor_owned_atomic_and_invalidated_on_restar
         identity,
         request_sha256: request.request_sha256(),
         request: request.encode().unwrap(),
+        after: VmState {
+            disk_bytes: 4096,
+            pe_configured: false,
+        },
     };
+    let mutation =
+        FixtureMutationClient::new(daemon.directory.join("client.sock"), Duration::from_secs(1))
+            .unwrap();
+    assert!(mutation.clone_vm_late(binding, &request).await.is_err());
     let authorize = |proposal| CheckpointRequest::AuthorizeRelease {
         proposal,
         committed_request: request.encode().unwrap(),
@@ -151,6 +350,7 @@ async fn late_authorization_is_supervisor_owned_atomic_and_invalidated_on_restar
     daemon.clear_stale_sockets().unwrap();
     daemon.child = Daemon::spawn(&daemon.directory);
     daemon.await_ready();
+    assert!(mutation.clone_vm_late(binding, &request).await.is_err());
     assert!(
         !worker
             .request(CheckpointRequest::Poll { binding })
@@ -636,8 +836,8 @@ impl Daemon {
 
     fn await_ready(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(3);
-        while !self.directory.join("client.sock").exists()
-            || !self.directory.join("supervisor.sock").exists()
+        while UnixStream::connect(self.directory.join("client.sock")).is_err()
+            || UnixStream::connect(self.directory.join("supervisor.sock")).is_err()
         {
             assert!(
                 self.child.try_wait().unwrap().is_none(),

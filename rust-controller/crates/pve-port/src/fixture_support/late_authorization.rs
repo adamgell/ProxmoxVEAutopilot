@@ -1,6 +1,7 @@
 //! Supervisor proposal validation. Validation alone grants no mutation capability.
 //! The checkpoint daemon can persist a validated proposal and release atomically;
-//! actual Clone mutation still uses the existing exact seeded-request admission.
+//! the bound late command durably consumes that authorization before creating
+//! the same validated seed capability used by startup-seeded Clone admission.
 use super::{CheckpointBinding, CheckpointPhase, CheckpointState, FixtureProvisioningIdentity};
 use crate::fixture_ipc::FixtureCloneRequest;
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ impl FixtureReadIdentity {
     }
 }
 
-/// Versioned supervisor proposal. No worker API consumes this type.
+/// Versioned supervisor proposal. Workers submit only binding and exact request.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LateCloneAuthorizationV1 {
@@ -42,6 +43,8 @@ pub struct LateCloneAuthorizationV1 {
     pub identity: FixtureReadIdentity,
     pub request_sha256: String,
     pub request: Vec<u8>,
+    /// Supervisor-owned synthetic post-effect facts, validated as a Clone seed.
+    pub after: super::VmState,
 }
 impl LateCloneAuthorizationV1 {
     /// Validate a proposal against independently supplied dispatch bytes and
@@ -56,6 +59,7 @@ impl LateCloneAuthorizationV1 {
         let invalid = || io::Error::new(io::ErrorKind::InvalidData, "late authorization rejected");
         expected_identity.validate()?;
         let request = FixtureCloneRequest::decode(&self.request).map_err(|_| invalid())?;
+        super::FixtureCloneSeed::new(&request, self.after.clone())?;
         let vm = request.request().clone_request().vm();
         if self.version != 1
             || self.identity != *expected_identity

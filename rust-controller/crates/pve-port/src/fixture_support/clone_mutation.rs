@@ -106,9 +106,28 @@ impl FixtureMutationClient {
         Ok(Self { socket, timeout })
     }
     pub async fn clone_vm(&self, request: &FixtureCloneRequest) -> io::Result<FixtureCloneReceipt> {
+        self.send_clone(request, None).await
+    }
+    pub async fn clone_vm_late(
+        &self,
+        binding: super::CheckpointBinding,
+        request: &FixtureCloneRequest,
+    ) -> io::Result<FixtureCloneReceipt> {
+        self.send_clone(request, Some(binding)).await
+    }
+    async fn send_clone(
+        &self,
+        request: &FixtureCloneRequest,
+        binding: Option<super::CheckpointBinding>,
+    ) -> io::Result<FixtureCloneReceipt> {
         tokio::time::timeout(self.timeout, async {
             let request_bytes = request.encode().map_err(|_| invalid())?;
-            let payload = serde_json::to_vec(&serde_json::json!({"command":"clone", "request": serde_json::from_slice::<serde_json::Value>(&request_bytes)?}))?;
+            let mut message = serde_json::json!({"command":"clone", "request": serde_json::from_slice::<serde_json::Value>(&request_bytes)?});
+            if let Some(binding) = binding {
+                message["command"] = serde_json::json!("clone_late");
+                message["binding"] = serde_json::to_value(binding)?;
+            }
+            let payload = serde_json::to_vec(&message)?;
             if payload.len() > MAX_CLONE_FRAME { return Err(invalid()); }
             let mut stream = tokio::net::UnixStream::connect(&self.socket).await?;
             stream.write_u32(payload.len() as u32).await?;
