@@ -2,7 +2,8 @@
 //!
 //! The ledger is private; callers can run the bounded daemon and inspect its
 //! protocol replies. `FixtureProvisioningPort` supplies a sealed synthetic Clone
-//! capability; it has no controller checkpoint implementation.
+//! capability with an explicitly bound supervisor checkpoint client. Missing
+//! checkpoint configuration fails closed before controller dispatch.
 mod checkpoint;
 mod clone_mutation;
 pub use checkpoint::{

@@ -94,9 +94,11 @@ impl OsDeployController {
     /// use std::sync::Arc;
     /// use operation_controller::OsDeployController;
     /// use postgres_store::{PgStore, Scheduler};
-    /// use pve_port::fixture_ipc::ControllerFixturePort;
-    /// fn construct(store: PgStore, scheduler: Scheduler, fixture: Arc<dyn ControllerFixturePort>) {
-    ///     assert!(OsDeployController::new_fixture(store, scheduler, fixture, 1).is_ok());
+    /// use pve_port::fixture_support::{FixtureProvisioningPort, FixtureCheckpointClient, CheckpointBinding};
+    /// fn construct(store: PgStore, scheduler: Scheduler, fixture: FixtureProvisioningPort,
+    ///              checkpoint: FixtureCheckpointClient, binding: CheckpointBinding) {
+    ///     let fixture = fixture.with_checkpoint(checkpoint, binding).unwrap();
+    ///     assert!(OsDeployController::new_fixture(store, scheduler, Arc::new(fixture), 1).is_ok());
     /// }
     /// ```
     ///

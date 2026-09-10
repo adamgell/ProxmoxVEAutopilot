@@ -1,13 +1,13 @@
-//! Seed-backed Clone capability. Controller checkpoints require a separate implementation.
+//! Seed-backed Clone capability with an optional supervisor-owned dispatch barrier.
 use super::*;
 use crate::*;
 use chrono::{DateTime, Utc};
 use serde_json::json;
 use std::{io, path::PathBuf, time::Duration};
 
-/// Local synthetic provisioning capability; it cannot enter a controller until
-/// a supervisor checkpoint protocol is implemented.
-/// ```compile_fail
+/// Local synthetic provisioning capability. Configure `with_checkpoint` before
+/// controller use; an unconfigured checkpoint fails closed.
+/// ```
 /// use pve_port::{fixture_support::FixtureProvisioningPort, fixture_ipc::ControllerFixturePort};
 /// fn checkpoint(p: &FixtureProvisioningPort) { let _: &dyn ControllerFixturePort = p; }
 /// ```
@@ -15,6 +15,7 @@ pub struct FixtureProvisioningPort {
     reads: FixtureReadClient,
     mutation: FixtureMutationClient,
     identity: FixtureProvisioningIdentity,
+    checkpoint: Option<(FixtureCheckpointClient, CheckpointBinding)>,
 }
 fn transport(e: io::Error) -> PveReadError {
     match e.kind() {
@@ -54,7 +55,26 @@ impl FixtureProvisioningPort {
             reads: FixtureReadClient::new(socket.clone(), timeout)?,
             mutation: FixtureMutationClient::new(socket, timeout)?,
             identity,
+            checkpoint: None,
         })
+    }
+    /// Bind this single-operation adapter to a supervisor generation and owner.
+    pub fn with_checkpoint(
+        mut self,
+        client: FixtureCheckpointClient,
+        binding: CheckpointBinding,
+    ) -> io::Result<Self> {
+        if binding.generation.is_nil()
+            || binding.owner.is_nil()
+            || binding.operation != self.identity.operation
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid controller checkpoint binding",
+            ));
+        }
+        self.checkpoint = Some((client, binding));
+        Ok(self)
     }
     fn bind(&self, node: &NodeName) -> Result<(), PveReadError> {
         if node.as_str() == self.identity.node {
@@ -84,6 +104,22 @@ impl FixtureProvisioningPort {
     }
 }
 impl crate::native::sealed::FakeMutationCapability for FixtureProvisioningPort {}
+#[async_trait::async_trait]
+impl crate::fixture_ipc::ControllerFixturePort for FixtureProvisioningPort {
+    async fn controller_checkpoint(
+        &self,
+        point: FakeControllerCheckpoint,
+    ) -> Result<(), crate::fixture_ipc::CheckpointError> {
+        let (client, binding) = self
+            .checkpoint
+            .as_ref()
+            .ok_or(crate::fixture_ipc::CheckpointError::Rejected)?;
+        if binding.point != point.into() {
+            return Err(crate::fixture_ipc::CheckpointError::Rejected);
+        }
+        client.controller_checkpoint(*binding).await
+    }
+}
 #[async_trait::async_trait]
 impl PveReadPort for FixtureProvisioningPort {
     async fn vm_config(&self, _: &NodeName, _: Vmid) -> Result<VmConfig, PveReadError> {
@@ -305,6 +341,12 @@ mod tests {
             identity,
         )
         .unwrap();
+        use crate::fixture_ipc::{CheckpointError, ControllerFixturePort};
+        assert_eq!(
+            port.controller_checkpoint(FakeControllerCheckpoint::DispatchCommitted)
+                .await,
+            Err(CheckpointError::Rejected)
+        );
         let capability: &dyn ProvisioningFakePort = &port;
         let node = NodeName::parse("fixture-node").unwrap();
         assert_eq!(
@@ -316,6 +358,41 @@ mod tests {
                 .node_status(&NodeName::parse("wrong-node").unwrap())
                 .await,
             Err(PveReadError::InvalidResponse)
+        );
+        let binding = CheckpointBinding {
+            generation: uuid::Uuid::now_v7(),
+            owner: uuid::Uuid::now_v7(),
+            operation: uuid::Uuid::from_u128(2),
+            point: CheckpointPoint::DispatchCommitted,
+        };
+        let port = port
+            .with_checkpoint(
+                FixtureCheckpointClient::new(
+                    PathBuf::from("/nonexistent-fixture.sock"),
+                    Duration::from_millis(100),
+                )
+                .unwrap(),
+                binding,
+            )
+            .unwrap();
+        assert_eq!(
+            port.controller_checkpoint(FakeControllerCheckpoint::DispatchCommitted)
+                .await,
+            Err(CheckpointError::Unavailable)
+        );
+        assert!(
+            port.with_checkpoint(
+                FixtureCheckpointClient::new(
+                    PathBuf::from("/nonexistent-fixture.sock"),
+                    Duration::from_millis(100)
+                )
+                .unwrap(),
+                CheckpointBinding {
+                    operation: uuid::Uuid::now_v7(),
+                    ..binding
+                },
+            )
+            .is_err()
         );
     }
 }

@@ -200,7 +200,27 @@ async fn supervisor_checkpoint_release_timeout_and_restart_are_owned() {
             .unwrap()
             .ok
     );
-    let pending = tokio::spawn(async move { worker.checkpoint(binding).await });
+    let port = fixture_daemon::FixtureProvisioningPort::new(
+        daemon.directory.join("client.sock"),
+        Duration::from_secs(2),
+        fixture_daemon::FixtureProvisioningIdentity {
+            fixture_id: Uuid::now_v7(),
+            operation: binding.operation,
+            request_sha256: "a".repeat(64),
+            node: "fixture-node".into(),
+            source_vmid: 100,
+            target_vmid: 101,
+        },
+    )
+    .unwrap()
+    .with_checkpoint(worker, binding)
+    .unwrap();
+    let port: std::sync::Arc<dyn pve_port::fixture_ipc::ControllerFixturePort> =
+        std::sync::Arc::new(port);
+    let pending = tokio::spawn(async move {
+        port.controller_checkpoint(pve_port::FakeControllerCheckpoint::DispatchCommitted)
+            .await
+    });
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
         if supervisor.request(R::Status).await.unwrap().state.phase == CheckpointPhase::Entered {
