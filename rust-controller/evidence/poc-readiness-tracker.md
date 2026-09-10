@@ -9,6 +9,13 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Disposable non-production mutation proof and production cutover each require separate approval. A goal to become ready does not grant those approvals.
 - RustedOutClient is excluded. Reliability, OOBE, remote control, operator UX, adoption and other downstream product work wait for Rust contracts to stabilize.
 
+## Restarted verification checkpoint (2026-09-10)
+
+- Current source is `8f07247b41e738923ee61e610d4400102b208637`, with the durable table expectation correction (`557bd12`), Linux private fixture-family selector (`3362edf`), and Linux-only loopback fixture timeout correction (`8f07247`) committed in the isolated worktree.
+- The final macOS four-package regression at `557bd12` passed 665 tests with 3 intentionally ignored; the complete receipt and logs are retained as `restart-task9-macos-full-2.*`.
+- An exact-source Linux AMD64 image was rebuilt from `8f07247` (`sha256:82b70282d5c4278b04ed15b67684fdb840235f22b6c27d759047dda59f855e2b`) and passed the repository Compose proof: three competing workers, PostgreSQL fixture, cancellation/recovery, Linux native adapter and descendant cleanup. The bounded run passed 12 lifecycle tests plus 4 native PostgreSQL tests; receipt/logs are `restart-task9-linux-compose-1.*`.
+- These results establish a fresh local Linux artifact and isolated synthetic/native adapter proof. They do not yet establish the full owned-v1 four-package Linux database gate, sixteen-stage service execution, Python/Rust single-writer handoff, or production readiness.
+
 ## Gates
 
 | Gate | Current evidence / next action |
