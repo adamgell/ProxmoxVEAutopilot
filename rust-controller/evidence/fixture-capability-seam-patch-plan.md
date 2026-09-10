@@ -79,3 +79,47 @@ This plan requires no production HTTP changes, callback/session contract
 changes, real Proxmox access, or deployment. The inspected missing facts and
 cross-crate ownership changes make a standalone compile-only wrapper an
 incomplete deliverable; this bounded review therefore leaves code unchanged.
+
+## Read-client adapter audit after the capability seam
+
+`FixtureReadClient` now reads status counts, a VM's `disk_bytes` and
+`pe_configured`, and an accepted effect bound to operation UUID/digest. Its
+three negative doctests pin the absence of provisioning, controller-checkpoint,
+and preflight capabilities. These are observations of the bookkeeping daemon,
+not sufficient facts for implementing the following traits:
+
+| Required method | Daemon-owned facts still required |
+| --- | --- |
+| `PveReadPort::vm_config` | Bound node/VM identity, clone provenance and observation time |
+| `task_status` | Allocated UPID, node binding, task state/exit status and observation time |
+| `storage_content` | Storage-bound volume inventory and content metadata |
+| `qga_ping` | VM-bound guest-agent state and observation time |
+| `PvePreflightReadPort::node_status` | Node online/uptime snapshot |
+| `storage_status` | Node/storage binding, active/shared state, content support and capacity |
+| `bridges` | Node-bound bridge inventory |
+| `cluster_vms` | Complete cluster inventory including templates and target, with freshness |
+| `native_vm_config` | Validated native template/target configuration including identity/provenance |
+| `vm_status` | Node/VM-bound power status |
+| `ProvisioningFakePort::provisioning_vm_config` | Complete provisioning configuration, disk/media/boot facts and freshness |
+| `provisioning_identity` | UUID, MAC and serial identity bound to the requested node/VM |
+| `provisioning_media` | Node/storage-bound deployment and driver media inventory |
+| `submit_provisioning` | Daemon validation of request against those facts; allocated UPID; durable attempt and accepted transition/receipt before reply |
+| `ControllerFixturePort::controller_checkpoint` | Supervisor-owned bounded barrier, independent of worker lifetime |
+
+The existing `World { vmid }` response has neither inventory completeness nor
+node binding. A missing VM therefore must not become `NotFound` in a preflight
+adapter: that would incorrectly certify target absence. Likewise an accepted
+effect is not a task result, and request expectations must not supply the missing
+observations. `PveReadError` currently has no `Unsupported` variant; introducing
+a placeholder adapter returning `NotFound` would change recovery semantics.
+
+The next concrete protocol increment is a versioned supervisor-initialized
+snapshot containing the existing validated preflight/provisioning value types,
+fixture UUID and revision. Persist initialization before accepting worker calls;
+bind every read response to fixture UUID, requested resource and revision.
+Compute inventory from that snapshot plus accepted transitions, retain a
+separate task table keyed by daemon-allocated UPID, and sample observation time
+at daemon read completion. Validate the snapshot through the existing typed
+deserializers. Then implement the read supertraits before granting the private
+mutation seal. The raw caller-supplied `Effect { before, after }` protocol remains
+test bookkeeping and must not become the controller's submission path.

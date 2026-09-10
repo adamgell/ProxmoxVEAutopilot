@@ -18,6 +18,28 @@ pub struct FixtureStatus {
 
 /// Read-only protocol surface; filesystem ownership supplies the trust boundary.
 /// Every call opens one connection, with a single deadline including connect.
+///
+/// Observing a durable effect does not grant the sealed submission capability.
+/// ```compile_fail
+/// use pve_port::{fixture_support::FixtureReadClient, ProvisioningFakePort};
+/// fn cannot_submit(client: &FixtureReadClient) {
+///     let _: &dyn ProvisioningFakePort = client;
+/// }
+/// ```
+/// Nor does it provide the controller's dispatch checkpoint capability.
+/// ```compile_fail
+/// use pve_port::{fixture_support::FixtureReadClient, fixture_ipc::ControllerFixturePort};
+/// fn cannot_drive_controller(client: &FixtureReadClient) {
+///     let _: &dyn ControllerFixturePort = client;
+/// }
+/// ```
+/// The partial world snapshot cannot stand in for the preflight inventory.
+/// ```compile_fail
+/// use pve_port::{fixture_support::FixtureReadClient, PvePreflightReadPort};
+/// fn cannot_certify_absence(client: &FixtureReadClient) {
+///     let _: &dyn PvePreflightReadPort = client;
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct FixtureReadClient {
     socket: PathBuf,
