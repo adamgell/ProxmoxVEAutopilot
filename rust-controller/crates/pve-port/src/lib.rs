@@ -729,8 +729,8 @@ mod tests {
         )
         .await;
         // Allow real HTTP headers to arrive under AMD64 emulation while keeping
-        // a fivefold gap between the client deadline and the delayed response.
-        let observer = observer_for(server.base_url(), Duration::from_millis(100));
+        // a clear gap between the client deadline and the delayed response.
+        let observer = observer_for(server.base_url(), Duration::from_millis(250));
 
         let error = observer.task_status(&node(), &upid()).await.unwrap_err();
         let requests = server.finish().await;
