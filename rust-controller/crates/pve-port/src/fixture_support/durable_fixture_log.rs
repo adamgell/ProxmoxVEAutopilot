@@ -12,6 +12,31 @@ use uuid::Uuid;
 
 const MAX_LINE: usize = 4096;
 
+/// Version-two fixture identity. Retry protection is per operation and stage;
+/// the remaining fields bind recovery to the original dispatch authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixtureLedgerStage {
+    Clone,
+    DiskCapacity,
+    ConfigurePe,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StageBinding {
+    pub stage: FixtureLedgerStage,
+    pub attempt: Uuid,
+    pub generation: Uuid,
+    pub owner: Uuid,
+}
+
+impl StageBinding {
+    fn valid(self) -> bool {
+        !self.attempt.is_nil() && !self.generation.is_nil() && !self.owner.is_nil()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Attempt {
@@ -20,6 +45,8 @@ pub struct Attempt {
     operation: Uuid,
     request_sha256: String,
     duplicate: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stage_binding: Option<StageBinding>,
 }
 
 /// Minimal synthetic VM snapshot, not a production PVE configuration.
@@ -43,6 +70,8 @@ pub struct Effect {
     after: VmState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     receipt: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stage_binding: Option<StageBinding>,
 }
 
 impl Effect {
@@ -70,7 +99,7 @@ enum Record {
 pub struct FixtureLog {
     file: File,
     records: Vec<Attempt>,
-    attempted: BTreeSet<Uuid>,
+    attempted: BTreeSet<(Uuid, Option<FixtureLedgerStage>)>,
     effects: Vec<Effect>,
     world: BTreeMap<u32, VmState>,
     poisoned: bool,
@@ -150,15 +179,17 @@ impl FixtureLog {
             }
             match record {
                 Record::Attempt(record) => {
-                    if record.version != 1
+                    let key = (record.operation, record.stage_binding.map(|b| b.stage));
+                    if !valid_version(record.version, record.stage_binding)
                         || record.sequence != records.len() as u64 + 1
                         || record.operation.is_nil()
                         || !valid_digest(&record.request_sha256)
-                        || record.duplicate != attempted.contains(&record.operation)
+                        || record.duplicate != attempted.contains(&key)
+                        || ambiguous_legacy(&records, record.operation, record.stage_binding)
                     {
                         return Err(invalid());
                     }
-                    attempted.insert(record.operation);
+                    attempted.insert(key);
                     records.push(record);
                 }
                 Record::Effect(effect) => {
@@ -181,15 +212,40 @@ impl FixtureLog {
     /// Returns true for a duplicate, *after* durably recording that attempt.
     /// This is admission bookkeeping, never an accepted-effect acknowledgement.
     pub fn record_attempt(&mut self, operation: Uuid, digest: &str) -> io::Result<bool> {
+        self.record_bound_attempt(operation, digest, None)
+    }
+
+    /// Additive v2 contract; daemon stage transport remains separately gated.
+    #[allow(dead_code)]
+    pub fn record_stage_attempt(
+        &mut self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+    ) -> io::Result<bool> {
+        self.record_bound_attempt(operation, digest, Some(binding))
+    }
+
+    fn record_bound_attempt(
+        &mut self,
+        operation: Uuid,
+        digest: &str,
+        stage_binding: Option<StageBinding>,
+    ) -> io::Result<bool> {
         if self.poisoned {
             return Err(io::Error::other("fixture log requires recovery"));
         }
-        if operation.is_nil() || !valid_digest(digest) {
+        if operation.is_nil()
+            || !valid_digest(digest)
+            || stage_binding.is_some_and(|b| !b.valid())
+            || ambiguous_legacy(&self.records, operation, stage_binding)
+        {
             return Err(invalid());
         }
-        let duplicate = self.attempted.contains(&operation);
+        let key = (operation, stage_binding.map(|b| b.stage));
+        let duplicate = self.attempted.contains(&key);
         let record = Attempt {
-            version: 1,
+            version: if stage_binding.is_some() { 2 } else { 1 },
             sequence: u64::try_from(self.records.len())
                 .ok()
                 .and_then(|n| n.checked_add(1))
@@ -197,13 +253,14 @@ impl FixtureLog {
             operation,
             request_sha256: digest.into(),
             duplicate,
+            stage_binding,
         };
         let bytes = frame(&record)?;
         self.poisoned = true;
         self.file.write_all(&bytes)?;
         // sync_data is Rust's fdatasync-equivalent; no success is returned before it.
         self.file.sync_data()?;
-        self.attempted.insert(operation);
+        self.attempted.insert(key);
         self.records.push(record);
         self.poisoned = false;
         Ok(duplicate)
@@ -242,7 +299,7 @@ impl FixtureLog {
             .find(|a| a.sequence == attempt_sequence)
             .ok_or_else(invalid)?;
         let effect = Effect {
-            effect_version: 1,
+            effect_version: attempt.version,
             sequence: self.effects.len() as u64 + 1,
             attempt_sequence,
             operation: attempt.operation,
@@ -251,6 +308,7 @@ impl FixtureLog {
             before,
             after,
             receipt,
+            stage_binding: attempt.stage_binding,
         };
         validate_effect(&effect, &self.records, &self.effects, &self.world)?;
         let bytes = frame(&effect)?;
@@ -277,18 +335,46 @@ impl FixtureLog {
     /// An admitted attempt alone never constitutes acceptance. A reused operation
     /// with another digest is a binding error, even before any effect exists.
     pub fn accepted_effect(&self, operation: Uuid, digest: &str) -> io::Result<Option<&Effect>> {
-        if operation.is_nil() || !valid_digest(digest) || self.poisoned {
+        self.accepted_bound_effect(operation, digest, None)
+    }
+
+    #[allow(dead_code)]
+    pub fn accepted_stage_effect(
+        &self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+    ) -> io::Result<Option<&Effect>> {
+        self.accepted_bound_effect(operation, digest, Some(binding))
+    }
+
+    fn accepted_bound_effect(
+        &self,
+        operation: Uuid,
+        digest: &str,
+        binding: Option<StageBinding>,
+    ) -> io::Result<Option<&Effect>> {
+        if operation.is_nil()
+            || !valid_digest(digest)
+            || self.poisoned
+            || binding.is_some_and(|b| !b.valid())
+            || ambiguous_legacy(&self.records, operation, binding)
+        {
             return Err(invalid());
         }
-        if let Some(original) = self.records.iter().find(|a| a.operation == operation)
-            && original.request_sha256 != digest
+        let stage = binding.map(|b| b.stage);
+        if let Some(original) = self
+            .records
+            .iter()
+            .find(|a| a.operation == operation && a.stage_binding.map(|b| b.stage) == stage)
+            && (original.request_sha256 != digest || original.stage_binding != binding)
         {
             return Err(invalid());
         }
         Ok(self
             .effects
             .iter()
-            .find(|effect| effect.operation == operation))
+            .find(|effect| effect.operation == operation && effect.stage_binding == binding))
     }
 }
 
@@ -302,12 +388,17 @@ fn validate_effect(
         .iter()
         .find(|a| a.sequence == effect.attempt_sequence)
         .ok_or_else(invalid)?;
-    if effect.effect_version != 1
+    if !valid_version(effect.effect_version, effect.stage_binding)
+        || effect.effect_version != attempt.version
+        || effect.stage_binding != attempt.stage_binding
         || effect.sequence != effects.len() as u64 + 1
         || attempt.duplicate
         || effect.operation != attempt.operation
         || effect.request_sha256 != attempt.request_sha256
-        || effects.iter().any(|e| e.operation == effect.operation)
+        || effects.iter().any(|e| {
+            e.operation == effect.operation
+                && e.stage_binding.map(|b| b.stage) == effect.stage_binding.map(|b| b.stage)
+        })
         || effect.vmid == 0
         || effect.after.disk_bytes == 0
         || effect.before.as_ref() != world.get(&effect.vmid)
@@ -315,6 +406,21 @@ fn validate_effect(
         return Err(invalid());
     }
     Ok(())
+}
+
+fn valid_version(version: u8, binding: Option<StageBinding>) -> bool {
+    match (version, binding) {
+        (1, None) => true,
+        (2, Some(binding)) => binding.valid(),
+        _ => false,
+    }
+}
+
+// An unscoped legacy attempt cannot safely be assigned a stage after the fact.
+fn ambiguous_legacy(records: &[Attempt], operation: Uuid, binding: Option<StageBinding>) -> bool {
+    records
+        .iter()
+        .any(|a| a.operation == operation && a.stage_binding.is_some() != binding.is_some())
 }
 
 fn valid_digest(value: &str) -> bool {
