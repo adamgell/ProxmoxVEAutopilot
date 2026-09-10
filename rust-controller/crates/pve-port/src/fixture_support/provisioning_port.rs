@@ -18,6 +18,16 @@ pub struct FixtureProvisioningPort {
     exact_identity: Option<FixtureProvisioningIdentity>,
     checkpoint: Option<(FixtureCheckpointClient, CheckpointBinding)>,
     dispatched: std::sync::Mutex<Option<crate::fixture_ipc::FixtureCloneRequest>>,
+    resize: Option<ResizeContext>,
+}
+struct ResizeContext {
+    client: FixtureCheckpointClient,
+    identity: FixtureStageIdentity,
+    request: crate::fixture_ipc::FixtureStageRequest,
+    predecessor_identity: FixtureStageIdentity,
+    predecessor: crate::fixture_ipc::FixtureStageRequest,
+    predecessor_receipt: Vec<u8>,
+    dispatched: std::sync::Mutex<Option<Option<Vec<u8>>>>,
 }
 fn transport(e: io::Error) -> PveReadError {
     match e.kind() {
@@ -67,6 +77,7 @@ impl FixtureProvisioningPort {
             exact_identity: Some(identity),
             checkpoint: None,
             dispatched: std::sync::Mutex::new(None),
+            resize: None,
         })
     }
     /// Collect v2 facts before the controller constructs its exact request.
@@ -84,6 +95,7 @@ impl FixtureProvisioningPort {
             exact_identity: None,
             checkpoint: None,
             dispatched: std::sync::Mutex::new(None),
+            resize: None,
         })
     }
     /// Restore the exact journaled request when reconstructing an adapter.
@@ -94,7 +106,8 @@ impl FixtureProvisioningPort {
         request: crate::fixture_ipc::FixtureCloneRequest,
     ) -> io::Result<Self> {
         let vm = request.request().clone_request().vm();
-        if request.fixture_id() != self.identity.fixture_id
+        if self.resize.is_some()
+            || request.fixture_id() != self.identity.fixture_id
             || request.request().binding().operation_id().as_uuid() != self.identity.operation
             || vm.node().as_str() != self.identity.node
             || vm.source_vmid().get() != self.identity.source_vmid
@@ -113,13 +126,93 @@ impl FixtureProvisioningPort {
         Ok(self)
     }
 
+    /// Configure one exact resize attempt with its durable v2 Clone predecessor.
+    /// Configuration grants no submission authority; the daemon still requires
+    /// an owned stage barrier and validates the predecessor's durable effect.
+    pub fn with_resize_stage(
+        mut self,
+        client: FixtureCheckpointClient,
+        identity: FixtureStageIdentity,
+        request: crate::fixture_ipc::FixtureStageRequest,
+        predecessor_identity: FixtureStageIdentity,
+        predecessor: crate::fixture_ipc::FixtureStageRequest,
+        predecessor_receipt: Vec<u8>,
+    ) -> io::Result<Self> {
+        identity.validate_request(&request)?;
+        predecessor_identity.validate_request(&predecessor)?;
+        predecessor
+            .decode_receipt(&predecessor_receipt)
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "invalid predecessor receipt")
+            })?;
+        let vm = request.request().plan().expected().vm();
+        let ProvisioningMutationRequestV1::GrowDisk(grow) = request.request() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "resize request required",
+            ));
+        };
+        if self.exact_identity.is_some()
+            || self.checkpoint.is_some()
+            || self.dispatched.lock().unwrap().is_some()
+            || identity.stage != FixtureLedgerStage::DiskCapacity
+            || predecessor_identity.stage != FixtureLedgerStage::Clone
+            || identity.operation != self.identity.operation
+            || !predecessor
+                .request()
+                .binding()
+                .same_operation_attempt(grow.predecessor_binding())
+            || !predecessor
+                .request()
+                .binding()
+                .same_operation_attempt(grow.clone_binding())
+            || predecessor.request().plan() != grow.predecessor_plan()
+            || request.fixture_id() != self.identity.fixture_id
+            || predecessor.fixture_id() != request.fixture_id()
+            || request.request().plan().expected() != predecessor.request().plan().expected()
+            || vm.node().as_str() != self.identity.node
+            || vm.source_vmid().get() != self.identity.source_vmid
+            || vm.target_vmid().get() != self.identity.target_vmid
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid resize stage binding",
+            ));
+        }
+        self.resize = Some(ResizeContext {
+            client,
+            identity,
+            request,
+            predecessor_identity,
+            predecessor,
+            predecessor_receipt,
+            dispatched: std::sync::Mutex::new(None),
+        });
+        Ok(self)
+    }
+
+    /// Restore a journaled resize receipt. Readback still requires the exact
+    /// accepted daemon effect and a current supervisor publication.
+    pub fn with_resize_receipt(self, receipt: Vec<u8>) -> io::Result<Self> {
+        let resize = self.resize.as_ref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "resize stage unconfigured")
+        })?;
+        resize
+            .request
+            .decode_receipt(&receipt)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid resize receipt"))?;
+        *resize.dispatched.lock().unwrap() = Some(Some(receipt));
+        Ok(self)
+    }
+
     /// Bind this single-operation adapter to a supervisor generation and owner.
     pub fn with_checkpoint(
         mut self,
         client: FixtureCheckpointClient,
         binding: CheckpointBinding,
     ) -> io::Result<Self> {
-        if binding.generation.is_nil()
+        if self.resize.is_some()
+            || binding.generation.is_nil()
             || binding.owner.is_nil()
             || binding.operation != self.identity.operation
         {
@@ -139,7 +232,7 @@ impl FixtureProvisioningPort {
         }
     }
     async fn clone_reads(&self) -> Result<FixtureCloneReads, PveReadError> {
-        if self.dispatched.lock().unwrap().is_some() {
+        if self.resize.is_some() || self.dispatched.lock().unwrap().is_some() {
             return Ok(self.post_dispatch().await?.inventory);
         }
         let facts = self
@@ -154,7 +247,7 @@ impl FixtureProvisioningPort {
         Ok(facts)
     }
     async fn provisioning(&self) -> Result<FixtureProvisioningReadsV2, PveReadError> {
-        if self.dispatched.lock().unwrap().is_some() {
+        if self.resize.is_some() || self.dispatched.lock().unwrap().is_some() {
             return Ok(self
                 .post_dispatch()
                 .await?
@@ -177,6 +270,25 @@ impl FixtureProvisioningPort {
         }
     }
     async fn post_dispatch(&self) -> Result<FixturePostDispatchV1, PveReadError> {
+        if let Some(resize) = &self.resize {
+            let dispatched = resize.dispatched.lock().unwrap().clone();
+            let (identity, request, receipt) = match &dispatched {
+                None => (
+                    &resize.predecessor_identity,
+                    &resize.predecessor,
+                    &resize.predecessor_receipt,
+                ),
+                Some(Some(receipt)) => (&resize.identity, &resize.request, receipt),
+                Some(None) => return Err(PveReadError::TransportUnavailable),
+            };
+            return self
+                .reads
+                .stage_post_dispatch(identity, request, receipt)
+                .await
+                .map_err(transport)?
+                .map(|p| p.observation)
+                .ok_or(PveReadError::TransportUnavailable);
+        }
         let request = self
             .dispatched
             .lock()
@@ -206,6 +318,16 @@ impl crate::fixture_ipc::ControllerFixturePort for FixtureProvisioningPort {
         request: &ProvisioningMutationRequestV1,
     ) -> Result<(), crate::fixture_ipc::CheckpointError> {
         use crate::fixture_ipc::{CheckpointError, FixtureCloneRequest};
+        if let Some(resize) = &self.resize {
+            if resize.request.request() != request {
+                return Err(CheckpointError::Rejected);
+            }
+            return resize
+                .client
+                .stage_checkpoint(&resize.identity)
+                .await
+                .map_err(Into::into);
+        }
         let ProvisioningMutationRequestV1::Clone(clone) = request else {
             return Err(CheckpointError::Rejected);
         };
@@ -410,6 +532,34 @@ impl ProvisioningFakePort for FixtureProvisioningPort {
         &self,
         request: &ProvisioningMutationRequestV1,
     ) -> Result<MutationReceipt, PveWriteError> {
+        if let Some(resize) = &self.resize {
+            if resize.request.request() != request {
+                return Err(PveWriteError::Rejected);
+            }
+            {
+                let mut dispatched = resize.dispatched.lock().unwrap();
+                if dispatched.is_some() {
+                    return Err(PveWriteError::Rejected);
+                }
+                *dispatched = Some(None);
+            }
+            let receipt = self
+                .mutation
+                .stage_late_with_predecessor(
+                    resize.identity.clone(),
+                    &resize.request,
+                    &resize.predecessor_identity,
+                    &resize.predecessor,
+                )
+                .await
+                .map_err(|_| PveWriteError::OutcomeUnknown)?;
+            let bytes = resize
+                .request
+                .encode_receipt(receipt.submission_sequence(), receipt.receipt().clone())
+                .map_err(|_| PveWriteError::OutcomeUnknown)?;
+            *resize.dispatched.lock().unwrap() = Some(Some(bytes));
+            return Ok(receipt.receipt().clone());
+        }
         if self.exact_identity.is_none() && self.checkpoint.is_none() {
             return Err(PveWriteError::Rejected);
         }

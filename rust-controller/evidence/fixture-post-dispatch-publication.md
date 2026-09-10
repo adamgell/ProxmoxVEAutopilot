@@ -19,12 +19,27 @@ daemon Clone then resize publication, owner/generation/attempt mismatches,
 duplicate refusal, restart invalidation, and resize receipt/digest/time checks.
 Strict feature all-target Clippy also passes.
 
-The controller adapter remains unchanged: `FixtureProvisioningPort` still holds
-a legacy Clone dispatched request and legacy checkpoint binding. It needs stage
-checkpoint ownership, exact predecessor retention, stage submission, accepted
-stage-effect lookup, and `stage_post_dispatch` selection before controller resize
-progression can be claimed. Synchronous ConfigurePe observations are explicitly
-refused by this task-bearing observation contract and need separate support.
+`FixtureProvisioningPort::with_resize_stage` now configures an exact resize
+request, its stage ownership, and the original accepted v2 Clone request/receipt.
+The constructor validates the predecessor binding and plan carried by GrowDisk.
+Before submission, reads use the predecessor's current publication. The actual
+controller request must equal the configured resize request at both checkpoint
+and submission. The checkpoint enters and polls the owned stage barrier; it
+does not submit. Submission switches reads away from predecessor observations
+before network I/O, consumes the daemon's authorization with durable predecessor
+validation, and retains the returned resize receipt. Ambiguous outcomes leave
+reads unavailable; duplicate and unsupported requests are refused locally.
+`with_resize_receipt` supports journal reconstruction but cannot refresh facts
+invalidated by daemon restart. Legacy v1 Clone behavior remains available.
+
+The daemon integration test exercises predecessor reads, the actual adapter
+checkpoint, resize dispatch, post-publication task readback, duplicate/unsupported
+refusal without extra attempts, restart reconstruction, and cancellation of an
+entered stage wait without effects. This remains adapter evidence: fresh
+`run_osdeploy_once` generation of the resize request and supervisor binding,
+PostgreSQL journaling, and controller stage completion still need an integrated
+proof. Synchronous ConfigurePe observations remain refused by this task-bearing
+observation contract and need separate support.
 
 The local fixture daemon accepts `publish_post_dispatch` only on its supervisor
 socket. The command carries the exact typed Clone request and a

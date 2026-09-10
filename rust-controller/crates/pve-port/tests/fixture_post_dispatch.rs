@@ -353,6 +353,100 @@ async fn stage_publication_binds_owner_attempt_and_restart_for_clone_and_resize(
                 );
                 assert!(wire(&control, publish.clone()).await.is_err());
             }
+            let (identity, request, receipt, _) = &publications[1];
+            let (previous_identity, previous_request, previous_receipt, _) = &publications[0];
+            let restored = FixtureProvisioningPort::new_late(
+                client.clone(),
+                Duration::from_secs(1),
+                FixtureReadIdentity {
+                    fixture_id: fixture,
+                    operation: identity.operation,
+                    node: "pve-test".into(),
+                    source_vmid: 900,
+                    target_vmid: 101,
+                },
+            )
+            .unwrap()
+            .with_resize_stage(
+                FixtureCheckpointClient::new(client.clone(), Duration::from_secs(1)).unwrap(),
+                identity.clone(),
+                request.clone(),
+                previous_identity.clone(),
+                previous_request.clone(),
+                previous_receipt.clone(),
+            )
+            .unwrap()
+            .with_resize_receipt(receipt.clone())
+            .unwrap();
+            assert!(
+                restored
+                    .provisioning_vm_config(
+                        &NodeName::parse("pve-test").unwrap(),
+                        Vmid::new(101).unwrap()
+                    )
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                restored.submit_provisioning(request.request()).await,
+                Err(PveWriteError::Rejected)
+            );
+            use pve_port::fixture_ipc::ControllerFixturePort;
+            assert!(
+                restored
+                    .provisioning_checkpoint(request.request())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(reader.status().await.unwrap().attempts, 2);
+            // Cancel a real entered stage wait before release. The client owns
+            // no submission path, and cancellation must leave both effects intact.
+            let control_client =
+                FixtureCheckpointClient::new(control.clone(), Duration::from_secs(1)).unwrap();
+            let worker =
+                FixtureCheckpointClient::new(client.clone(), Duration::from_secs(1)).unwrap();
+            let fresh_generation = control_client
+                .stage_request(StageCheckpointRequest::Status)
+                .await
+                .unwrap()
+                .generation;
+            let mut fresh = identity.clone();
+            fresh.generation = fresh_generation;
+            assert!(
+                control_client
+                    .stage_request(StageCheckpointRequest::Arm {
+                        identity: fresh.clone(),
+                        timeout_ms: 1000
+                    })
+                    .await
+                    .unwrap()
+                    .ok
+            );
+            {
+                let wait = worker.stage_checkpoint(&fresh);
+                let entered = async {
+                    let deadline = Instant::now() + Duration::from_secs(1);
+                    loop {
+                        if control_client
+                            .stage_request(StageCheckpointRequest::Status)
+                            .await
+                            .unwrap()
+                            .phase
+                            == CheckpointPhase::Entered
+                        {
+                            break;
+                        }
+                        assert!(Instant::now() < deadline);
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                };
+                tokio::select! {
+                    result = wait => panic!("stage returned before release: {result:?}"),
+                    () = entered => {},
+                }
+            }
+            let unchanged = reader.status().await.unwrap();
+            assert_eq!((unchanged.attempts, unchanged.effects), (2, 2));
         } else {
             let state = wire(
                 &control,
@@ -375,6 +469,57 @@ async fn stage_publication_binds_owner_attempt_and_restart_for_clone_and_resize(
                     owner: Uuid::now_v7(),
                     request_sha256: request.request_sha256(),
                 };
+                let adapter = if index == 1 {
+                    let (previous_identity, previous_request, previous_receipt, _) =
+                        &publications[0];
+                    Some(
+                        FixtureProvisioningPort::new_late(
+                            client.clone(),
+                            Duration::from_secs(1),
+                            FixtureReadIdentity {
+                                fixture_id: fixture,
+                                operation: identity.operation,
+                                node: "pve-test".into(),
+                                source_vmid: 900,
+                                target_vmid: 101,
+                            },
+                        )
+                        .unwrap()
+                        .with_resize_stage(
+                            FixtureCheckpointClient::new(client.clone(), Duration::from_secs(1))
+                                .unwrap(),
+                            identity.clone(),
+                            request.clone(),
+                            previous_identity.clone(),
+                            previous_request.clone(),
+                            previous_receipt.clone(),
+                        )
+                        .unwrap(),
+                    )
+                } else {
+                    None
+                };
+                if let Some(adapter) = &adapter {
+                    assert!(
+                        adapter
+                            .provisioning_vm_config(
+                                &NodeName::parse("pve-test").unwrap(),
+                                Vmid::new(101).unwrap()
+                            )
+                            .await
+                            .is_ok()
+                    );
+                    assert_eq!(
+                        adapter.submit_provisioning(&episodes[2].request).await,
+                        Err(PveWriteError::Rejected)
+                    );
+                    use pve_port::fixture_ipc::ControllerFixturePort;
+                    assert_eq!(
+                        adapter.provisioning_checkpoint(&episodes[2].request).await,
+                        Err(pve_port::fixture_ipc::CheckpointError::Rejected)
+                    );
+                    assert_eq!(reader.status().await.unwrap().attempts, 1);
+                }
                 for (socket, command) in [
                     (
                         &control,
@@ -414,6 +559,54 @@ async fn stage_publication_binds_owner_attempt_and_restart_for_clone_and_resize(
                         },
                     ),
                 ] {
+                    if let Some(adapter) = &adapter {
+                        use pve_port::fixture_ipc::ControllerFixturePort;
+                        if matches!(command, StageCheckpointRequest::AuthorizeRelease { .. }) {
+                            continue;
+                        }
+                        if matches!(command, StageCheckpointRequest::Enter { .. }) {
+                            let release = async {
+                                let deadline = Instant::now() + Duration::from_secs(1);
+                                loop {
+                                    let status = wire(&control, json!({"command":"stage_checkpoint","request":{"action":"status"}})).await.unwrap();
+                                    if status["phase"] == "entered" {
+                                        break;
+                                    }
+                                    assert!(Instant::now() < deadline);
+                                    tokio::time::sleep(Duration::from_millis(5)).await;
+                                }
+                                assert_eq!(reader.status().await.unwrap().attempts, 1);
+                                let release = StageCheckpointRequest::AuthorizeRelease {
+                                    identity: identity.clone(),
+                                    request: request.encode().unwrap(),
+                                    committed_request: request.encode().unwrap(),
+                                    after: VmState {
+                                        disk_bytes: request
+                                            .request()
+                                            .plan()
+                                            .expected()
+                                            .effective_capacity_bytes(),
+                                        pe_configured: false,
+                                    },
+                                };
+                                assert_eq!(
+                                    wire(
+                                        &control,
+                                        json!({"command":"stage_checkpoint","request":release})
+                                    )
+                                    .await
+                                    .unwrap()["ok"],
+                                    true
+                                );
+                            };
+                            let (checkpoint, ()) = tokio::join!(
+                                adapter.provisioning_checkpoint(request.request()),
+                                release
+                            );
+                            checkpoint.unwrap();
+                            continue;
+                        }
+                    }
                     assert_eq!(
                         wire(
                             socket,
@@ -431,8 +624,42 @@ async fn stage_publication_binds_owner_attempt_and_restart_for_clone_and_resize(
                         serde_json::from_slice::<Value>(&request.encode().unwrap()).unwrap()
                     ])
                 });
-                let receipt = wire(&client, json!({"command":"stage_late","binding":identity,"request":value,"predecessor":predecessor})).await.unwrap();
-                let receipt = serde_json::to_vec(&receipt).unwrap();
+                let receipt = if let Some(adapter) = &adapter {
+                    let returned = adapter
+                        .submit_provisioning(request.request())
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        adapter.submit_provisioning(request.request()).await,
+                        Err(PveWriteError::Rejected)
+                    );
+                    assert!(
+                        adapter
+                            .provisioning_vm_config(
+                                &NodeName::parse("pve-test").unwrap(),
+                                Vmid::new(101).unwrap()
+                            )
+                            .await
+                            .is_err()
+                    );
+                    let effect = wire(
+                        &client,
+                        json!({"command":"accepted_stage_effect","identity":identity}),
+                    )
+                    .await
+                    .unwrap();
+                    let receipt: Vec<u8> =
+                        serde_json::from_value(effect["accepted_effect"]["receipt"].clone())
+                            .unwrap();
+                    assert_eq!(
+                        request.decode_receipt(&receipt).unwrap().receipt(),
+                        &returned
+                    );
+                    receipt
+                } else {
+                    let receipt = wire(&client, json!({"command":"stage_late","binding":identity,"request":value,"predecessor":predecessor})).await.unwrap();
+                    serde_json::to_vec(&receipt).unwrap()
+                };
                 let parsed = request.decode_receipt(&receipt).unwrap();
                 let MutationReceipt::Task(upid) = parsed.receipt() else {
                     panic!("task receipt required")
@@ -459,6 +686,17 @@ async fn stage_publication_binds_owner_attempt_and_restart_for_clone_and_resize(
                         .unwrap()
                         .is_some()
                 );
+                if let Some(adapter) = &adapter {
+                    assert_eq!(
+                        adapter
+                            .task_status(&NodeName::parse("pve-test").unwrap(), upid)
+                            .await
+                            .unwrap()
+                            .state(),
+                        TaskState::CompleteSuccess
+                    );
+                    assert_eq!(reader.status().await.unwrap().attempts, 2);
+                }
                 assert!(wire(&control, publish.clone()).await.is_err());
                 for field in ["owner", "generation", "attempt"] {
                     let mut wrong = serde_json::to_value(&identity).unwrap();

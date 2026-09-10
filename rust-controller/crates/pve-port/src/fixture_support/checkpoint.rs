@@ -279,6 +279,67 @@ pub struct FixtureCheckpointClient {
     timeout: Duration,
 }
 impl FixtureCheckpointClient {
+    pub async fn stage_request(
+        &self,
+        request: super::StageCheckpointRequest,
+    ) -> io::Result<super::StageCheckpointReply> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        tokio::time::timeout(self.timeout, async {
+            let mut stream = tokio::net::UnixStream::connect(&self.socket).await?;
+            let payload = serde_json::to_vec(
+                &serde_json::json!({"command":"stage_checkpoint","request":request}),
+            )?;
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(&payload).await?;
+            let size = stream.read_u32().await? as usize;
+            if size == 0 || size > 4096 {
+                return Err(invalid());
+            }
+            let mut bytes = vec![0; size];
+            stream.read_exact(&mut bytes).await?;
+            serde_json::from_slice(&bytes).map_err(Into::into)
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "stage checkpoint deadline"))?
+    }
+    /// Enter and await the exact stage barrier; dropping this future never submits.
+    pub async fn stage_checkpoint(&self, identity: &super::FixtureStageIdentity) -> io::Result<()> {
+        identity.validate()?;
+        tokio::time::timeout(self.timeout, async {
+            let entered = self
+                .stage_request(super::StageCheckpointRequest::Enter {
+                    identity: identity.clone(),
+                })
+                .await?;
+            if !entered.ok
+                || entered.generation != identity.generation
+                || entered.identity.as_ref() != Some(identity)
+                || entered.phase != CheckpointPhase::Entered
+            {
+                return Err(invalid());
+            }
+            loop {
+                let reply = self
+                    .stage_request(super::StageCheckpointRequest::Poll {
+                        identity: identity.clone(),
+                    })
+                    .await?;
+                if !reply.ok
+                    || reply.generation != identity.generation
+                    || reply.identity.as_ref() != Some(identity)
+                {
+                    return Err(invalid());
+                }
+                match reply.phase {
+                    CheckpointPhase::Released => return Ok(()),
+                    CheckpointPhase::Entered => tokio::time::sleep(Duration::from_millis(5)).await,
+                    _ => return Err(invalid()),
+                }
+            }
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "stage checkpoint release deadline"))?
+    }
     /// Preserve checkpoint failure categories across the sealed controller seam.
     pub async fn controller_checkpoint(
         &self,
