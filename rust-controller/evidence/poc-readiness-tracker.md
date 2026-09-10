@@ -11,6 +11,13 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 
 ## Restarted verification checkpoint (2026-09-10)
 
+### Final owned Linux full-run result (2026-09-10)
+
+- The corrected exact-source Linux/amd64 owned-v1 run completed successfully in `restart-task9-owned-full-4`. The bounded Docker invocation exited `0` within its 1,820-second bound; the retained invocation record is `0025.json` and the complete stdout/stderr are `0025.stdout` / `0025.stderr`.
+- Every executed Rust target reported `test result: ok`: operation-controller (68 + 73), scheduler transition (57), postgres-store durability (136), registration (59), postgres-store native (64), scheduler/postgres (70), osdeploy-adapter (6 + 20), plus the zero-test/doc-test companions. No `test result: FAILED`, stack overflow, OOM, or fatal runtime marker is present.
+- The run used source `49b08779edb1d9d5f3c2b6247cbce77bd6f33751`, runner image `sha256:d2a7622623953ba9342e11ed1d6df00d8dc62c1d62713bdf94e70f9135cb459c`, PostgreSQL image `sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777`, and launcher `2d977b0b8727ff3aded6277a0ddc44aa0b4ee5d7`. `state.json` records cgroup2, 4 GiB runner / 6 GiB PostgreSQL limits, zero OOM/pressure counters, and the exact session/identity bindings.
+- This closes the full Linux execution gate, but does not by itself close restart/recovery, Python/Ansible handoff, rollback/export, operator acceptance, or production cutover gates.
+
 - Current source is `8f07247b41e738923ee61e610d4400102b208637`, with the durable table expectation correction (`557bd12`), Linux private fixture-family selector (`3362edf`), and Linux-only loopback fixture timeout correction (`8f07247`) committed in the isolated worktree.
 - The final macOS four-package regression at `557bd12` passed 665 tests with 3 intentionally ignored; the complete receipt and logs are retained as `restart-task9-macos-full-2.*`.
 - An exact-source Linux AMD64 image was rebuilt from `8f07247` (`sha256:82b70282d5c4278b04ed15b67684fdb840235f22b6c27d759047dda59f855e2b`) and passed the repository Compose proof: three competing workers, PostgreSQL fixture, cancellation/recovery, Linux native adapter and descendant cleanup. The bounded run passed 12 lifecycle tests plus 4 native PostgreSQL tests; receipt/logs are `restart-task9-linux-compose-1.*`.
