@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+fixture-ipc = []
+
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true

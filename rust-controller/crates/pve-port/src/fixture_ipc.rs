@@ -1,0 +1,170 @@
+//! Opt-in local fixture messages, with no socket or production transport capability.
+//!
+//! Decoding a receipt establishes message binding only. The fixture daemon must
+//! separately commit its attempt, task, and receipt before sending acceptance.
+//! These messages do not authorize a submission or prove a completed VM effect.
+
+use crate::{CloneProvisioningRequestV1, MutationReceipt, Upid};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+const MAX_MESSAGE_BYTES: usize = 65_536;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("invalid local fixture clone message")]
+pub struct InvalidFixtureClone;
+
+/// The fixture identity must survive daemon restart; it is not a worker identity.
+/// Only the already validated Clone request can enter this envelope.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixtureCloneRequest {
+    fixture_id: Uuid,
+    request: CloneProvisioningRequestV1,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RequestWire {
+    version: u8,
+    fixture_id: Uuid,
+    request: CloneProvisioningRequestV1,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReceiptWire {
+    version: u8,
+    fixture_id: Uuid,
+    request_sha256: String,
+    submission_sequence: u64,
+    receipt: MutationReceipt,
+}
+
+/// Accepted task identity, checked against the exact original request envelope.
+/// No Deserialize implementation bypasses that contextual validation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixtureCloneReceipt {
+    submission_sequence: u64,
+    receipt: MutationReceipt,
+}
+
+impl FixtureCloneRequest {
+    pub fn new(
+        fixture_id: Uuid,
+        request: CloneProvisioningRequestV1,
+    ) -> Result<Self, InvalidFixtureClone> {
+        if fixture_id.is_nil() {
+            return Err(InvalidFixtureClone);
+        }
+        Ok(Self {
+            fixture_id,
+            request,
+        })
+    }
+
+    pub fn fixture_id(&self) -> Uuid {
+        self.fixture_id
+    }
+
+    pub fn request(&self) -> &CloneProvisioningRequestV1 {
+        &self.request
+    }
+
+    fn wire(&self) -> RequestWire {
+        RequestWire {
+            version: 1,
+            fixture_id: self.fixture_id,
+            request: self.request.clone(),
+        }
+    }
+
+    /// Includes full provisioning binding, original attempt and before-state.
+    pub fn request_sha256(&self) -> String {
+        crate::native::canonical_digest(&self.wire())
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, InvalidFixtureClone> {
+        encode(&self.wire())
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, InvalidFixtureClone> {
+        let wire: RequestWire = decode(bytes)?;
+        if wire.version != 1 {
+            return Err(InvalidFixtureClone);
+        }
+        Self::new(wire.fixture_id, wire.request)
+    }
+
+    /// Daemon-side serialization only; callers must first durably commit this receipt.
+    pub fn encode_receipt(
+        &self,
+        submission_sequence: u64,
+        upid: Upid,
+    ) -> Result<Vec<u8>, InvalidFixtureClone> {
+        self.validate_task(submission_sequence, &upid)?;
+        encode(&ReceiptWire {
+            version: 1,
+            fixture_id: self.fixture_id,
+            request_sha256: self.request_sha256(),
+            submission_sequence,
+            receipt: MutationReceipt::Task(upid),
+        })
+    }
+
+    pub fn decode_receipt(&self, bytes: &[u8]) -> Result<FixtureCloneReceipt, InvalidFixtureClone> {
+        let wire: ReceiptWire = decode(bytes)?;
+        if wire.version != 1
+            || wire.fixture_id != self.fixture_id
+            || wire.request_sha256 != self.request_sha256()
+        {
+            return Err(InvalidFixtureClone);
+        }
+        let MutationReceipt::Task(ref upid) = wire.receipt else {
+            return Err(InvalidFixtureClone);
+        };
+        self.validate_task(wire.submission_sequence, upid)?;
+        Ok(FixtureCloneReceipt {
+            submission_sequence: wire.submission_sequence,
+            receipt: wire.receipt,
+        })
+    }
+
+    fn validate_task(&self, sequence: u64, upid: &Upid) -> Result<(), InvalidFixtureClone> {
+        let vm = self.request.clone_request().vm();
+        // Match the existing NativeFakePve contract: qmclone names the source VM.
+        if sequence == 0
+            || upid.node() != vm.node()
+            || upid.worker_type() != "qmclone"
+            || upid.worker_id() != Some(vm.source_vmid().to_string().as_str())
+            || upid.authenticated_user() != "fake@pve"
+        {
+            return Err(InvalidFixtureClone);
+        }
+        Ok(())
+    }
+}
+
+impl FixtureCloneReceipt {
+    pub fn submission_sequence(&self) -> u64 {
+        self.submission_sequence
+    }
+
+    pub fn receipt(&self) -> &MutationReceipt {
+        &self.receipt
+    }
+}
+
+fn encode(value: &impl Serialize) -> Result<Vec<u8>, InvalidFixtureClone> {
+    let bytes = serde_json::to_vec(value).map_err(|_| InvalidFixtureClone)?;
+    if bytes.len() > MAX_MESSAGE_BYTES {
+        return Err(InvalidFixtureClone);
+    }
+    Ok(bytes)
+}
+
+fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, InvalidFixtureClone> {
+    if bytes.is_empty() || bytes.len() > MAX_MESSAGE_BYTES {
+        return Err(InvalidFixtureClone);
+    }
+    serde_json::from_slice(bytes).map_err(|_| InvalidFixtureClone)
+}

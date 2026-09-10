@@ -1,5 +1,7 @@
 mod credentials;
 mod fake;
+#[cfg(feature = "fixture-ipc")]
+pub mod fixture_ipc;
 mod infrastructure_visibility;
 mod model;
 mod native;
