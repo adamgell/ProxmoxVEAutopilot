@@ -22,6 +22,8 @@ The supervisor starts worker A, releases an explicit barrier, terminates it, and
 
 The current controller and consuming dispatch permit are concretely bound to `NativeFakePve`, and the sealed provisioning capability is crate-private. The next implementation must add an explicitly opt-in fixture capability seam, then prove one typed `Clone` request round-trip that yields a daemon-owned validated effect and the existing receipt shape. The controller must not send caller-selected raw before/after state over IPC. Until that typed seam and receipt capture exist, this daemon remains a protocol/ledger proof only, not controller recovery evidence.
 
+The required seam spans the controller constructor/ownership path, collection and send helpers, the postgres-store dispatch permit, and its checkpoint method; it cannot be supplied by a downstream integration-test adapter alone. The fixture world must also gain the identity and preflight facts needed to construct a real typed `Clone` receipt. These are the minimum refactor inputs before A/B worker recovery is attempted.
+
 ## Evidence and approval
 
 Retain source/image bindings, process IDs, barrier events, durable before/after snapshots, fixture submission ledger, receipts, and bounded shutdown/descendant-cleanup records. This is a local test-infrastructure design only. Passing the resulting tests would establish independent-process recovery evidence for the supported three-stage prefix; it would not close full OSDeploy, callback reachability, Python/Ansible handoff, or production readiness.
