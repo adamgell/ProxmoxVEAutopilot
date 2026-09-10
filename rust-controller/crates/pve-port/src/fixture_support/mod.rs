@@ -1,13 +1,16 @@
 //! Opt-in Unix fixture daemon support for isolated process tests.
 //!
 //! The ledger is private; callers can run the bounded daemon and inspect its
-//! protocol replies. This module grants no provisioning mutation capability.
+//! protocol replies. `FixtureProvisioningPort` supplies a sealed synthetic Clone
+//! capability; it has no controller checkpoint implementation.
 mod clone_mutation;
 mod clone_reads;
+mod provisioning_port;
 mod provisioning_reads;
 pub use clone_reads::{
     FixtureCloneReads, SeedBridge, SeedIdentity, SeedNode, SeedRead, SeedReadError, SeedStorage,
 };
+pub use provisioning_port::FixtureProvisioningPort;
 pub use provisioning_reads::{
     FixtureProvisioningIdentity, FixtureProvisioningReads, SeedConfig, SeedPower,
 };
