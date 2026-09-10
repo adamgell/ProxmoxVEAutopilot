@@ -1,0 +1,33 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/api_compat-a2003c47b9979458)
+
+running 18 tests
+test tests::baseline_python_shape_maps_to_the_rust_synthetic_kind ... ok
+test tests::normalization_emits_the_closed_synthetic_plan_and_canonical_fingerprint ... ok
+test tests::normalization_fails_closed_for_unknown_execution_contract_fields ... ok
+test tests::normalization_rejects_traversal_mismatched_arguments_and_unsafe_types ... ok
+test tests::normalization_requires_python_job_ids_and_blocks_short_encoded_suffixes ... ok
+test tests::parser_rejects_duplicate_keys_before_a_json_map_can_collapse_them ... ok
+test tests::python_job_id_dates_and_random_hex_are_not_encoded_text_or_ip_addresses ... ok
+test tests::raw_bytes_use_the_same_duplicate_aware_boundary ... ok
+test tests::sanitized_job_accepts_only_safe_scalar_values_and_loopback_addresses ... ok
+test tests::sanitizer_bounds_string_length_and_container_depth ... ok
+test tests::sanitizer_rejects_encoded_confusable_nested_and_integer_ip_bypasses ... ok
+test tests::sanitizer_rejects_encoding_beyond_its_bounded_decode_budget ... ok
+test tests::sanitizer_rejects_nested_short_identity_aliases ... ok
+test tests::sanitizer_rejects_non_loopback_ipv4_and_ipv6_addresses ... ok
+test tests::sanitizer_rejects_secret_shaped_keys_and_values_before_construction ... ok
+test tests::sanitizer_rejects_tenant_and_application_uuid_fields ... ok
+test tests::sanitizer_scans_delimited_base64_and_rejects_ambiguous_candidates ... ok
+test tests::synthetic_fixture_manifest_is_complete_and_hash_self_consistent ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests api_compat
+
+running 2 tests
+test crates/api-compat/src/job.rs - job::JobEnvelope (line 25) - compile fail ... ok
+test crates/api-compat/src/plan.rs - plan::NormalizedPlan (line 52) - compile fail ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+

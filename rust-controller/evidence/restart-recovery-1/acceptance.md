@@ -24,7 +24,7 @@ The current Python-side contracts passed under explicit Homebrew Python 3.12:
 - proof-wait contract: 5/5 (`python-proof-wait.log`)
 - proof-coordination contract: 1/1 (`python-proof-coordination.log`)
 
-The Rust `api-compat` crate also passed 18 runtime tests and 2 intended compile-fail documentation tests. These checks establish the sanitized, duplicate-aware Python-to-Rust contract; they do not claim that the legacy Python/Ansible writer is quiesced or that a live dual-writer handoff has been performed.
+The Rust `api-compat` crate also passed 18 runtime tests and 2 intended compile-fail documentation tests; the complete output is `api-compat.log` (SHA-256 `6ff17557c9c8da55fa5744b540fa0fd0fa3fd71291582089c0da0f3091b6a00f`). These checks establish the sanitized, duplicate-aware Python-to-Rust contract; they do not claim that the legacy Python/Ansible writer is quiesced or that a live dual-writer handoff has been performed.
 
 ## Readiness impact
 
