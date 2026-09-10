@@ -27,6 +27,158 @@ async fn checkpoint(socket: &Path, request: StageCheckpointRequest) -> StageChec
 }
 
 #[tokio::test]
+async fn durable_clone_then_resize_requires_exact_accepted_predecessor() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = std::path::PathBuf::from("/tmp").join(format!("se-{}", Uuid::now_v7()));
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let fixture = Uuid::now_v7();
+    let episodes = provisioning_support::chain();
+    let mut prior: Option<(FixtureStageIdentity, FixtureStageRequest)> = None;
+    let mut accepted = Vec::new();
+    for (index, episode) in episodes.iter().take(2).enumerate() {
+        if index > 0 {
+            std::fs::remove_file(directory.join("client.sock")).unwrap();
+            std::fs::remove_file(directory.join("supervisor.sock")).unwrap();
+        }
+        let path = directory.clone();
+        let daemon = std::thread::spawn(move || run(&path, Duration::from_secs(5)).unwrap());
+        let client = directory.join("client.sock");
+        let supervisor = directory.join("supervisor.sock");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !supervisor.exists() {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let generation = checkpoint(&supervisor, StageCheckpointRequest::Status)
+            .await
+            .generation;
+        let request = FixtureStageRequest::new(fixture, episode.request.clone()).unwrap();
+        let identity = FixtureStageIdentity {
+            operation: episode.request.binding().operation_id().as_uuid(),
+            stage: if index == 0 {
+                FixtureLedgerStage::Clone
+            } else {
+                FixtureLedgerStage::DiskCapacity
+            },
+            attempt: episode.request.binding().attempt_id().as_uuid(),
+            generation,
+            owner: Uuid::now_v7(),
+            request_sha256: request.request_sha256(),
+        };
+        assert!(
+            checkpoint(
+                &supervisor,
+                StageCheckpointRequest::Arm {
+                    identity: identity.clone(),
+                    timeout_ms: 5000
+                }
+            )
+            .await
+            .ok
+        );
+        assert!(
+            checkpoint(
+                &client,
+                StageCheckpointRequest::Enter {
+                    identity: identity.clone()
+                }
+            )
+            .await
+            .ok
+        );
+        let disk_bytes = if index == 0 {
+            request
+                .request()
+                .plan()
+                .expected()
+                .template_capacity_bytes()
+        } else {
+            request
+                .request()
+                .plan()
+                .expected()
+                .effective_capacity_bytes()
+        };
+        assert!(
+            checkpoint(
+                &supervisor,
+                StageCheckpointRequest::AuthorizeRelease {
+                    identity: identity.clone(),
+                    request: request.encode().unwrap(),
+                    committed_request: request.encode().unwrap(),
+                    after: VmState {
+                        disk_bytes,
+                        pe_configured: false
+                    }
+                }
+            )
+            .await
+            .ok
+        );
+        let mut message = serde_json::json!({"command":"stage_late", "binding":identity, "request":serde_json::from_slice::<serde_json::Value>(&request.encode().unwrap()).unwrap()});
+        if let Some((prior_identity, prior_request)) = &prior {
+            // Omitting the durable predecessor must neither submit nor consume release.
+            assert_eq!(send(&client, message.clone()).await["ok"], false);
+            assert!(
+                checkpoint(
+                    &client,
+                    StageCheckpointRequest::Poll {
+                        identity: identity.clone()
+                    }
+                )
+                .await
+                .ok
+            );
+            let prior_wire =
+                serde_json::from_slice::<serde_json::Value>(&prior_request.encode().unwrap())
+                    .unwrap();
+            let mut wrong = prior_identity.clone();
+            wrong.owner = Uuid::now_v7();
+            message["predecessor"] = serde_json::json!([wrong, prior_wire]);
+            assert_eq!(send(&client, message.clone()).await["ok"], false);
+            message["predecessor"] = serde_json::json!([prior_identity, prior_wire]);
+        }
+        let reply = send(&client, message.clone()).await;
+        let receipt = request
+            .decode_receipt(&serde_json::to_vec(&reply).unwrap())
+            .unwrap_or_else(|error| panic!("stage {index}: {error:?}, {reply}"));
+        assert_eq!(receipt.submission_sequence(), (index + 1) as u64);
+        assert_eq!(send(&client, message).await["ok"], false);
+        assert!(
+            !checkpoint(
+                &client,
+                StageCheckpointRequest::Poll {
+                    identity: identity.clone()
+                }
+            )
+            .await
+            .ok
+        );
+        accepted.push((identity.clone(), reply));
+        for (original, receipt) in &accepted {
+            let recovery = send(
+                &client,
+                serde_json::json!({"command":"accepted_stage_effect", "identity":original}),
+            )
+            .await;
+            assert_eq!(recovery["ok"], true);
+            assert_eq!(recovery["attempts"], index + 1);
+            assert_eq!(recovery["effects"], index + 1);
+            let bytes: Vec<u8> =
+                serde_json::from_value(recovery["accepted_effect"]["receipt"].clone()).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+                *receipt
+            );
+        }
+        prior = Some((identity, request));
+        send(&supervisor, serde_json::json!({"command":"shutdown"})).await;
+        daemon.join().unwrap();
+    }
+}
+
+#[tokio::test]
 async fn stage_consumers_bind_all_fields_and_restart_without_mutation() {
     use std::os::unix::fs::PermissionsExt;
     let directory = std::path::PathBuf::from("/tmp").join(format!("sc-{}", Uuid::now_v7()));

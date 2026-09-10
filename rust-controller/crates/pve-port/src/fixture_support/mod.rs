@@ -6,6 +6,7 @@
 //! checkpoint configuration fails closed before controller dispatch.
 mod checkpoint;
 mod stage_checkpoint;
+mod stage_effect;
 mod stage_identity;
 pub use durable_fixture_log::{FixtureLedgerStage, StageBinding};
 pub use stage_checkpoint::{StageCheckpointReply, StageCheckpointRequest};

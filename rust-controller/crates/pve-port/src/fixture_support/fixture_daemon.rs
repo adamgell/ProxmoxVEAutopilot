@@ -28,6 +28,8 @@ enum ClientRequest {
     StageLate {
         binding: super::FixtureStageIdentity,
         request: serde_json::Value,
+        #[serde(default)]
+        predecessor: Option<(super::FixtureStageIdentity, serde_json::Value)>,
     },
     #[cfg(feature = "fixture-ipc")]
     ProvisioningReadsV2 {
@@ -266,17 +268,46 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                 }
             } else {
                 match serde_json::from_slice::<ClientRequest>(&bytes) {
-                    // Reserved v2 command: legacy operation-only authorization
-                    // cannot safely authorize multiple stages of one operation.
-                    // Rejection must precede checkpoint consumption or log writes.
+                    // V2 effects use stage authority and exact durable predecessor evidence.
                     #[cfg(feature = "fixture-ipc")]
-                    Ok(ClientRequest::StageLate { binding, request }) => {
+                    Ok(ClientRequest::StageLate {
+                        binding,
+                        request,
+                        predecessor,
+                    }) => {
                         if let Ok(request) = crate::fixture_ipc::FixtureStageRequest::decode(
                             &serde_json::to_vec(&request)?,
                         ) {
-                            // Validate the whole dispatch identity without consuming authority:
-                            // stage effect and observation adapters are still gated.
-                            let _ = stage_barrier.validate_submission(&binding, &request);
+                            let had_predecessor = predecessor.is_some();
+                            let prior = predecessor.and_then(|(identity, value)| {
+                                crate::fixture_ipc::FixtureStageRequest::decode(
+                                    &serde_json::to_vec(&value).ok()?,
+                                )
+                                .ok()
+                                .map(|request| (identity, request))
+                            });
+                            if (!had_predecessor || prior.is_some())
+                                && let Ok(after) =
+                                    stage_barrier.authorized_after(&binding, &request)
+                            {
+                                match super::stage_effect::submit(
+                                    &mut log,
+                                    &binding,
+                                    &request,
+                                    prior.as_ref().map(|(i, r)| (i, r)),
+                                    after,
+                                    || stage_barrier.consume(&binding, &request).map(|_| ()),
+                                ) {
+                                    Ok(payload) => {
+                                        let _ = stream
+                                            .write_all(&(payload.len() as u32).to_be_bytes())
+                                            .and_then(|()| stream.write_all(&payload));
+                                        continue;
+                                    }
+                                    Err(error) if error.kind() == io::ErrorKind::InvalidData => {}
+                                    Err(error) => return Err(error),
+                                }
+                            }
                         }
                     }
                     #[cfg(feature = "fixture-ipc")]

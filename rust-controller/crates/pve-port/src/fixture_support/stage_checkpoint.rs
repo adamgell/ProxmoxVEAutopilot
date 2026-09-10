@@ -174,4 +174,30 @@ impl StageBarrier {
         }
         Ok(())
     }
+    pub(crate) fn authorized_after(
+        &self,
+        identity: &FixtureStageIdentity,
+        request: &FixtureStageRequest,
+    ) -> io::Result<VmState> {
+        self.validate_submission(identity, request)?;
+        Ok(self
+            .authorization
+            .as_ref()
+            .ok_or_else(invalid)?
+            .after
+            .clone())
+    }
+    pub(crate) fn consume(
+        &mut self,
+        identity: &FixtureStageIdentity,
+        request: &FixtureStageRequest,
+    ) -> io::Result<VmState> {
+        self.validate_submission(identity, request)?;
+        let authorization = self.authorization.take().ok_or_else(invalid)?;
+        self.state.phase = super::CheckpointPhase::Idle;
+        self.state.identity = None;
+        self.deadline = None;
+        self.persist()?;
+        Ok(authorization.after)
+    }
 }

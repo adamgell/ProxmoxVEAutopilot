@@ -107,29 +107,51 @@ impl FixtureMutationClient {
         binding: super::CheckpointBinding,
         request: &crate::fixture_ipc::FixtureStageRequest,
     ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
-        self.send_stage(serde_json::to_value(binding)?, request)
+        self.send_stage(serde_json::to_value(binding)?, request, None)
             .await
     }
-    /// Stage protocol identity. Mutation remains gated until stage observation
-    /// and controller adapters implement the complete acceptance contract.
+    /// Stage protocol identity. Clone can submit directly; resize additionally
+    /// requires `stage_late_with_predecessor`. ConfigurePe remains rejected.
     pub async fn stage_late_bound(
         &self,
         binding: super::FixtureStageIdentity,
         request: &crate::fixture_ipc::FixtureStageRequest,
     ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
         binding.validate_request(request)?;
-        self.send_stage(serde_json::to_value(binding)?, request)
+        self.send_stage(serde_json::to_value(binding)?, request, None)
+            .await
+    }
+    /// Supplies the original predecessor as evidence. The daemon verifies its
+    /// digest and binding against durable acceptance before permitting resize.
+    pub async fn stage_late_with_predecessor(
+        &self,
+        binding: super::FixtureStageIdentity,
+        request: &crate::fixture_ipc::FixtureStageRequest,
+        predecessor_identity: &super::FixtureStageIdentity,
+        predecessor: &crate::fixture_ipc::FixtureStageRequest,
+    ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
+        binding.validate_request(request)?;
+        predecessor_identity.validate_request(predecessor)?;
+        let prior = serde_json::json!([
+            predecessor_identity,
+            serde_json::from_slice::<serde_json::Value>(
+                &predecessor.encode().map_err(|_| invalid())?
+            )?
+        ]);
+        self.send_stage(serde_json::to_value(binding)?, request, Some(prior))
             .await
     }
     async fn send_stage(
         &self,
         binding: serde_json::Value,
         request: &crate::fixture_ipc::FixtureStageRequest,
+        predecessor: Option<serde_json::Value>,
     ) -> io::Result<crate::fixture_ipc::FixtureStageReceipt> {
         tokio::time::timeout(self.timeout, async {
             let payload = serde_json::to_vec(&serde_json::json!({
                 "command": "stage_late",
                 "binding": binding,
+                "predecessor": predecessor,
                 "request": serde_json::from_slice::<serde_json::Value>(
                     &request.encode().map_err(|_| invalid())?
                 )?,

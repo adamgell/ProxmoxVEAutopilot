@@ -75,6 +75,10 @@ pub struct Effect {
 }
 
 impl Effect {
+    #[allow(dead_code)]
+    pub(super) fn has_after(&self, vmid: u32, state: &VmState) -> bool {
+        self.vmid == vmid && &self.after == state
+    }
     #[allow(dead_code)] // Also compiled directly by legacy ledger-only integration tests.
     pub fn receipt(&self) -> Option<&[u8]> {
         self.receipt.as_deref()
