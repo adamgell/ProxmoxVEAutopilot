@@ -1,0 +1,50 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running tests/postgres_native.rs (target/debug/deps/postgres_native-27452edac439aed0)
+
+running 1 test
+test delayed_completion_retains_grant_but_restart_cannot_adopt ... owned_fixture_pending native-proof-01a08c80-57fd-7780-864b-abb4edb9d36e
+owned_fixture_created native-proof-01a08c80-57fd-7780-864b-abb4edb9d36e 51312a3ef39ebb85fc646e5dfbd8aef500792f1c3f30a571f72c8c14afb9c2f2
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 58 filtered out; finished in 1.37s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running tests/postgres_native.rs (target/debug/deps/postgres_native-27452edac439aed0)
+
+running 1 test
+test crash_after_dispatch_before_submission_is_unknown_without_replay ... owned_fixture_pending native-proof-01a08c80-5dbc-7031-ac32-9fdacee17e3a
+owned_fixture_created native-proof-01a08c80-5dbc-7031-ac32-9fdacee17e3a 2ec6d3481112b9b8896eba81a7800dc39d5c9b7233cb178bfbe7090bef54540f
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 58 filtered out; finished in 1.36s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running tests/postgres_native.rs (target/debug/deps/postgres_native-27452edac439aed0)
+
+running 1 test
+test crash_after_receipt_reloads_original_acceptance_and_never_replays ... owned_fixture_pending native-proof-01a08c80-6379-7132-8476-da7e31ab85dc
+owned_fixture_created native-proof-01a08c80-6379-7132-8476-da7e31ab85dc 53e345e0c0ddb9ae77a8c67648063f9d735d5bef3e137b80a8a807a9914698db
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 58 filtered out; finished in 1.32s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running tests/postgres_native.rs (target/debug/deps/postgres_native-27452edac439aed0)
+
+running 1 test
+test recovered_clone_continues_configure_and_start_with_aged_infrastructure ... owned_fixture_pending native-proof-01a08c80-6900-79c1-8ca1-fbf3d4d17f9f
+owned_fixture_created native-proof-01a08c80-6900-79c1-8ca1-fbf3d4d17f9f 13defe7a82cd4023e67ac4d90a1b36a93912f573bf05e5b72eb2708fd876dac1
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 58 filtered out; finished in 1.56s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running tests/postgres_native.rs (target/debug/deps/postgres_native-27452edac439aed0)
+
+running 1 test
+test configure_response_loss_requires_fresh_reconciliation_without_replay ... owned_fixture_pending native-proof-01a08c80-6f84-76c3-b56a-7d83b340e0e9
+owned_fixture_created native-proof-01a08c80-6f84-76c3-b56a-7d83b340e0e9 65b013fe1dd9c0f9a83e769e5e3be1b21c93770814e32b86817b7b44ee0337d2
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 58 filtered out; finished in 1.54s
+

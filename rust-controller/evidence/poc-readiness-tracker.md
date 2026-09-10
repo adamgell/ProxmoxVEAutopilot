@@ -18,6 +18,8 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - The run used source `49b08779edb1d9d5f3c2b6247cbce77bd6f33751`, runner image `sha256:d2a7622623953ba9342e11ed1d6df00d8dc62c1d62713bdf94e70f9135cb459c`, PostgreSQL image `sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777`, and launcher `2d977b0b8727ff3aded6277a0ddc44aa0b4ee5d7`. `state.json` records cgroup2, 4 GiB runner / 6 GiB PostgreSQL limits, zero OOM/pressure counters, and the exact session/identity bindings.
 - This closes the full Linux execution gate, but does not by itself close restart/recovery, Python/Ansible handoff, rollback/export, operator acceptance, or production cutover gates.
 
+- Native PostgreSQL restart/recovery cases passed for restart fencing, unknown-state reconciliation, receipt reload, aged-infrastructure continuation, and response-loss reconciliation. Python producer/proof-wait/proof-coordination contracts passed under Python 3.12, and `api-compat` passed 18 runtime plus 2 intended compile-fail documentation tests. Evidence is preserved in `restart-recovery-1/acceptance.md`; this closes contract-level recovery/compatibility only, not independent service-process takeover or legacy-writer quiescence.
+
 - Current source is `8f07247b41e738923ee61e610d4400102b208637`, with the durable table expectation correction (`557bd12`), Linux private fixture-family selector (`3362edf`), and Linux-only loopback fixture timeout correction (`8f07247`) committed in the isolated worktree.
 - The final macOS four-package regression at `557bd12` passed 665 tests with 3 intentionally ignored; the complete receipt and logs are retained as `restart-task9-macos-full-2.*`.
 - An exact-source Linux AMD64 image was rebuilt from `8f07247` (`sha256:82b70282d5c4278b04ed15b67684fdb840235f22b6c27d759047dda59f855e2b`) and passed the repository Compose proof: three competing workers, PostgreSQL fixture, cancellation/recovery, Linux native adapter and descendant cleanup. The bounded run passed 12 lifecycle tests plus 4 native PostgreSQL tests; receipt/logs are `restart-task9-linux-compose-1.*`.
@@ -44,10 +46,10 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 | Owned Linux database fixtures | Reviewed source a36c166 passed the full Linux gate at f412f2c:361 ordinary+10 documentation executions,45 included Linux cases,17 separate Python checks. Exports, independent metadata checks, owned cleanup and2,534-file seal verified; see linux-owned-fixture-acceptance.md |
 | Native OSDeploy vertical slice | Provisioning libraries accepted through849766d; exact historical limits remain in provisioning-port-acceptance.md. Registration and the current four-package Linux database proof are accepted separately above. Next: durable execution, callback/service integration and recovery. No service acceptance follows from this fake chain |
 | Agent/build-host, CloudOSD and legacy WinPE | Pending compatible contracts and workflow proofs |
-| Python/Rust single-writer transition | Pending local dual-executor generation fencing and handoff proofs |
+| Python/Rust single-writer transition | Contract-level Python/Rust compatibility accepted in `restart-recovery-1`; actual dual-executor generation fencing, legacy-writer quiescence and handoff remain pending |
 | Release-candidate assurance | Pending full differential/fault/rebuild/backup-restore/rollback evidence, exact immutable artifacts, remaining contract suites and independent readiness review |
 | Disposable non-production proof | Separate authorization required; exact artifact, isolated stack and sacrificial workflow targets |
-| Production readiness decision | Requires local and non-production evidence plus remaining risks, rollback and operator acceptance; deployment/cutover separately approved |
+| Production readiness decision | Still not ready: full Linux and contract-level recovery are accepted, but complete service-process recovery, single-writer handoff/quiescence, rollback/export, operator acceptance and non-production evidence remain; deployment/cutover separately approved |
 
 ## Current resource ruling
 
