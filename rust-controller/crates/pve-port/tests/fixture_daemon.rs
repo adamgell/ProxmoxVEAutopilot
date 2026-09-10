@@ -517,6 +517,86 @@ async fn supervisor_checkpoint_release_timeout_and_restart_are_owned() {
     assert_eq!((status.attempts, status.effects), (0, 0));
 }
 
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
+async fn stable_v2_collection_is_versioned_and_survives_restart_without_request_digest() {
+    use pve_port::fixture_support::{
+        FixtureProvisioningPort, FixtureProvisioningReadsV2, FixtureReadClient, FixtureReadIdentity,
+    };
+    use pve_port::{NodeName, ProvisioningFakePort, Vmid};
+    let mut daemon = Daemon::start();
+    let client =
+        FixtureReadClient::new(daemon.directory.join("client.sock"), Duration::from_secs(1))
+            .unwrap();
+    let old = provisioning_seed_support::populated();
+    let identity = FixtureReadIdentity {
+        fixture_id: old.identity.fixture_id,
+        operation: old.identity.operation,
+        node: old.identity.node.clone(),
+        source_vmid: old.identity.source_vmid,
+        target_vmid: old.identity.target_vmid,
+    };
+    let mut value = serde_json::to_value(&old).unwrap();
+    value["version"] = 2.into();
+    value["identity"] = serde_json::to_value(&identity).unwrap();
+    let bytes = serde_json::to_vec(&value).unwrap();
+    let seed = FixtureProvisioningReadsV2::decode_v2(&bytes, &identity).unwrap();
+    assert!(
+        pve_port::fixture_support::FixtureProvisioningReads::decode(&bytes, &old.identity).is_err()
+    );
+    assert!(
+        FixtureProvisioningReadsV2::decode_v2(&serde_json::to_vec(&old).unwrap(), &identity)
+            .is_err()
+    );
+    let mut injected = value.clone();
+    injected["identity"]["request_sha256"] = "a".repeat(64).into();
+    assert!(
+        FixtureProvisioningReadsV2::decode_v2(&serde_json::to_vec(&injected).unwrap(), &identity)
+            .is_err()
+    );
+    assert_eq!(client.provisioning_reads_v2(&identity).await.unwrap(), None);
+    fs::write(daemon.directory.join("provisioning_reads_v2.json"), bytes).unwrap();
+    for _ in 0..2 {
+        daemon.child.kill().unwrap();
+        daemon.child.wait().unwrap();
+        daemon.clear_stale_sockets().unwrap();
+        daemon.child = Daemon::spawn(&daemon.directory);
+        daemon.await_ready();
+        assert_eq!(
+            client.provisioning_reads_v2(&identity).await.unwrap(),
+            Some(seed.clone())
+        );
+        assert_eq!(
+            client.provisioning_reads(&old.identity).await.unwrap(),
+            None
+        );
+        let mut mismatches = vec![identity.clone(); 5];
+        mismatches[0].fixture_id = Uuid::now_v7();
+        mismatches[1].operation = Uuid::now_v7();
+        mismatches[2].node = "other-node".into();
+        mismatches[3].source_vmid = 901;
+        mismatches[4].target_vmid = 102;
+        for mismatch in mismatches {
+            assert!(client.provisioning_reads_v2(&mismatch).await.is_err());
+        }
+        let port = FixtureProvisioningPort::new_late(
+            daemon.directory.join("client.sock"),
+            Duration::from_secs(1),
+            identity.clone(),
+        )
+        .unwrap();
+        let config = port
+            .provisioning_vm_config(
+                &NodeName::parse(&identity.node).unwrap(),
+                Vmid::new(identity.source_vmid).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(config.vmid().get(), identity.source_vmid);
+        assert_eq!(client.status().await.unwrap().attempts, 0);
+    }
+}
+
 struct Daemon {
     directory: PathBuf,
     child: Child,

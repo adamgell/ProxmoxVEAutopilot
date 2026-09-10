@@ -20,7 +20,8 @@ pub use clone_reads::{
 };
 pub use provisioning_port::FixtureProvisioningPort;
 pub use provisioning_reads::{
-    FixtureProvisioningIdentity, FixtureProvisioningReads, SeedConfig, SeedPower,
+    FixtureProvisioningIdentity, FixtureProvisioningReads, FixtureProvisioningReadsV2, SeedConfig,
+    SeedPower,
 };
 mod durable_fixture_log;
 mod fixture_daemon;

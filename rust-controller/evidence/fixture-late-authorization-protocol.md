@@ -1,9 +1,9 @@
 # Late Clone authorization protocol
 
 Status: typed candidate validation and supervisor-only atomic authorization /
-checkpoint release persistence are implemented. Collection migration, consuming
-this authorization for Clone mutation, and positive controller execution are
-**not implemented**.
+checkpoint release persistence and version-two stable collection migration are
+implemented. Consuming this authorization for Clone mutation and positive
+controller execution are **not implemented**.
 `LateCloneAuthorizationV1::validate_candidate` returns no mutation capability.
 Existing seed and digest boundaries continue to govern actual submission.
 
@@ -21,14 +21,31 @@ the original seeded exact request, and does not consume this new record.
 The daemon process regression covers successful persistence, worker rejection,
 release without authorization, altered digest, duplicate authorization, expiry,
 restart invalidation, and a failed persistence rename with no acknowledgement.
-The version-two stable read message and actual controller entrypoint proof
-remain the next integration gate.
+The version-two stable read message now has a distinct `provisioning_reads_v2`
+command and `provisioning_reads_v2.json` startup file. Its identity contains no
+digest. Strict version and identity decoding prevents either protocol from
+accepting the other's payload, including a digest injected into version two.
+Both versions share the existing config, timestamp, media and coverage checks.
+`FixtureProvisioningPort::new_late` collects these facts before an exact request
+exists. Its submission path explicitly rejects all mutations, even with a
+checkpoint binding, until a separate late mutation command carries that binding
+and checks the released generation/owner and exact persisted authorization.
+The legacy constructor retains the original exact digest check.
+
+Executable evidence: `fixture_daemon` proves v2 source config collection through
+the adapter, two daemon restarts, all five identity mismatch rejections, absent
+v1 seed isolation and zero attempts. `fixture_clone_contract` proves the bound
+late adapter refuses submission before any socket access. Tests passed:
+`fixture_daemon` 16 plus one ignored child entrypoint, `fixture_clone_contract` 7,
+`fixture_provisioning_reads` 5; feature library 32 and strict feature all-target
+Clippy passed. Actual controller entrypoint success requires the bound late
+mutation consumption seam and remains open.
 
 `FixtureReadIdentity` contains fixture, operation, node, source VM and target VM.
 It permits naming historical collection facts before the controller chooses an
-attempt and creates its exact request. It must replace the version-one digest
-identity in a separately versioned provisioning-read message, never by treating
-an absent or zero digest as a wildcard in the existing protocol.
+attempt and creates its exact request. It replaces the version-one digest
+identity only in the separately versioned provisioning-read message; absent or
+zero digests never become wildcards in the existing protocol.
 
 The supervisor command will carry a version, complete checkpoint binding,
 stable identity, exact request bytes and their computed envelope digest. The

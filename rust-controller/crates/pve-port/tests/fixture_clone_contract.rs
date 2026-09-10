@@ -91,6 +91,45 @@ fn late_authorization_candidate_requires_exact_dispatch_and_entered_owner() {
     );
 }
 
+#[tokio::test]
+async fn stable_read_adapter_cannot_submit_through_legacy_clone_command() {
+    use pve_port::fixture_support::*;
+    let request = request();
+    let vm = request.request().clone_request().vm();
+    let identity = FixtureReadIdentity {
+        fixture_id: request.fixture_id(),
+        operation: request.request().binding().operation_id().as_uuid(),
+        node: vm.node().as_str().into(),
+        source_vmid: vm.source_vmid().get(),
+        target_vmid: vm.target_vmid().get(),
+    };
+    let binding = CheckpointBinding {
+        generation: Uuid::now_v7(),
+        owner: Uuid::now_v7(),
+        operation: identity.operation,
+        point: CheckpointPoint::DispatchCommitted,
+    };
+    let socket = std::path::PathBuf::from("/nonexistent-late-mutation.sock");
+    let port = FixtureProvisioningPort::new_late(
+        socket.clone(),
+        std::time::Duration::from_millis(100),
+        identity,
+    )
+    .unwrap()
+    .with_checkpoint(
+        FixtureCheckpointClient::new(socket, std::time::Duration::from_millis(100)).unwrap(),
+        binding,
+    )
+    .unwrap();
+    assert_eq!(
+        port.submit_provisioning(&ProvisioningMutationRequestV1::Clone(
+            request.request().clone()
+        ))
+        .await,
+        Err(PveWriteError::Rejected)
+    );
+}
+
 fn upid() -> Upid {
     Upid::parse("UPID:pve-test:00000001:00000001:00000001:qmclone:900:fake@pve:").unwrap()
 }

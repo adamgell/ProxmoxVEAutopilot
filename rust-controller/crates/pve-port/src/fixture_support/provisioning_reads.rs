@@ -35,9 +35,9 @@ pub struct SeedPower {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct FixtureProvisioningReads {
+pub struct FixtureProvisioningReads<I = FixtureProvisioningIdentity> {
     pub version: u8,
-    pub identity: FixtureProvisioningIdentity,
+    pub identity: I,
     pub source_config: SeedRead<SeedConfig>,
     pub target_config: SeedRead<SeedConfig>,
     pub source_power: SeedRead<SeedPower>,
@@ -96,16 +96,67 @@ impl FixtureProvisioningReads {
             return Err(invalid());
         }
         let seed: Self = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+        if seed.version != 1 || seed.identity != *expected {
+            return Err(invalid());
+        }
+        seed.validate_facts(&expected.node, expected.source_vmid, expected.target_vmid)?;
+        Ok(seed)
+    }
+    pub(crate) fn load_startup(path: &Path) -> io::Result<Option<Self>> {
+        load_seed(path, |bytes, seed: &Self| {
+            Self::decode(bytes, &seed.identity)
+        })
+    }
+}
+
+/// Version two collection facts have no dependency on a future mutation digest.
+pub type FixtureProvisioningReadsV2 = FixtureProvisioningReads<super::FixtureReadIdentity>;
+impl FixtureProvisioningReadsV2 {
+    pub fn decode_v2(bytes: &[u8], expected: &super::FixtureReadIdentity) -> io::Result<Self> {
+        expected.validate()?;
+        if bytes.is_empty() || bytes.len() > MAX_PROVISIONING_READ_BYTES {
+            return Err(invalid());
+        }
+        let seed: Self = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+        if seed.version != 2 || seed.identity != *expected {
+            return Err(invalid());
+        }
+        seed.validate_facts(&expected.node, expected.source_vmid, expected.target_vmid)?;
+        Ok(seed)
+    }
+    pub(crate) fn load_startup_v2(path: &Path) -> io::Result<Option<Self>> {
+        load_seed(path, |bytes, seed: &Self| {
+            Self::decode_v2(bytes, &seed.identity)
+        })
+    }
+}
+impl<I> FixtureProvisioningReads<I> {
+    pub(crate) fn map_identity<J>(self, identity: J) -> FixtureProvisioningReads<J> {
+        FixtureProvisioningReads {
+            version: self.version,
+            identity,
+            source_config: self.source_config,
+            target_config: self.target_config,
+            source_power: self.source_power,
+            target_power: self.target_power,
+            source_coverage: self.source_coverage,
+            target_coverage: self.target_coverage,
+            deployment_media: self.deployment_media,
+            driver_media: self.driver_media,
+        }
+    }
+    fn validate_facts(&self, node: &str, source_vmid: u32, target_vmid: u32) -> io::Result<()> {
+        let seed = self;
         let config = |value: &SeedConfig, time: u64, vmid: u32| match value {
             SeedConfig::Absent {} => true,
             SeedConfig::Present { config } => {
-                config.node().as_str() == expected.node
+                config.node().as_str() == node
                     && config.vmid().get() == vmid
                     && u64::try_from(config.observed_at().timestamp_millis()).ok() == Some(time)
             }
         };
         let media = |value: &ProvisioningMediaInventoryV1, time| {
-            value.node().as_str() == expected.node
+            value.node().as_str() == node
                 && u64::try_from(value.observed_at().timestamp_millis()).ok() == Some(time)
                 && value.iso_volids().len() <= 32
                 && value
@@ -115,14 +166,8 @@ impl FixtureProvisioningReads {
                     .len()
                     == value.iso_volids().len()
         };
-        if seed.version != 1
-            || seed.identity != *expected
-            || !valid(&seed.source_config, |v, t| {
-                config(v, t, expected.source_vmid)
-            })
-            || !valid(&seed.target_config, |v, t| {
-                config(v, t, expected.target_vmid)
-            })
+        if !valid(&seed.source_config, |v, t| config(v, t, source_vmid))
+            || !valid(&seed.target_config, |v, t| config(v, t, target_vmid))
             || !valid(&seed.source_power, |_, _| true)
             || !valid(&seed.target_power, |_, _| true)
             || !valid(&seed.source_coverage, |_, _| true)
@@ -132,23 +177,26 @@ impl FixtureProvisioningReads {
         {
             return Err(invalid());
         }
-        Ok(seed)
+        Ok(())
     }
-    pub(crate) fn load_startup(path: &Path) -> io::Result<Option<Self>> {
-        let file = match File::open(path) {
-            Ok(f) => f,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e),
-        };
-        let mut bytes = Vec::new();
-        file.take((MAX_PROVISIONING_READ_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > MAX_PROVISIONING_READ_BYTES {
-            return Err(invalid());
-        }
-        let seed: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-        Self::decode(&bytes, &seed.identity).map(Some)
+}
+fn load_seed<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    decode: impl FnOnce(&[u8], &T) -> io::Result<T>,
+) -> io::Result<Option<T>> {
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut bytes = Vec::new();
+    file.take((MAX_PROVISIONING_READ_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_PROVISIONING_READ_BYTES {
+        return Err(invalid());
     }
+    let seed: T = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    decode(&bytes, &seed).map(Some)
 }
 
 #[cfg(test)]

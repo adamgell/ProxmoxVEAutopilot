@@ -67,6 +67,33 @@ fn invalid() -> io::Error {
 }
 
 impl FixtureReadClient {
+    /// Version two reads bind stable collection identity before an attempt exists.
+    pub async fn provisioning_reads_v2(
+        &self,
+        identity: &super::FixtureReadIdentity,
+    ) -> io::Result<Option<super::FixtureProvisioningReadsV2>> {
+        identity.validate()?;
+        tokio::time::timeout(self.timeout, async {
+            let payload = serde_json::to_vec(
+                &serde_json::json!({"command":"provisioning_reads_v2","identity":identity}),
+            )?;
+            let mut stream = UnixStream::connect(&self.socket).await?;
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(&payload).await?;
+            let length = stream.read_u32().await? as usize;
+            if length == 0 || length > super::provisioning_reads::MAX_PROVISIONING_READ_BYTES {
+                return Err(invalid());
+            }
+            let mut bytes = vec![0; length];
+            stream.read_exact(&mut bytes).await?;
+            if bytes == b"null" {
+                return Ok(None);
+            }
+            super::FixtureProvisioningReadsV2::decode_v2(&bytes, identity).map(Some)
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "fixture provisioning v2 deadline"))?
+    }
     /// Reads immutable supervisor facts bound to the complete expected request identity.
     pub async fn provisioning_reads(
         &self,

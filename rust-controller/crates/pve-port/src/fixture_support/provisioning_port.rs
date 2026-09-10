@@ -14,7 +14,8 @@ use std::{io, path::PathBuf, time::Duration};
 pub struct FixtureProvisioningPort {
     reads: FixtureReadClient,
     mutation: FixtureMutationClient,
-    identity: FixtureProvisioningIdentity,
+    identity: FixtureReadIdentity,
+    exact_identity: Option<FixtureProvisioningIdentity>,
     checkpoint: Option<(FixtureCheckpointClient, CheckpointBinding)>,
 }
 fn transport(e: io::Error) -> PveReadError {
@@ -51,10 +52,34 @@ impl FixtureProvisioningPort {
         identity: FixtureProvisioningIdentity,
     ) -> io::Result<Self> {
         identity.validate()?;
+        let stable = FixtureReadIdentity {
+            fixture_id: identity.fixture_id,
+            operation: identity.operation,
+            node: identity.node.clone(),
+            source_vmid: identity.source_vmid,
+            target_vmid: identity.target_vmid,
+        };
+        Ok(Self {
+            reads: FixtureReadClient::new(socket.clone(), timeout)?,
+            mutation: FixtureMutationClient::new(socket, timeout)?,
+            identity: stable,
+            exact_identity: Some(identity),
+            checkpoint: None,
+        })
+    }
+    /// Collect v2 facts before the controller constructs its exact request.
+    /// Submission still requires daemon-owned exact authorization.
+    pub fn new_late(
+        socket: PathBuf,
+        timeout: Duration,
+        identity: FixtureReadIdentity,
+    ) -> io::Result<Self> {
+        identity.validate()?;
         Ok(Self {
             reads: FixtureReadClient::new(socket.clone(), timeout)?,
             mutation: FixtureMutationClient::new(socket, timeout)?,
             identity,
+            exact_identity: None,
             checkpoint: None,
         })
     }
@@ -95,12 +120,21 @@ impl FixtureProvisioningPort {
         }
         Ok(facts)
     }
-    async fn provisioning(&self) -> Result<FixtureProvisioningReads, PveReadError> {
-        self.reads
-            .provisioning_reads(&self.identity)
-            .await
-            .map_err(transport)?
-            .ok_or(PveReadError::TransportUnavailable)
+    async fn provisioning(&self) -> Result<FixtureProvisioningReadsV2, PveReadError> {
+        if let Some(exact) = &self.exact_identity {
+            self.reads
+                .provisioning_reads(exact)
+                .await
+                .map_err(transport)?
+                .map(|facts| facts.map_identity(self.identity.clone()))
+                .ok_or(PveReadError::TransportUnavailable)
+        } else {
+            self.reads
+                .provisioning_reads_v2(&self.identity)
+                .await
+                .map_err(transport)?
+                .ok_or(PveReadError::TransportUnavailable)
+        }
     }
 }
 impl crate::native::sealed::FakeMutationCapability for FixtureProvisioningPort {}
@@ -274,6 +308,11 @@ impl ProvisioningFakePort for FixtureProvisioningPort {
         &self,
         request: &ProvisioningMutationRequestV1,
     ) -> Result<MutationReceipt, PveWriteError> {
+        // V2 collection does not grant mutation authority. A separate bound late
+        // command must carry the released generation/owner before this can open.
+        if self.exact_identity.is_none() {
+            return Err(PveWriteError::Rejected);
+        }
         let ProvisioningMutationRequestV1::Clone(request) = request else {
             return Err(PveWriteError::Rejected);
         };
@@ -281,7 +320,10 @@ impl ProvisioningFakePort for FixtureProvisioningPort {
             crate::fixture_ipc::FixtureCloneRequest::new(self.identity.fixture_id, request.clone())
                 .map_err(|_| PveWriteError::Rejected)?;
         let vm = request.clone_request().vm();
-        if envelope.request_sha256() != self.identity.request_sha256
+        if self
+            .exact_identity
+            .as_ref()
+            .is_some_and(|identity| envelope.request_sha256() != identity.request_sha256)
             || request.clone_request().operation_id().as_uuid() != self.identity.operation
             || vm.node().as_str() != self.identity.node
             || vm.source_vmid().get() != self.identity.source_vmid
