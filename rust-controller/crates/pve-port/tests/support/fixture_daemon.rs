@@ -1,6 +1,6 @@
 //! Local test daemon skeleton. Separate sockets separate protocol capabilities;
 //! filesystem ownership is the trust boundary, not an authentication claim.
-use super::durable_fixture_log::FixtureLog;
+use super::durable_fixture_log::{FixtureLog, VmState};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -22,6 +22,15 @@ const IO_BOUND: Duration = Duration::from_millis(100);
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum ClientRequest {
     Status {},
+    World {
+        vmid: u32,
+    },
+    Effect {
+        attempt_sequence: u64,
+        vmid: u32,
+        before: Option<VmState>,
+        after: VmState,
+    },
     Attempt {
         operation: Uuid,
         request_sha256: String,
@@ -40,6 +49,8 @@ pub struct Reply {
     pub ok: bool,
     pub attempts: usize,
     pub duplicate: Option<bool>,
+    pub effects: usize,
+    pub vm: Option<VmState>,
 }
 
 fn read_frame(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
@@ -123,6 +134,8 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                 ok: false,
                 attempts: log.records().len(),
                 duplicate: None,
+                effects: log.effects().len(),
+                vm: None,
             };
             let mut shutdown = false;
             if supervisor {
@@ -133,6 +146,28 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
             } else {
                 match serde_json::from_slice::<ClientRequest>(&bytes) {
                     Ok(ClientRequest::Status {}) => response.ok = true,
+                    Ok(ClientRequest::World { vmid }) => {
+                        response.ok = vmid != 0;
+                        response.vm = log.world().get(&vmid).cloned();
+                    }
+                    Ok(ClientRequest::Effect {
+                        attempt_sequence,
+                        vmid,
+                        before,
+                        after,
+                    }) => {
+                        match log.record_effect(attempt_sequence, vmid, before, after) {
+                            Ok(()) => {
+                                response.ok = true;
+                                response.effects = log.effects().len();
+                                response.vm = log.world().get(&vmid).cloned();
+                            }
+                            // A rejected precondition has not written anything. Storage
+                            // errors retain the poisoned-writer shutdown behavior.
+                            Err(e) if e.kind() == io::ErrorKind::InvalidData => {}
+                            Err(e) => return Err(e),
+                        }
+                    }
                     Ok(ClientRequest::Attempt {
                         operation,
                         request_sha256,

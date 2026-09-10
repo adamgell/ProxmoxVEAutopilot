@@ -257,3 +257,65 @@ fn endpoint_substitution_and_corrupt_restart_fail_closed() {
     assert!(!daemon.directory.join("client.sock").exists());
     assert!(!daemon.directory.join("supervisor.sock").exists());
 }
+
+#[test]
+fn effects_commit_replay_and_reject_duplicates_over_ipc() {
+    let mut daemon = Daemon::start();
+    let effect = br#"{"command":"effect","attempt_sequence":1,"vmid":100,"before":null,"after":{"disk_bytes":80,"pe_configured":false}}"#;
+    assert!(!daemon.request("client.sock", effect).ok);
+    assert!(!daemon.request("supervisor.sock", effect).ok);
+    let attempt = serde_json::to_vec(&serde_json::json!({"command":"attempt", "operation":Uuid::now_v7(), "request_sha256":"a".repeat(64)})).unwrap();
+    assert_eq!(
+        daemon.request("client.sock", &attempt).duplicate,
+        Some(false)
+    );
+    let accepted = daemon.request("client.sock", effect);
+    assert!(accepted.ok);
+    assert_eq!(accepted.effects, 1);
+    assert_eq!(
+        accepted.vm,
+        Some(durable_fixture_log::VmState {
+            disk_bytes: 80,
+            pe_configured: false
+        })
+    );
+    assert!(!daemon.request("client.sock", effect).ok);
+    assert_eq!(
+        daemon.request("client.sock", &attempt).duplicate,
+        Some(true)
+    );
+    let duplicate_effect = br#"{"command":"effect","attempt_sequence":2,"vmid":100,"before":{"disk_bytes":80,"pe_configured":false},"after":{"disk_bytes":120,"pe_configured":true}}"#;
+    assert!(!daemon.request("client.sock", duplicate_effect).ok);
+    daemon.child.kill().unwrap();
+    daemon.child.wait().unwrap();
+    daemon.clear_stale_sockets().unwrap();
+    daemon.child = Daemon::spawn(&daemon.directory);
+    daemon.await_ready();
+    let world = daemon.request("client.sock", br#"{"command":"world","vmid":100}"#);
+    assert!(world.ok);
+    assert_eq!(world.attempts, 2);
+    assert_eq!(world.effects, 1);
+    assert_eq!(world.vm, accepted.vm);
+    assert!(!daemon.request("client.sock", effect).ok);
+    assert!(
+        !daemon
+            .request("supervisor.sock", br#"{"command":"world","vmid":100}"#)
+            .ok
+    );
+    // A new operation may change only the exact recovered prior state.
+    let next = serde_json::to_vec(&serde_json::json!({"command":"attempt", "operation":Uuid::now_v7(), "request_sha256":"b".repeat(64)})).unwrap();
+    assert_eq!(daemon.request("client.sock", &next).attempts, 3);
+    let stale = br#"{"command":"effect","attempt_sequence":3,"vmid":100,"before":null,"after":{"disk_bytes":120,"pe_configured":true}}"#;
+    assert!(!daemon.request("client.sock", stale).ok);
+    let transition = br#"{"command":"effect","attempt_sequence":3,"vmid":100,"before":{"disk_bytes":80,"pe_configured":false},"after":{"disk_bytes":120,"pe_configured":true}}"#;
+    let updated = daemon.request("client.sock", transition);
+    assert!(updated.ok);
+    assert_eq!(updated.effects, 2);
+    assert_eq!(
+        updated.vm,
+        Some(durable_fixture_log::VmState {
+            disk_bytes: 120,
+            pe_configured: true
+        })
+    );
+}
