@@ -80,8 +80,13 @@ def cgroup(raw, role):
 def cgroup2_mount(raw):
     """Accept the kernel mount record even when BusyBox stat cannot name it."""
     require(len(raw) <= 8192 and raw.endswith(b"\n"))
-    lines = raw.decode("ascii").splitlines()
-    matches = [line for line in lines if " - cgroup2 cgroup " in line]
+    matches = []
+    for line in raw.decode("ascii").splitlines():
+        fields = line.split(" - ", 1)
+        require(len(fields) == 2)
+        pre, post = fields[0].split(), fields[1].split()
+        if len(pre) > 4 and pre[4] == "/sys/fs/cgroup" and post and post[0] == "cgroup2":
+            matches.append(line)
     require(len(matches) == 1)
     return "cgroup2"
 

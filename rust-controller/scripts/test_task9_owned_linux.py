@@ -69,8 +69,10 @@ class ContractTests(unittest.TestCase):
     def test_cgroup2_mount_uses_kernel_mount_record(self):
         raw = b"32023 32022 0:32 / /sys/fs/cgroup ro,nosuid - cgroup2 cgroup rw,nsdelegate\n"
         self.assertEqual(gate.cgroup2_mount(raw), "cgroup2")
-        with self.assertRaises(ValueError):
-            gate.cgroup2_mount(b"32023 32022 0:32 / /sys/fs/cgroup ro - tmpfs tmpfs rw\n")
+        for broken in (b"32023 32022 0:32 / /other ro - cgroup2 cgroup rw\n",
+                       b"malformed\n", b"32023 32022 0:32 / /sys/fs/cgroup ro - tmpfs tmpfs rw\n"):
+            with self.subTest(broken=broken), self.assertRaises(ValueError):
+                gate.cgroup2_mount(broken)
 
     def test_ownership_mismatch_never_admitted(self):
         host = {"Memory": 6 * gate.GIB, "MemorySwap": 6 * gate.GIB,
