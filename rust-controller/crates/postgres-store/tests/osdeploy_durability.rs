@@ -98,6 +98,14 @@ async fn fixture_credential_aliases_replay_renew_rollback_and_reopen() {
     let b = b.unwrap();
     assert_eq!(a.expose_for_delivery(), b.expose_for_delivery());
     assert!(!format!("{a:?}").contains(a.expose_for_delivery()));
+    // Exact replay retains every owner field and the original insertion time.
+    let retained_alias: (uuid::Uuid, uuid::Uuid, uuid::Uuid, String, i64, chrono::DateTime<chrono::Utc>) = sqlx::query_as("SELECT operation_id,run_id,attempt_id,package_sha256,expires_at,created_at FROM rust_controller.fixture_pe_credential_aliases WHERE alias_sha256=$1")
+        .bind(a.metadata().alias_sha256().as_slice()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(retained_alias.0, op.as_uuid());
+    assert_eq!(retained_alias.1, s.ids.run_id().as_uuid());
+    assert_eq!(retained_alias.2, grant.attempt_id().as_uuid());
+    assert_eq!(retained_alias.3, original.1);
+    assert_eq!(retained_alias.4, expiry);
     let reopened = Scheduler::new(s.db.other.clone(), ExecutorKind::Rust, 1, "osdeploy-worker")
         .unwrap()
         .with_fixture_start_pe();
@@ -106,6 +114,9 @@ async fn fixture_credential_aliases_replay_renew_rollback_and_reopen() {
         .await
         .unwrap();
     assert_eq!(a.expose_for_delivery(), replay.expose_for_delivery());
+    let replayed_alias: (uuid::Uuid, uuid::Uuid, uuid::Uuid, String, i64, chrono::DateTime<chrono::Utc>) = sqlx::query_as("SELECT operation_id,run_id,attempt_id,package_sha256,expires_at,created_at FROM rust_controller.fixture_pe_credential_aliases WHERE alias_sha256=$1")
+        .bind(a.metadata().alias_sha256().as_slice()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(replayed_alias, retained_alias);
     let renewal = reopened
         .issue_fixture_pe_credential(&grant, expiry + 60, secret)
         .await

@@ -2,11 +2,55 @@
 use super::*;
 use api_compat::run_bearer::{IssuedRunBearer, RunBearerIdentity, issue_run_bearer};
 
+/// Transaction-local ownership data, not a credential or dispatch capability.
+/// The caller must derive every field from its locked origin/session and issuer.
+pub(super) struct FixtureAliasOwner<'a> {
+    pub(super) operation: Uuid,
+    pub(super) run: Uuid,
+    pub(super) attempt: Uuid,
+    pub(super) package_sha256: &'a str,
+    pub(super) expires_at: i64,
+}
+
+/// Insert or verify the complete immutable owner in the caller's transaction.
+/// This never begins/commits a transaction, issues a token or grants authority.
+/// Callers retain responsibility for admission and final fence/deadline checks.
+pub(super) async fn retain_alias_owner(
+    tx: &mut Transaction<'_, Postgres>,
+    alias_sha256: &[u8; 32],
+    owner: FixtureAliasOwner<'_>,
+    at: DateTime<Utc>,
+) -> Result<(), Error> {
+    // Conflict waits for a concurrent owner; compare all fields afterwards.
+    sqlx::query("INSERT INTO rust_controller.fixture_pe_credential_aliases(alias_sha256,operation_id,run_id,attempt_id,package_sha256,expires_at,created_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(alias_sha256) DO NOTHING")
+        .bind(alias_sha256.as_slice()).bind(owner.operation).bind(owner.run).bind(owner.attempt).bind(owner.package_sha256).bind(owner.expires_at).bind(at).execute(&mut **tx).await?;
+    let persisted: (Uuid, Uuid, Uuid, String, i64) = sqlx::query_as("SELECT operation_id,run_id,attempt_id,package_sha256,expires_at FROM rust_controller.fixture_pe_credential_aliases WHERE alias_sha256=$1")
+        .bind(alias_sha256.as_slice()).fetch_one(&mut **tx).await?;
+    if persisted
+        != (
+            owner.operation,
+            owner.run,
+            owner.attempt,
+            owner.package_sha256.to_owned(),
+            owner.expires_at,
+        )
+    {
+        return Err(Error::Conflict);
+    }
+    Ok(())
+}
+
 impl Scheduler {
     /// Issue only for the server-created fixture origin and current StartPe
     /// attempt. The credential becomes observable only after its permanent alias
     /// commits. Reissue and renewal preserve the original package and deadline.
     /// This does not make initial dispatch and credential delivery atomic.
+    /// Transaction-local alias retention is private to the scheduler; callers
+    /// cannot bypass the origin, session, lease and deadline admission here.
+    ///
+    /// ```compile_fail
+    /// use postgres_store::scheduler::osdeploy::fixture_credential::retain_alias_owner;
+    /// ```
     pub async fn issue_fixture_pe_credential(
         &self,
         grant: &LeaseGrant,
@@ -54,24 +98,19 @@ impl Scheduler {
             signing_secret,
         )
         .map_err(|_| Error::Validation)?;
-        let alias = issued.metadata().alias_sha256().as_slice();
-        // ON CONFLICT waits for a concurrent owner; the following read checks
-        // its entire immutable association rather than treating conflict as success.
-        sqlx::query("INSERT INTO rust_controller.fixture_pe_credential_aliases(alias_sha256,operation_id,run_id,attempt_id,package_sha256,expires_at,created_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(alias_sha256) DO NOTHING")
-            .bind(alias).bind(grant.operation_id().as_uuid()).bind(run).bind(attempt).bind(&digest).bind(expires_at).bind(at).execute(&mut *tx).await?;
-        let owner: (Uuid, Uuid, Uuid, String, i64) = sqlx::query_as("SELECT operation_id,run_id,attempt_id,package_sha256,expires_at FROM rust_controller.fixture_pe_credential_aliases WHERE alias_sha256=$1")
-            .bind(alias).fetch_one(&mut *tx).await?;
-        if owner
-            != (
-                grant.operation_id().as_uuid(),
+        retain_alias_owner(
+            &mut tx,
+            issued.metadata().alias_sha256(),
+            FixtureAliasOwner {
+                operation: grant.operation_id().as_uuid(),
                 run,
                 attempt,
-                digest,
+                package_sha256: &digest,
                 expires_at,
-            )
-        {
-            return Err(Error::Conflict);
-        }
+            },
+            at,
+        )
+        .await?;
         let final_at = now(&mut tx).await?;
         active_at(&current, final_at)?;
         if final_at >= deadline || expires_at < final_at.timestamp() {
