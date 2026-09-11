@@ -1240,6 +1240,7 @@ dependencies = [
  "chrono",
  "controller-domain",
  "event-journal",
+ "libc",
  "osdeploy-adapter",
  "pve-port",
  "serde",

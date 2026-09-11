@@ -14,6 +14,7 @@ impl Scheduler {
             let mut tx=self.store.pool().begin().await?;
             authority(self,&mut tx).await?;
             let snapshot=Box::pin(locked_execution(&mut tx,operation)).await?;
+            require_delivery_exposed(&mut tx, &snapshot).await?;
             admit(self, &snapshot,workflow_sha256)?;
             if snapshot.attempt_id()!=Some(original_attempt) { return Err(Error::FenceLost); }
             if let Some(row)=sqlx::query("SELECT payload_canonical_json FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND action='pve_evaluated' AND payload_canonical_json::jsonb->'detail'->>'mode'='reconciliation' AND payload_canonical_json::jsonb->'detail'->>'evidence_event_id'=$2").bind(operation.as_uuid()).bind(evidence_event.as_uuid().to_string()).fetch_optional(&mut *tx).await? {

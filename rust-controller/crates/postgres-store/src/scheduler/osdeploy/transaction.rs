@@ -54,18 +54,51 @@ pub(super) async fn locked_execution_with_cap(
             .bind(op).fetch_all(&mut **tx).await?;
     }
     let snapshot = load::load_execution(tx, operation).await?;
+    Ok(snapshot)
+}
+
+#[cfg(feature = "fixture-ipc")]
+pub(super) async fn requires_delivery(
+    tx: &mut Transaction<'_, Postgres>,
+    snapshot: &OsDeployOperationSnapshot,
+) -> Result<bool, Error> {
+    if snapshot.plan().stage() != OsDeployStage::StartPe {
+        return Ok(false);
+    }
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.fixture_osdeploy_origins WHERE run_id=$1 AND credential_sink_id IS NOT NULL)")
+        .bind(snapshot.run_id().as_uuid()).fetch_one(&mut **tx).await?)
+}
+
+pub(super) async fn admit_delivery_policy(
+    tx: &mut Transaction<'_, Postgres>,
+    scheduler: &Scheduler,
+    snapshot: &OsDeployOperationSnapshot,
+) -> Result<(), Error> {
     #[cfg(feature = "fixture-ipc")]
-    if snapshot.plan().stage() == OsDeployStage::StartPe {
-        // All current locked admission paths are physical-only. Checking the
-        // immutable origin here closes alternate scheduler and recovery paths
-        // before they can append a decision or construct a send capability.
-        let requires_delivery: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.fixture_osdeploy_origins WHERE run_id=$1 AND credential_sink_id IS NOT NULL)")
-            .bind(run).fetch_one(&mut **tx).await?;
-        if requires_delivery {
+    if requires_delivery(tx, snapshot).await? && !scheduler.fixture_credential_delivery {
+        return Err(Error::CapabilityUnavailable);
+    }
+    #[cfg(not(feature = "fixture-ipc"))]
+    let _ = (tx, scheduler, snapshot);
+    Ok(())
+}
+
+/// A prepared credential dispatch is not evidence that VM send authority escaped.
+pub(super) async fn require_delivery_exposed(
+    tx: &mut Transaction<'_, Postgres>,
+    snapshot: &OsDeployOperationSnapshot,
+) -> Result<(), Error> {
+    #[cfg(feature = "fixture-ipc")]
+    if snapshot.dispatch().is_some() && requires_delivery(tx, snapshot).await? {
+        let exposed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.fixture_pe_delivery_exposures WHERE operation_id=$1)")
+            .bind(snapshot.operation_id().as_uuid()).fetch_one(&mut **tx).await?;
+        if !exposed {
             return Err(Error::CapabilityUnavailable);
         }
     }
-    Ok(snapshot)
+    #[cfg(not(feature = "fixture-ipc"))]
+    let _ = (tx, snapshot);
+    Ok(())
 }
 
 pub(super) fn admit(
@@ -112,6 +145,7 @@ pub(super) async fn current_grant(
     original: &LeaseGrant,
     snapshot: &OsDeployOperationSnapshot,
 ) -> Result<(LeaseGrant, EventId), Error> {
+    admit_delivery_policy(tx, scheduler, snapshot).await?;
     scheduler
         .validate_grant_owner(original)
         .map_err(scheduler_error)?;

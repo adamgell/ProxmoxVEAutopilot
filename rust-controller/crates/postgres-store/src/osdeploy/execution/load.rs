@@ -202,6 +202,49 @@ pub(super) async fn load_records(
         let session = sqlx::query("SELECT s.*,e.payload_canonical_json AS epoch_json,EXISTS(SELECT 1 FROM rust_controller.osdeploy_pve_dispatches d WHERE d.operation_id=s.operation_id AND d.dispatch_event_id=s.dispatch_event_id AND d.lease_acquisition_event_id=s.lease_acquisition_event_id AND d.original_generation=s.original_generation) AS dispatch_matches FROM rust_controller.fixture_pe_boot_sessions s JOIN rust_controller.osdeploy_decisions e ON e.event_id=s.lease_acquisition_event_id AND e.operation_id=s.operation_id WHERE s.operation_id=$1")
             .bind(operation.as_uuid()).fetch_optional(&mut **tx).await?;
         require(session.is_some() == dispatch.is_some())?;
+        let sink: Option<Uuid> = sqlx::query_scalar("SELECT credential_sink_id FROM rust_controller.fixture_osdeploy_origins WHERE run_id=$1")
+            .bind(run).fetch_optional(&mut **tx).await?.flatten();
+        let delivery = sqlx::query("SELECT d.*,a.acknowledged_at,x.exposed_at,x.generation AS exposure_generation,x.worker_id AS exposure_worker,e.operation_id AS exposure_operation,e.generation AS epoch_generation,e.worker_id AS epoch_worker,e.acquired_at,e.initial_expires_at FROM rust_controller.fixture_pe_deliveries d LEFT JOIN rust_controller.fixture_pe_delivery_acks a USING(operation_id) LEFT JOIN rust_controller.fixture_pe_delivery_exposures x USING(operation_id) LEFT JOIN rust_controller.osdeploy_lease_epochs e ON e.acquisition_event_id=x.lease_acquisition_event_id WHERE d.operation_id=$1")
+            .bind(operation.as_uuid()).fetch_optional(&mut **tx).await?;
+        require(delivery.is_some() == (sink.is_some() && dispatch.is_some()))?;
+        if let Some(delivery) = delivery {
+            let d = dispatch.as_ref().ok_or(Error::Validation)?;
+            let package = registration
+                .materialize_pe_package_semantics()
+                .map_err(|_| Error::Validation)?;
+            let deadline = scopes
+                .get("pe_registration")
+                .ok_or(Error::Validation)?
+                .deadline;
+            require(
+                delivery.try_get::<Uuid, _>("run_id")? == run
+                    && Some(delivery.try_get::<Uuid, _>("attempt_id")?)
+                        == attempt.map(|a| a.as_uuid())
+                    && delivery.try_get::<Uuid, _>("dispatch_event_id")? == d.event.as_uuid()
+                    && delivery.try_get::<String, _>("package_sha256")?
+                        == package.envelope_sha256()
+                    && Some(delivery.try_get::<Uuid, _>("sink_id")?) == sink
+                    && delivery.try_get::<i64, _>("expires_at")? == deadline.timestamp()
+                    && delivery.try_get::<Vec<u8>, _>("alias_sha256")?.len() == 32,
+            )?;
+            let ack: Option<DateTime<Utc>> = delivery.try_get("acknowledged_at")?;
+            if let Some(at) = ack {
+                require(at >= d.value.dispatched_at() && at < deadline)?;
+            }
+            if let Some(exposed) = delivery.try_get::<Option<DateTime<Utc>>, _>("exposed_at")? {
+                require(
+                    ack.is_some_and(|at| exposed >= at)
+                        && exposed < deadline
+                        && delivery.try_get::<Uuid, _>("exposure_operation")?
+                            == operation.as_uuid()
+                        && delivery.try_get::<i64, _>("exposure_generation")?
+                            == delivery.try_get::<i64, _>("epoch_generation")?
+                        && delivery.try_get::<String, _>("exposure_worker")?
+                            == delivery.try_get::<String, _>("epoch_worker")?
+                        && exposed >= delivery.try_get::<DateTime<Utc>, _>("acquired_at")?,
+                )?;
+            }
+        }
         if let (Some(s), Some(d)) = (session, dispatch.as_ref()) {
             let package = registration
                 .materialize_pe_package_semantics()

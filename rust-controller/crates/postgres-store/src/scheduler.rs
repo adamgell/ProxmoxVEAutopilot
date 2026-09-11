@@ -19,6 +19,10 @@ use uuid::Uuid;
 
 pub use authority::{AuthoritySnapshot, ExecutorKind};
 pub use lease::{LeaseGrant, ReapSummary};
+#[cfg(feature = "fixture-ipc")]
+pub use osdeploy::{
+    FixtureCredentialEnvelope, FixtureCredentialSink, FixtureDeliveryAck, FixtureDeliveryRecovery,
+};
 pub use osdeploy::{
     OsDeployDispatchPermit, OsDeployLeaseStatus, OsDeployMaintenanceSummary,
     OsDeployResponseCapture,
@@ -33,9 +37,18 @@ pub struct Scheduler {
     generation: i64,
     worker_id: String,
     fixture_start_pe: bool,
+    #[cfg(feature = "fixture-ipc")]
+    fixture_credential_delivery: bool,
 }
 
 impl Scheduler {
+    /// Admit only the fixture credential delivery path for credential origins.
+    #[cfg(feature = "fixture-ipc")]
+    pub fn with_fixture_credential_delivery(mut self) -> Self {
+        self.fixture_start_pe = true;
+        self.fixture_credential_delivery = true;
+        self
+    }
     /// Enables fixture boot arming only; conveys no callback authentication.
     #[cfg(feature = "fixture-ipc")]
     pub fn with_fixture_start_pe(mut self) -> Self {
@@ -77,6 +90,8 @@ impl Scheduler {
             generation,
             worker_id,
             fixture_start_pe: false,
+            #[cfg(feature = "fixture-ipc")]
+            fixture_credential_delivery: false,
         })
     }
 

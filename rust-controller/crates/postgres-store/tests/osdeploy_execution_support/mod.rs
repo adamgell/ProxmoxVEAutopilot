@@ -209,17 +209,22 @@ impl Scenario {
         Self::with_freshness(mutation_seconds, grow, mutation_seconds.min(30)).await
     }
     pub async fn with_freshness(mutation_seconds: u32, grow: bool, freshness_seconds: u32) -> Self {
-        Self::with_origin(mutation_seconds, grow, freshness_seconds, false).await
+        Self::with_origin(mutation_seconds, grow, freshness_seconds, false, None).await
     }
     #[cfg(feature = "fixture-ipc")]
     pub async fn fixture_owned() -> Self {
-        Self::with_origin(300, true, 30, true).await
+        Self::with_origin(300, true, 30, true, None).await
+    }
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn fixture_delivery(sink: sqlx::types::Uuid) -> Self {
+        Self::with_origin(300, true, 30, true, Some(sink)).await
     }
     async fn with_origin(
         mutation_seconds: u32,
         grow: bool,
         freshness_seconds: u32,
         fixture_origin: bool,
+        sink: Option<sqlx::types::Uuid>,
     ) -> Self {
         let db = osdeploy_support::Fixture::new().await;
         let node = NodeName::parse("node-a").unwrap();
@@ -290,20 +295,24 @@ impl Scenario {
         }
         #[cfg(feature = "fixture-ipc")]
         let owned = if fixture_origin {
-            Some(
+            let created = if let Some(sink) = sink {
+                db.store
+                    .create_fixture_osdeploy_with_delivery(sqlx::types::Uuid::now_v7(), &plan, sink)
+                    .await
+                    .unwrap()
+            } else {
                 db.store
                     .create_fixture_osdeploy(sqlx::types::Uuid::now_v7(), &plan)
                     .await
                     .unwrap()
-                    .ids()
-                    .clone(),
-            )
+            };
+            Some(created.ids().clone())
         } else {
             None
         };
         #[cfg(not(feature = "fixture-ipc"))]
         let owned = {
-            assert!(!fixture_origin);
+            assert!(!fixture_origin && sink.is_none());
             None
         };
         let ids = if let Some(ids) = owned {

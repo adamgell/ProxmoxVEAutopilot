@@ -60,6 +60,7 @@ impl Scheduler {
             let mut tx = self.store.pool().begin().await?;
             authority(self, &mut tx).await?;
             let snapshot = Box::pin(locked_execution_with_cap(&mut tx, operation, true)).await?;
+            admit_delivery_policy(&mut tx, self, &snapshot).await?;
             admit(self, &snapshot, workflow_sha256)?;
             if snapshot.revision() != expected_revision || snapshot.attempt_id() != Some(attempt) {
                 return Err(Error::FenceLost);
@@ -121,6 +122,7 @@ impl Scheduler {
         let mut tx = self.store.pool().begin().await?;
         authority(self, &mut tx).await?;
         let snapshot = locked_execution_with_cap(&mut tx, operation, true).await?;
+        admit_delivery_policy(&mut tx, self, &snapshot).await?;
         if snapshot.plan().stage() == OsDeployStage::StartPe && !self.fixture_start_pe {
             return Err(Error::CapabilityUnavailable);
         }

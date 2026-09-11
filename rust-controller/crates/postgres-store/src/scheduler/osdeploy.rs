@@ -10,6 +10,12 @@ mod decision;
 mod discovery;
 #[cfg(feature = "fixture-ipc")]
 mod fixture_credential;
+#[cfg(feature = "fixture-ipc")]
+mod fixture_delivery;
+#[cfg(feature = "fixture-ipc")]
+pub use fixture_delivery::{
+    FixtureCredentialEnvelope, FixtureCredentialSink, FixtureDeliveryAck, FixtureDeliveryRecovery,
+};
 mod lifecycle;
 mod pve;
 mod receipt;

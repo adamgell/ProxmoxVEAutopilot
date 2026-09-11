@@ -15,21 +15,48 @@ impl Scheduler {
         preflight_event: EventId,
         request: &ProvisioningMutationRequestV1,
     ) -> Result<(OsDeployDispatchPermit, OsDeployResponseCapture), Error> {
+        let mut tx = self.store.pool().begin().await?;
+        let (dispatch, event) = self
+            .prepare_dispatch_in_tx(
+                &mut tx,
+                grant,
+                expected_revision,
+                preflight_event,
+                request,
+                false,
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(receipt::committed(dispatch, event))
+    }
+
+    pub(super) async fn prepare_dispatch_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        grant: &LeaseGrant,
+        expected_revision: i64,
+        preflight_event: EventId,
+        request: &ProvisioningMutationRequestV1,
+        credential: bool,
+    ) -> Result<(ProvisioningDispatchV1, EventId), Error> {
         Box::pin(async move {
-            let mut tx = self.store.pool().begin().await?;
-            authority(self, &mut tx).await?;
-            let snapshot = locked_execution(&mut tx, grant.operation_id()).await?;
+            authority(self, tx).await?;
+            let snapshot = locked_execution(tx, grant.operation_id()).await?;
+            #[cfg(feature = "fixture-ipc")]
+            if requires_delivery(tx, &snapshot).await? != credential { return Err(Error::CapabilityUnavailable); }
+            #[cfg(not(feature = "fixture-ipc"))]
+            if credential { return Err(Error::CapabilityUnavailable); }
             if snapshot.plan().stage() == OsDeployStage::StartPe && !self.fixture_start_pe {
                 return Err(Error::CapabilityUnavailable);
             }
             admit(self, &snapshot, request.binding().workflow_sha256())?;
-            let (current, epoch) = current_grant(&mut tx, self, grant, &snapshot).await?;
+            let (current, epoch) = current_grant(tx, self, grant, &snapshot).await?;
             if snapshot.revision() != expected_revision || snapshot.state() != ExecutionState::Running {
                 return Err(Error::FenceLost);
             }
             if snapshot.dispatch().is_some() { return Err(Error::Conflict); }
-            let (context, evidence) = history::preflight(&mut tx, grant.operation_id(), expected_revision, preflight_event).await?;
-            let at = now(&mut tx).await?;
+            let (context, evidence) = history::preflight(tx, grant.operation_id(), expected_revision, preflight_event).await?;
+            let at = now(tx).await?;
             active_at(&current, at)?;
             let reconstructed = history::request(&context, &evidence, at)?;
             wire::require(&reconstructed == request && reconstructed.request_digest().map_err(|_| Error::Validation)? == request.request_digest().map_err(|_| Error::Validation)?)?;
@@ -48,29 +75,29 @@ impl Scheduler {
                     request_sha256: dispatch.request_sha256().to_owned(), dispatched_at: at, lease_acquisition_event_id: epoch,
                 }))?;
             decision.resolution = Some(NativeDecision::Ready);
-            append_osdeploy_decision(&mut tx, event, "osdeploy:dispatch", &decision).await?;
+            append_osdeploy_decision(tx, event, "osdeploy:dispatch", &decision).await?;
             #[cfg(feature = "fixture-ipc")]
             if snapshot.plan().stage() == OsDeployStage::StartPe {
-                let registration = load::load_registration(&mut tx, snapshot.run_id()).await?;
+                let registration = load::load_registration(tx, snapshot.run_id()).await?;
                 let package = registration.materialize_pe_package_semantics().map_err(|_| Error::Validation)?;
                 let budget = registration.plan().policy().registration_seconds();
                 let deadline = at.checked_add_signed(chrono::Duration::seconds(i64::from(budget))).ok_or(Error::Validation)?;
                 sqlx::query("INSERT INTO rust_controller.osdeploy_deadlines(run_id,scope_key,anchor_operation_id,anchor_event_id,opened_at,budget_seconds,deadline_at) VALUES($1,'pe_registration',$2,$3,$4,$5,$6)")
-                    .bind(snapshot.run_id().as_uuid()).bind(grant.operation_id().as_uuid()).bind(event.as_uuid()).bind(at).bind(i32::try_from(budget).map_err(|_| Error::Validation)?).bind(deadline).execute(&mut *tx).await?;
+                    .bind(snapshot.run_id().as_uuid()).bind(grant.operation_id().as_uuid()).bind(event.as_uuid()).bind(at).bind(i32::try_from(budget).map_err(|_| Error::Validation)?).bind(deadline).execute(&mut **tx).await?;
                 sqlx::query("INSERT INTO rust_controller.fixture_pe_boot_sessions(operation_id,run_id,attempt_id,dispatch_event_id,package_sha256,package_canonical_bytes,original_generation,worker_id,lease_acquisition_event_id,opened_at,registration_deadline) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
-                    .bind(grant.operation_id().as_uuid()).bind(snapshot.run_id().as_uuid()).bind(current.attempt_id().as_uuid()).bind(event.as_uuid()).bind(package.envelope_sha256()).bind(package.canonical_bytes()).bind(self.generation).bind(&self.worker_id).bind(epoch.as_uuid()).bind(at).bind(deadline).execute(&mut *tx).await?;
+                    .bind(grant.operation_id().as_uuid()).bind(snapshot.run_id().as_uuid()).bind(current.attempt_id().as_uuid()).bind(event.as_uuid()).bind(package.envelope_sha256()).bind(package.canonical_bytes()).bind(self.generation).bind(&self.worker_id).bind(epoch.as_uuid()).bind(at).bind(deadline).execute(&mut **tx).await?;
             }
             sqlx::query("INSERT INTO rust_controller.osdeploy_pve_dispatches(operation_id,run_id,attempt_id,dispatch_event_id,dispatch_revision,preflight_event_id,workflow_sha256,pve_plan_sha256,request_sha256,request_canonical_json,source,original_generation,dispatched_at,lease_acquisition_event_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'fake_pve',$11,$12,$13)")
                 .bind(grant.operation_id().as_uuid()).bind(snapshot.run_id().as_uuid()).bind(grant.attempt_id().as_uuid())
                 .bind(event.as_uuid()).bind(revision).bind(preflight_event.as_uuid()).bind(snapshot.plan().workflow_sha256())
                 .bind(request.binding().operation_plan_sha256()).bind(dispatch.request_sha256()).bind(text)
-                .bind(self.generation).bind(at).bind(epoch.as_uuid()).execute(&mut *tx).await?;
-            load::load_execution(&mut tx, grant.operation_id()).await?;
-            let final_at = now(&mut tx).await?;
+                .bind(self.generation).bind(at).bind(epoch.as_uuid()).execute(&mut **tx).await?;
+            // Credential callers complete alias and delivery ownership before reload.
+            if !credential { load::load_execution(tx, grant.operation_id()).await?; }
+            let final_at = now(tx).await?;
             active_at(&current, final_at)?;
             wire::require(history::request(&context, &evidence, final_at)? == *request)?;
-            tx.commit().await?;
-            Ok(receipt::committed(dispatch, event))
+            Ok((dispatch, event))
         }).await
     }
 }

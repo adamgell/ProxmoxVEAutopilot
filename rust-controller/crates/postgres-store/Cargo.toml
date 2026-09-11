@@ -25,6 +25,7 @@ osdeploy-adapter = { path = "../osdeploy-adapter" }
 sqlx.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+libc = "0.2"
 
 [dev-dependencies]
 tokio.workspace = true

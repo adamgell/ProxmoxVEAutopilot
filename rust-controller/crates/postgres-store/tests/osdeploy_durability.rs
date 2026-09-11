@@ -5,6 +5,230 @@ mod osdeploy_execution_support;
 )]
 mod osdeploy_support;
 
+#[cfg(all(feature = "fixture-ipc", unix))]
+#[tokio::test]
+async fn fixture_credential_delivery_atomic_recovery_and_single_exposure() {
+    use controller_domain::ExecutionState;
+    use osdeploy_adapter::OsDeployStage;
+    use postgres_store::{
+        ExecutorKind, FixtureCredentialSink, FixtureDeliveryRecovery, OsDeployExecutionError,
+        PgStore, Scheduler,
+    };
+    use pve_port::ProvisioningEvaluationModeV1;
+    use std::os::unix::fs::DirBuilderExt;
+    let sink_id = uuid::Uuid::now_v7();
+    let s = osdeploy_execution_support::Scenario::fixture_delivery(sink_id).await;
+    for stage in [
+        OsDeployStage::Clone,
+        OsDeployStage::DiskCapacity,
+        OsDeployStage::ConfigurePe,
+    ] {
+        assert_eq!(s.finish_stage(stage).await, ExecutionState::Satisfied);
+    }
+    let op = s.ids.operation(OsDeployStage::StartPe);
+    let ordinary = s.db.scheduler().with_fixture_start_pe();
+    assert!(matches!(
+        ordinary
+            .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+            .await,
+        Err(OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    let scheduler = s.db.scheduler().with_fixture_credential_delivery();
+    let grant = scheduler
+        .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    scheduler
+        .start_osdeploy_bound(&grant, s.ids.workflow_sha256())
+        .await
+        .unwrap();
+    let snapshot = s.db.store.load_osdeploy_operation(op).await.unwrap();
+    let context =
+        s.db.store
+            .load_osdeploy_pve_context(
+                op,
+                snapshot.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let evidence = s.collect(&context).await;
+    let event =
+        s.db.store
+            .record_osdeploy_pve_evidence(op, grant.attempt_id(), snapshot.revision(), &evidence)
+            .await
+            .unwrap();
+    let revision =
+        s.db.store
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .revision();
+    let request =
+        s.db.store
+            .prepare_osdeploy_pve_request(op, revision, event)
+            .await
+            .unwrap();
+    let secret = b"sentinel-fixture-delivery-private-signing-secret";
+    assert!(matches!(
+        scheduler
+            .begin_osdeploy_pve_dispatch(&grant, revision, event, &request)
+            .await,
+        Err(OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    // Failure after alias insertion must roll back session, dispatch and scope.
+    let before = s.db.snapshot().await;
+    sqlx::raw_sql("CREATE FUNCTION rust_controller.reject_delivery_alias() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected'; END $$; CREATE TRIGGER reject_delivery_alias AFTER INSERT ON rust_controller.fixture_pe_credential_aliases FOR EACH ROW EXECUTE FUNCTION rust_controller.reject_delivery_alias();").execute(&s.db.pool).await.unwrap();
+    assert!(
+        scheduler
+            .arm_fixture_start_pe(&grant, revision, event, &request, secret)
+            .await
+            .is_err()
+    );
+    assert_eq!(before, s.db.snapshot().await);
+    for table in [
+        "fixture_pe_boot_sessions",
+        "fixture_pe_credential_aliases",
+        "fixture_pe_deliveries",
+    ] {
+        let count: i64 =
+            sqlx::query_scalar(&format!("SELECT count(*) FROM rust_controller.{table}"))
+                .fetch_one(&s.db.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+    }
+    sqlx::raw_sql("DROP TRIGGER reject_delivery_alias ON rust_controller.fixture_pe_credential_aliases; DROP FUNCTION rust_controller.reject_delivery_alias();").execute(&s.db.pool).await.unwrap();
+    let (a, b) = tokio::join!(
+        scheduler.arm_fixture_start_pe(&grant, revision, event, &request, secret),
+        scheduler.arm_fixture_start_pe(&grant, revision, event, &request, secret)
+    );
+    assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+    let envelope = a.or(b).unwrap();
+    assert!(matches!(
+        scheduler.decide_osdeploy_pve(&grant, revision, event).await,
+        Err(OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    assert!(matches!(
+        scheduler
+            .issue_fixture_pe_credential(&grant, chrono::Utc::now().timestamp() + 600, secret)
+            .await,
+        Err(OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    assert!(matches!(
+        scheduler.expose_fixture_start_pe_once(&grant).await,
+        Err(OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    assert!(
+        scheduler
+            .recover_fixture_start_pe(&grant, b"changed-key")
+            .await
+            .is_err()
+    );
+    let reopened = Scheduler::new(
+        PgStore::new(s.db.pool.clone()),
+        ExecutorKind::Rust,
+        1,
+        "osdeploy-worker",
+    )
+    .unwrap()
+    .with_fixture_credential_delivery();
+    let FixtureDeliveryRecovery::NeedsDelivery(recovered) = reopened
+        .recover_fixture_start_pe(&grant, secret)
+        .await
+        .unwrap()
+    else {
+        panic!("expected original delivery")
+    };
+    let root = std::env::temp_dir().join(format!("rust-private-delivery-{}", uuid::Uuid::now_v7()));
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&root)
+        .unwrap();
+    let sink = FixtureCredentialSink::open(sink_id, &root).unwrap();
+    let wrong_sink = FixtureCredentialSink::open(uuid::Uuid::now_v7(), &root).unwrap();
+    assert!(envelope.deliver(&wrong_sink).is_err());
+    // Losing the original acceptance reply permits only exact-byte replay.
+    let _lost_reply = envelope.deliver(&sink).unwrap();
+    let private_path = root.join(format!("{}.credential", op.as_uuid()));
+    let accepted = std::fs::read_to_string(&private_path).unwrap();
+    let ack = recovered.deliver(&sink).unwrap();
+    assert_eq!(std::fs::read_to_string(&private_path).unwrap(), accepted);
+    reopened
+        .record_fixture_delivery_ack(&grant, &ack)
+        .await
+        .unwrap();
+    let first_ack: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT acknowledged_at FROM rust_controller.fixture_pe_delivery_acks WHERE operation_id=$1").bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    reopened
+        .record_fixture_delivery_ack(&grant, &ack)
+        .await
+        .unwrap();
+    let second_ack: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT acknowledged_at FROM rust_controller.fixture_pe_delivery_acks WHERE operation_id=$1").bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(first_ack, second_ack);
+    assert!(matches!(
+        reopened
+            .recover_fixture_start_pe(&grant, secret)
+            .await
+            .unwrap(),
+        FixtureDeliveryRecovery::Acknowledged
+    ));
+    let stale = Scheduler::new(s.db.store.clone(), ExecutorKind::Rust, 2, "osdeploy-worker")
+        .unwrap()
+        .with_fixture_credential_delivery();
+    assert!(matches!(
+        stale.expose_fixture_start_pe_once(&grant).await,
+        Err(OsDeployExecutionError::FenceLost)
+    ));
+    let (a, b) = tokio::join!(
+        scheduler.expose_fixture_start_pe_once(&grant),
+        reopened.expose_fixture_start_pe_once(&grant)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(usize::from(a.is_some()) + usize::from(b.is_some()), 1);
+    let (permit, capture) = a.or(b).unwrap();
+    assert!(matches!(
+        reopened
+            .recover_fixture_start_pe(&grant, secret)
+            .await
+            .unwrap(),
+        FixtureDeliveryRecovery::Exposed
+    ));
+    assert!(
+        reopened
+            .expose_fixture_start_pe_once(&grant)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
+    reopened
+        .record_osdeploy_pve_receipt(&capture, &receipt)
+        .await
+        .unwrap();
+    s.db.store.load_osdeploy_operation(op).await.unwrap();
+    // Inspect all generic DB payloads, including requests and outbox, using the
+    // exact credential accepted by the private sink, not just a dummy marker.
+    let token = accepted.lines().last().unwrap();
+    let db_text: String = sqlx::query_scalar("SELECT string_agg(value,E'\\n') FROM (SELECT payload::text AS value FROM rust_controller.journal_events UNION ALL SELECT payload::text FROM rust_controller.outbox UNION ALL SELECT request_canonical_json FROM rust_controller.osdeploy_pve_dispatches UNION ALL SELECT row_to_json(d)::text FROM rust_controller.fixture_pe_deliveries d) q").fetch_one(&s.db.pool).await.unwrap();
+    assert!(!db_text.contains(token));
+    assert!(!db_text.contains(std::str::from_utf8(secret).unwrap()));
+    for table in [
+        "fixture_pe_deliveries",
+        "fixture_pe_delivery_acks",
+        "fixture_pe_delivery_exposures",
+    ] {
+        assert!(
+            sqlx::query(&format!("DELETE FROM rust_controller.{table}"))
+                .execute(&s.db.pool)
+                .await
+                .is_err()
+        );
+    }
+    std::fs::remove_file(private_path).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}
+
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
 async fn fixture_delivery_policy_is_immutable_and_closes_second_scheduler() {

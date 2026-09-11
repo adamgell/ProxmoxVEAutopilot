@@ -63,6 +63,9 @@ impl Scheduler {
         let mut tx = self.store.pool().begin().await?;
         authority(self, &mut tx).await?;
         let snapshot = locked_execution(&mut tx, grant.operation_id()).await?;
+        if requires_delivery(&mut tx, &snapshot).await? {
+            return Err(Error::CapabilityUnavailable);
+        }
         wire::require(snapshot.plan().stage() == OsDeployStage::StartPe)?;
         admit(self, &snapshot, snapshot.plan().workflow_sha256())?;
         let (current, _) = current_grant(&mut tx, self, grant, &snapshot).await?;

@@ -18,6 +18,7 @@ impl Scheduler {
         let mut tx = self.store.pool().begin().await?;
         authority(self, &mut tx).await?;
         let snapshot = Box::pin(locked_execution(&mut tx, grant.operation_id())).await?;
+        require_delivery_exposed(&mut tx, &snapshot).await?;
         admit(self, &snapshot, snapshot.plan().workflow_sha256())?;
         self.validate_grant_owner(grant).map_err(scheduler_error)?;
         if let Some(row) = sqlx::query("SELECT d.payload_canonical_json,e.attempt_id,e.generation,e.worker_id,e.acquired_at,e.deadline_at,e.lease_token_sha256=encode(sha256(convert_to($3,'UTF8')),'hex') AS token_matches FROM rust_controller.osdeploy_decisions d JOIN rust_controller.osdeploy_lease_epochs e ON e.acquisition_event_id=(d.payload_canonical_json::jsonb->'detail'->>'lease_acquisition_event_id')::uuid AND e.operation_id=d.operation_id WHERE d.operation_id=$1 AND d.action='pve_evaluated' AND d.payload_canonical_json::jsonb->'detail'->>'evidence_event_id'=$2")
