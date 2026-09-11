@@ -8,7 +8,7 @@ does not claim a Linux runtime pass.
 The worktree revision audited was:
 
 ```text
-1450a556e1ad037472b49319c5f98a5b23cdec87
+a177bcb1d0aefc85d27ba0a0587e9ac591c6a2a5
 ```
 
 The latest retained exact-source Linux/amd64 runner image was built from:
@@ -29,7 +29,7 @@ current source; it is neither relabeled nor reused.
 | --- | --- | --- |
 | Exact archive/image build | `linux-fixture-a607861f-build/` | Proven; image/source seal matches |
 | Current-source image build | `sha256:7178...eaaef9` with embedded `a607861f` | Proven |
-| Current-source owned Linux runtime | `requalification-1450a556-fixture-1/` passed memory admission but runner create hit the bounded child deadline | Open |
+| Current-source owned Linux runtime | `requalification-1450a556-fixture-1/` passed memory admission but runner create hit the bounded child deadline; `requalification-2144f2af-fixture-1/` was later refused below the memory guard | Open |
 | Linux production-candidate qualification | Depends on the preceding gates and broader compatibility/recovery gates | Open |
 
 The next safe step is diagnosis or an explicitly bounded retry of the runner

@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `a5f3fc50`: this branch and PR #65 contain an accumulated
+Current scope at `a177bcb1`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -40,14 +40,16 @@ are implemented. The transaction-local alias helper at `724b6101` retains exact
 ownership and the original timestamp on replay without independent commit or
 dispatch authority.
 
-The current PR head is `1450a556` (verified 2026-09-11). The exact-source
+The current PR head is `a177bcb1` (verified 2026-09-11). The exact-source
 amd64 image is sealed as `sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9`
 with `CONTROLLER_GIT_SHA=a607861f24cac19cad4565365df2a29b58a33e0b`; the owned
 launcher evidence is retained in `requalification-1450a556-fixture-1/` and
 records `qualification: INCOMPLETE`: the memory guard passed with
 12,762,612 kB available, but the runner create supervisor exceeded its bounded
 60-second child deadline; a Created-state runner identity was retained without
-a completed create response. GitHub reports the
+a completed create response. The launcher now uses a separately tested bounded
+300-second create window. A subsequent retry was refused at 12,318,252 kB,
+below the memory guard. GitHub reports the
 duplicated Linux and macOS-arm64 checks as queued, with no completed
 qualification conclusion; the draft PR remains open. The StartPe provisioning
 fact mapping added at `db84526f`/`01b2baee`, followed by the closed-response
