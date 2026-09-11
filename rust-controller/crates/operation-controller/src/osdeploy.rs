@@ -94,11 +94,45 @@ struct FixtureDeliveryConfig {
     sink: postgres_store::FixtureCredentialSink,
 }
 impl OsDeployController {
-    /// Prove the operation port and supervisor use one journal channel before
-    /// any outbox work is attempted. This returns only the sealed provenance
-    /// gate; it does not dispatch a stop or create a durable outbox row.
+    /// Prove the operation port and supervisor use one journal channel, then
+    /// select the already-admitted stop evidence in PostgreSQL. The sealed
+    /// provenance check runs before opening a transaction; it is therefore not
+    /// possible to turn a decoded receipt into an outbox reservation without
+    /// the same accepted StartPe journal being proven. Selection remains
+    /// bookkeeping only: it does not dispatch a stop or release a barrier.
     #[cfg(feature = "fixture-ipc")]
     pub async fn reserve_fixture_stop_outbox(
+        &self,
+        grant: &LeaseGrant,
+        request: &pve_port::fixture_ipc::FixtureStageRequest,
+        sample: &pve_port::fixture_support::VersionedTestPowerSample,
+        receipt: &pve_port::fixture_support::FixtureStopAdmissionReceiptV1,
+    ) -> Result<(), Error> {
+        self.require_fixture_shared_history(grant.operation_id())?;
+        self.scheduler
+            .select_fixture_stop_outbox(grant, request, sample, receipt)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Consume one selected stop reservation only after the same sealed
+    /// operation-port/supervisor provenance has been re-established. This
+    /// method never grants physical stop authority.
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn consume_fixture_stop_outbox(
+        &self,
+        grant: &LeaseGrant,
+        receipt: &pve_port::fixture_support::FixtureStopAdmissionReceiptV1,
+    ) -> Result<bool, Error> {
+        self.require_fixture_shared_history(grant.operation_id())?;
+        self.scheduler
+            .consume_fixture_stop_outbox(grant, receipt)
+            .await
+            .map_err(Into::into)
+    }
+
+    #[cfg(feature = "fixture-ipc")]
+    fn require_fixture_shared_history(
         &self,
         operation: OperationId,
     ) -> Result<pve_port::fixture_ipc::FixtureSharedHistoryProvenanceV1, Error> {
@@ -904,7 +938,7 @@ mod budget_tests {
                 OsDeployController::new(store.clone(), scheduler, fake.clone(), 1).unwrap();
             for _ in 0..2 {
                 assert_eq!(
-                    controller.reserve_fixture_stop_outbox(operation).await,
+                    controller.require_fixture_shared_history(operation),
                     Err(Error::SharedHistoryUnavailable)
                 );
                 assert_eq!(pool.size(), 0);
