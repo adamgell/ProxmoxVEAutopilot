@@ -53,6 +53,17 @@ tests, one ordinary doctest, and 22 compile-fail doctests). The owned-v1
 PostgreSQL launcher remains sealed to an older image/source and therefore was
 not retargeted; current-source owned-v1 qualification is still open.
 
+The launcher was subsequently retargeted through the runtime-source seal to the
+current image built from `f92a6287` (`sha256:5f5ddae5...`). Smoke mode passed
+in `requalification-f92a6287-smoke-2`. Bounded full mode in
+`requalification-f92a6287-full-2` failed within its bound: the runner exited
+101, four targets failed, compile-fail doctest/API mismatches were reported,
+some PostgreSQL tests lacked the explicitly required isolated database, and
+native fake-child cleanup left an unconfirmed reap. The launcher retained the
+containers and reported `ValueError: child group remains`; the qualification
+field is consequently `INCOMPLETE`. This is retained as a failed Linux
+qualification result and is not evidence of production readiness.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.

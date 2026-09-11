@@ -51,6 +51,19 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   launcher remains source/image sealed to an older qualification and was not
   weakened or retargeted; current-source owned-v1 qualification remains open.
 
+- Current-source owned-v1 requalification was rebuilt from `f92a6287` as image
+  `sha256:5f5ddae5...` and passed the sealed smoke invocation in
+  `requalification-f92a6287-smoke-2`. The bounded full invocation in
+  `requalification-f92a6287-full-2` is a terminal failure, not a pass: Cargo
+  exited 101, four test targets failed, compile-fail doctests exposed
+  documentation/API mismatches, isolated PostgreSQL tests lacked their
+  required database markers, and native fake-child cleanup reported an
+  unconfirmed reap. The launcher retained identities and classified the
+  residual process group as `child group remains`; `state.json` therefore
+  remains `qualification: INCOMPLETE`. This closes neither full Linux
+  qualification nor production readiness, but preserves the exact failure
+  boundary for the next workload/cleanup investigation.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)
