@@ -513,6 +513,18 @@ enum Record {
     Effect(Effect),
     Power(PowerObservationV1),
     Start(StartAdmissionV1),
+    StartObservation(StartObservationV1),
+}
+
+/// Atomic task-success and running-power observation, not task acceptance.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartObservationV1 {
+    observation_version: u8,
+    pub power: PowerObservationV1,
+    pub task_upid: String,
+    pub task_observed_unix_ms: u64,
+    pub published_unix_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -548,6 +560,7 @@ pub struct FixtureLog {
     effects: Vec<Effect>,
     world: BTreeMap<u32, VmState>,
     power: Vec<PowerObservationV1>,
+    start_observations: Vec<StartObservationV1>,
     poisoned: bool,
 }
 
@@ -589,6 +602,7 @@ impl FixtureLog {
             effects: Vec::new(),
             world: BTreeMap::new(),
             power: Vec::new(),
+            start_observations: Vec::new(),
             poisoned: false,
         })
     }
@@ -601,6 +615,7 @@ impl FixtureLog {
         let mut effects = Vec::new();
         let mut world = BTreeMap::new();
         let mut power = Vec::new();
+        let mut start_observations = Vec::new();
         loop {
             let mut line = Vec::new();
             let n = reader
@@ -662,6 +677,11 @@ impl FixtureLog {
                     world.insert(admission.effect.vmid, admission.effect.after.clone());
                     effects.push(admission.effect);
                 }
+                Record::StartObservation(observation) => {
+                    validate_start_observation(&observation, &effects, &power)?;
+                    power.push(observation.power.clone());
+                    start_observations.push(observation);
+                }
             }
         }
         Ok(Self {
@@ -671,6 +691,7 @@ impl FixtureLog {
             effects,
             world,
             power,
+            start_observations,
             poisoned: false,
         })
     }
@@ -878,6 +899,81 @@ impl FixtureLog {
     #[allow(dead_code)]
     pub fn power_records(&self) -> &[PowerObservationV1] {
         &self.power
+    }
+
+    #[allow(dead_code)]
+    pub fn start_observation(
+        &self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+    ) -> io::Result<Option<&StartObservationV1>> {
+        let effect = self
+            .accepted_stage_effect(operation, digest, binding)?
+            .ok_or_else(invalid)?;
+        Ok(self
+            .start_observations
+            .iter()
+            .find(|observation| observation.power.effect_sequence == effect.sequence))
+    }
+
+    #[allow(dead_code, clippy::too_many_arguments)]
+    pub fn record_start_observation(
+        &mut self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+        daemon_generation: Uuid,
+        accepted_unix_ms: u64,
+        power_observed_unix_ms: u64,
+        task_upid: String,
+        task_observed_unix_ms: u64,
+        published_unix_ms: u64,
+    ) -> io::Result<StartObservationV1> {
+        let effect = self
+            .accepted_stage_effect(operation, digest, binding)?
+            .ok_or_else(invalid)?;
+        let observation = StartObservationV1 {
+            observation_version: 1,
+            power: PowerObservationV1 {
+                power_version: 1,
+                sequence: self.power.len() as u64 + 1,
+                effect_sequence: effect.sequence,
+                predecessor: self
+                    .power
+                    .iter()
+                    .rev()
+                    .find(|p| p.vmid == effect.vmid)
+                    .map(|p| p.sequence),
+                operation,
+                request_sha256: digest.to_owned(),
+                binding,
+                receipt_sha256: format!(
+                    "{:x}",
+                    Sha256::digest(effect.receipt().ok_or_else(invalid)?)
+                ),
+                vmid: effect.vmid,
+                state: PowerStateV1::Running,
+                daemon_generation,
+                accepted_unix_ms,
+                observed_unix_ms: power_observed_unix_ms,
+            },
+            task_upid,
+            task_observed_unix_ms,
+            published_unix_ms,
+        };
+        validate_start_observation(&observation, &self.effects, &self.power)?;
+        let bytes = frame(&observation)?;
+        if bytes.len() > MAX_LINE {
+            return Err(invalid());
+        }
+        self.poisoned = true;
+        self.file.write_all(&bytes)?;
+        self.file.sync_data()?;
+        self.power.push(observation.power.clone());
+        self.start_observations.push(observation.clone());
+        self.poisoned = false;
+        Ok(observation)
     }
 
     /// Resolve the exact predecessor for the atomic admission seam. Historical
@@ -1093,6 +1189,34 @@ fn validate_power(
         }
         _ => Err(invalid()),
     }
+}
+
+fn validate_start_observation(
+    observation: &StartObservationV1,
+    effects: &[Effect],
+    power: &[PowerObservationV1],
+) -> io::Result<()> {
+    validate_power(&observation.power, effects, power)?;
+    let effect = effects
+        .iter()
+        .find(|effect| effect.sequence == observation.power.effect_sequence)
+        .ok_or_else(invalid)?;
+    let receipt: serde_json::Value =
+        serde_json::from_slice(effect.receipt().ok_or_else(invalid)?).map_err(|_| invalid())?;
+    if observation.observation_version != 1
+        || observation.power.state != PowerStateV1::Running
+        || receipt
+            .pointer("/receipt/task")
+            .and_then(serde_json::Value::as_str)
+            != Some(observation.task_upid.as_str())
+        || observation.task_observed_unix_ms <= observation.power.accepted_unix_ms
+        || observation.power.observed_unix_ms <= observation.power.accepted_unix_ms
+        || observation.task_observed_unix_ms > observation.published_unix_ms
+        || observation.power.observed_unix_ms > observation.published_unix_ms
+    {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 fn validate_start(

@@ -43,6 +43,15 @@ pub struct FixtureSynchronousPublication {
 #[allow(clippy::enum_variant_names)] // Wire command names share their protocol namespace.
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Command {
+    PublishStartPeObservation {
+        identity: super::FixtureStageIdentity,
+        request: serde_json::Value,
+        observation: super::FixtureStartPeObservationV1,
+    },
+    StartPeObservation {
+        identity: super::FixtureStageIdentity,
+        request: serde_json::Value,
+    },
     PublishSynchronousStage {
         identity: super::FixtureStageIdentity,
         request: serde_json::Value,
@@ -128,6 +137,40 @@ impl Publications {
         directory: &Path,
     ) -> io::Result<Vec<u8>> {
         let (value, observation, stage) = match command {
+            Command::PublishStartPeObservation {
+                identity,
+                request,
+                observation,
+            } if supervisor => {
+                let request =
+                    crate::fixture_ipc::FixtureStageRequest::decode(&serde_json::to_vec(&request)?)
+                        .map_err(|_| invalid())?;
+                let accepted = *self
+                    .accepted
+                    .get(&(identity.operation, identity.request_sha256.clone()))
+                    .ok_or_else(invalid)?;
+                return Ok(serde_json::to_vec(&observation.publish(
+                    &identity,
+                    &request,
+                    log,
+                    self.generation,
+                    accepted,
+                )?)?);
+            }
+            Command::StartPeObservation { identity, request } if !supervisor => {
+                let request =
+                    crate::fixture_ipc::FixtureStageRequest::decode(&serde_json::to_vec(&request)?)
+                        .map_err(|_| invalid())?;
+                identity.validate_request(&request)?;
+                if identity.stage != super::FixtureLedgerStage::StartPe {
+                    return Err(invalid());
+                }
+                return Ok(serde_json::to_vec(&log.start_observation(
+                    identity.operation,
+                    &identity.request_sha256,
+                    identity.ledger_binding(),
+                )?)?);
+            }
             Command::PublishSynchronousStage {
                 identity,
                 request,

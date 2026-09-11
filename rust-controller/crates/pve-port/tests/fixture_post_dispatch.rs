@@ -396,6 +396,8 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
     let mut accepted: Vec<(FixtureStageIdentity, FixtureStageRequest, Vec<u8>)> = Vec::new();
     let mut final_publication = None;
     let mut start_effect = None;
+    let mut start_publication = None;
+    let mut start_publish_command = None;
     for restart in [false, true] {
         if restart {
             fs::remove_file(directory.join("client.sock")).unwrap();
@@ -434,6 +436,13 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             .await
             .unwrap();
             assert_eq!(&recovered["accepted_effect"], expected);
+            let replay = wire(&client, json!({"command":"start_pe_observation","identity":identity,"request":serde_json::from_slice::<Value>(&pve_port::fixture_ipc::FixtureStageRequest::new(Uuid::from_u128(1), episodes[3].request.clone()).unwrap().encode().unwrap()).unwrap()})).await.unwrap();
+            assert_eq!(Some(replay), start_publication);
+            assert!(
+                wire(&control, start_publish_command.clone().unwrap())
+                    .await
+                    .is_err()
+            );
         } else {
             let supervisor =
                 FixtureCheckpointClient::new(control.clone(), Duration::from_secs(1)).unwrap();
@@ -762,6 +771,57 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
                 run(&torn, Duration::from_millis(100)).is_err(),
                 "torn atomic IPC acceptance must fail recovery"
             );
+            fs::remove_file(torn.join("fixture.log")).unwrap();
+            fs::remove_dir(torn).unwrap();
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            let at = chrono::Utc::now().timestamp_millis() as u64;
+            let evidence = json!({"version":1,"task":{"version":1,"identity":{"fixture_id":start.fixture_id(),"node":"pve-test","operation":identity.operation,"request_sha256":identity.request_sha256,"upid":upid.as_str()},"observed_unix_ms":at,"result":{"state":"succeeded"}},"power":{"state":"observed","observed_unix_ms":at,"value":{"power":"running","locked":false}}});
+            let publish = json!({"command":"publish_start_pe_observation","identity":identity,"request":serde_json::from_slice::<Value>(&start.encode().unwrap()).unwrap(),"observation":evidence});
+            assert!(wire(&client, publish.clone()).await.is_err());
+            let before_observation = fs::read(directory.join("fixture.log")).unwrap();
+            for (pointer, value) in [
+                ("/identity/owner", json!(Uuid::now_v7())),
+                (
+                    "/observation/task/identity/operation",
+                    json!(Uuid::now_v7()),
+                ),
+                (
+                    "/observation/task/identity/upid",
+                    json!("UPID:pve-test:000000FF:00000001:00000001:qmstart:101:fake@pve:"),
+                ),
+                ("/observation/task/result/state", json!("running")),
+                ("/observation/task/observed_unix_ms", json!(1)),
+                ("/observation/power/observed_unix_ms", json!(1)),
+                ("/observation/power/value/power", json!("stopped")),
+                ("/observation/power/value/locked", json!(true)),
+            ] {
+                let mut wrong = publish.clone();
+                *wrong.pointer_mut(pointer).unwrap() = value;
+                assert!(wire(&control, wrong).await.is_err());
+                assert_eq!(
+                    before_observation,
+                    fs::read(directory.join("fixture.log")).unwrap()
+                );
+            }
+            let observed = wire(&control, publish.clone()).await.unwrap();
+            assert_eq!(observed["power"]["state"], "running");
+            assert!(wire(&control, publish.clone()).await.is_err());
+            start_publish_command = Some(publish);
+            start_publication = Some(observed);
+            let committed = fs::read(directory.join("fixture.log")).unwrap();
+            assert_eq!(
+                committed[before_observation.len()..]
+                    .iter()
+                    .filter(|byte| **byte == b'\n')
+                    .count(),
+                1
+            );
+            let torn =
+                std::path::PathBuf::from("/tmp").join(format!("obs-torn-{}", Uuid::now_v7()));
+            fs::create_dir(&torn).unwrap();
+            fs::set_permissions(&torn, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::write(torn.join("fixture.log"), &committed[..committed.len() - 1]).unwrap();
+            assert!(run(&torn, Duration::from_millis(100)).is_err());
             fs::remove_file(torn.join("fixture.log")).unwrap();
             fs::remove_dir(torn).unwrap();
         }
