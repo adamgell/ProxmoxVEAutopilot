@@ -49,6 +49,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Commit `b18b8993` adds an opt-in capability-closed PostgreSQL session seam: unavailable witness refusal precedes connection/transaction, and a rolled-back diagnostic compares dispatch/deadline context while separating UUID proposal generation from bigint authority generation. Live SQL validity, authenticated session creation, atomic persistence, precise fence mapping, and controller progression remain open.
 - Commit `f415b70a` adds microsecond PE-registration anchors with exact original-event/deadline binding, checked arithmetic, and lossless-only v1 conversion. The PostgreSQL probe still needs v2 integration; authenticated session persistence, dispatch, satisfaction, and production paths remain closed.
 - Commit `0f9e1180` integrates v2 anchors into the opt-in PostgreSQL diagnostic probe with exact microsecond comparisons and lossless v1 upgrade. Boundary, lossy, and invalid-context refusals pass; the schema/durable-row runtime test remains ignored and no capability opens.
+- Commit `d5602ab4` defines a fail-closed PeRegister witness contract binding session/context, request and result IDs/digests/revision, and the original microsecond deadline/event. Unavailable, expired, duplicate, and conflicting results refuse; authenticated verification, atomic persistence, API policy, and crash/controller progression remain open.
 
 ### Final owned Linux full-run result (2026-09-10)
 
