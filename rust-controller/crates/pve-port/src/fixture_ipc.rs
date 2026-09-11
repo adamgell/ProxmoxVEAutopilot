@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 mod stage;
-pub use stage::{FixtureStageReceipt, FixtureStageRequest};
+pub use stage::{FixtureStageReceipt, FixtureStageRequest, FixtureStopReleaseProposalV1};
 
 const MAX_MESSAGE_BYTES: usize = 65_536;
 

@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `4a7d5af6`: this branch and PR #65 contain an accumulated
+Current scope at `working-tree`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -110,6 +110,12 @@ PostgreSQL fixture stop-outbox selector and one-use consumer. The bridge still
 does not release a barrier, dispatch `qm stop`, publish stopped power, or prove
 replacement-worker recovery; positive end-to-end reservation evidence remains
 an explicit follow-up gate.
+
+The follow-on fixture IPC contract `FixtureStopReleaseProposalV1` binds the
+operation, attempt, lease owner, generation, request/receipt/sample digests,
+and sealed provenance for a future supervisor release/send step. It is
+non-authorizing and validated independently; no physical stop or stopped-power
+claim follows from constructing it.
 
 At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires

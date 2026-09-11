@@ -6,6 +6,124 @@ use crate::{MutationReceipt, ProvisioningActionV1, ProvisioningMutationRequestV1
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Immutable proposal for the later supervisor-owned stop release/send step.
+/// It carries all evidence joins required by that step but has no send or
+/// release capability itself.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixtureStopReleaseProposalV1 {
+    operation: Uuid,
+    attempt: Uuid,
+    lease_owner: Uuid,
+    generation: Uuid,
+    request_sha256: String,
+    receipt_sha256: String,
+    sample_sha256: String,
+    provenance: crate::fixture_ipc::FixtureSharedHistoryProvenanceV1,
+}
+
+impl FixtureStopReleaseProposalV1 {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        operation: Uuid,
+        attempt: Uuid,
+        lease_owner: Uuid,
+        generation: Uuid,
+        request_sha256: String,
+        receipt_sha256: String,
+        sample_sha256: String,
+        provenance: crate::fixture_ipc::FixtureSharedHistoryProvenanceV1,
+    ) -> Result<Self, InvalidFixtureClone> {
+        if [operation, attempt, lease_owner, generation]
+            .iter()
+            .any(Uuid::is_nil)
+            || request_sha256.is_empty()
+            || receipt_sha256.is_empty()
+            || sample_sha256.is_empty()
+            || provenance.operation() != operation
+        {
+            return Err(InvalidFixtureClone);
+        }
+        Ok(Self {
+            operation,
+            attempt,
+            lease_owner,
+            generation,
+            request_sha256,
+            receipt_sha256,
+            sample_sha256,
+            provenance,
+        })
+    }
+
+    pub fn operation(&self) -> Uuid {
+        self.operation
+    }
+    pub fn attempt(&self) -> Uuid {
+        self.attempt
+    }
+    pub fn lease_owner(&self) -> Uuid {
+        self.lease_owner
+    }
+    pub fn generation(&self) -> Uuid {
+        self.generation
+    }
+    pub fn request_sha256(&self) -> &str {
+        &self.request_sha256
+    }
+    pub fn receipt_sha256(&self) -> &str {
+        &self.receipt_sha256
+    }
+    pub fn sample_sha256(&self) -> &str {
+        &self.sample_sha256
+    }
+    pub fn provenance(&self) -> &crate::fixture_ipc::FixtureSharedHistoryProvenanceV1 {
+        &self.provenance
+    }
+}
+
+#[cfg(test)]
+mod stop_release_proposal_tests {
+    use super::*;
+
+    #[test]
+    fn proposal_requires_matching_operation_and_nonempty_digests() {
+        let operation = Uuid::now_v7();
+        let provenance = crate::fixture_ipc::FixtureSharedHistoryProvenanceV1::new(
+            operation,
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            "/tmp/fixture-stop.sock".to_owned(),
+        )
+        .unwrap();
+        let proposal = FixtureStopReleaseProposalV1::new(
+            operation,
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            "request".to_owned(),
+            "receipt".to_owned(),
+            "sample".to_owned(),
+            provenance.clone(),
+        )
+        .unwrap();
+        assert_eq!(proposal.operation(), operation);
+        assert_eq!(proposal.provenance(), &provenance);
+        assert!(
+            FixtureStopReleaseProposalV1::new(
+                Uuid::now_v7(),
+                Uuid::now_v7(),
+                Uuid::now_v7(),
+                Uuid::now_v7(),
+                "request".to_owned(),
+                "receipt".to_owned(),
+                "sample".to_owned(),
+                provenance,
+            )
+            .is_err()
+        );
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FixtureStageRequest {
     fixture_id: Uuid,
