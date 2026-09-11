@@ -57,3 +57,28 @@ should record which owned PID remains and its process state, reproduce delayed
 supervisor scheduling deterministically, and verify bounded timeout reporting
 plus eventual owned-child reaping without hiding unresolved children or widening
 the caller budget. Only then rerun the complete failed gate and frozen build.
+
+## Synchronization review
+
+At `40109ac653564a793e81bb1dec304fef3c9bc233`, the focused macOS test passed
+(1 passed in 0.60 seconds) with `RUST_MIN_STACK=16777216`, offline/locked Cargo,
+the exact failing test filter and serial test execution. This does not resolve
+the Linux failure.
+
+The absence assertion does run before `FaultChild::drop` joins its supervisor.
+Moving that drop ahead of the assertion is not a semantics-preserving fix:
+drop first sends cancellation, so the test could pass because owner cancellation
+caused termination rather than because deadline supervision progressed while
+synchronous cleanup blocked the runtime. Moreover `JoinHandle::join` alone does
+not reap a child already abandoned by `ManagedChild::drop` after its deadline;
+it joins only the Rust supervisor thread. The existing join has no independent
+hard timeout, so adding a blocking join is not proof of bounded completion.
+
+A completion-only diagnostic barrier may first require the supervisor to have
+finished under the existing absolute deadline, join that already-finished
+thread without sending cancellation, and retain the original PID-absence check.
+It must fail if completion was late and must not turn a pending/zombie child into
+success. This would distinguish supervisor scheduling from actual reap failure,
+but it is not established as a fix. No source synchronization change was made;
+the new per-PID/deadline diagnostics should be used for the next Linux failure
+before selecting a behavior change.
