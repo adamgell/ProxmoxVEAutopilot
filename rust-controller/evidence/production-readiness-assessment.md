@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `9b148e0b`: this branch and PR #65 contain an accumulated
+Current scope at `432654ec`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -98,6 +98,12 @@ cannot prove that its database history and separately supplied supervisor
 journal are the same operation source. Repeated and reconstructed-owner
 attempts leave both pools and physical submissions untouched. This is an
 explicit provenance gate, not a positive outbox integration.
+
+Commit `432654ec` adds the corresponding positive, sealed provenance join:
+the operation port and checkpoint client must derive equal opaque
+operation/generation/owner/channel provenance before the controller returns a
+reservation proof. This still creates no outbox row, release authority,
+physical stop, or stopped-power claim; it is a bounded PoC trust boundary.
 
 At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires
