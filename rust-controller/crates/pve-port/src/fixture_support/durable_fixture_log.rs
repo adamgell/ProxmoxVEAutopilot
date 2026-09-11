@@ -895,6 +895,14 @@ fn validate_stop_admission(
     let start = &admission.predecessor.power;
     let p = admission.current_power.as_ref().unwrap_or(start);
     let at = admission.admitted_unix_ms;
+    if let Some(scope) = &p.stop_scope
+        && (scope.operation != admission.operation
+            || scope.request_sha256 != admission.request_sha256
+            || scope.binding != admission.binding
+            || scope.authority != admission.authority)
+    {
+        return Err(invalid());
+    }
     if admission.stop_admission_version != 1
         || admission.operation.is_nil()
         || !valid_digest(&admission.request_sha256)
@@ -1023,6 +1031,19 @@ pub struct PowerObservationV1 {
     daemon_generation: Uuid,
     accepted_unix_ms: u64,
     observed_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stop_scope: Option<Box<StopPowerScope>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StopPowerScope {
+    pub sample_sequence: u64,
+    pub sample_sha256: String,
+    pub operation: Uuid,
+    pub request_sha256: String,
+    pub binding: StageBinding,
+    pub authority: FixtureStopAuthorityV1,
 }
 
 pub struct FixtureLog {
@@ -1068,6 +1089,33 @@ impl FixtureLog {
         observed_unix_ms: u64,
         now_unix_ms: u64,
     ) -> io::Result<PowerObservationV1> {
+        self.refresh_scoped_start_power(
+            operation,
+            digest,
+            binding,
+            receipt,
+            daemon_generation,
+            observed_generation,
+            vmid,
+            observed_unix_ms,
+            now_unix_ms,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn refresh_scoped_start_power(
+        &mut self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+        receipt: &[u8],
+        daemon_generation: Uuid,
+        observed_generation: Uuid,
+        vmid: u32,
+        observed_unix_ms: u64,
+        now_unix_ms: u64,
+        scope: Option<StopPowerScope>,
+    ) -> io::Result<PowerObservationV1> {
         let original = self
             .start_observation(operation, digest, binding)?
             .ok_or_else(invalid)?;
@@ -1080,7 +1128,7 @@ impl FixtureLog {
         {
             return Err(invalid());
         }
-        self.record_power_observation(
+        self.record_scoped_power_observation(
             operation,
             digest,
             binding,
@@ -1089,6 +1137,7 @@ impl FixtureLog {
             daemon_generation,
             original.power.accepted_unix_ms,
             observed_unix_ms,
+            scope,
         )?;
         self.power.last().cloned().ok_or_else(invalid)
     }
@@ -1562,6 +1611,7 @@ impl FixtureLog {
                 daemon_generation,
                 accepted_unix_ms,
                 observed_unix_ms: power_observed_unix_ms,
+                stop_scope: None,
             },
             task_upid,
             task_observed_unix_ms,
@@ -1656,6 +1706,31 @@ impl FixtureLog {
         accepted_unix_ms: u64,
         observed_unix_ms: u64,
     ) -> io::Result<()> {
+        self.record_scoped_power_observation(
+            operation,
+            digest,
+            binding,
+            receipt,
+            state,
+            daemon_generation,
+            accepted_unix_ms,
+            observed_unix_ms,
+            None,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn record_scoped_power_observation(
+        &mut self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+        receipt: &[u8],
+        state: PowerStateV1,
+        daemon_generation: Uuid,
+        accepted_unix_ms: u64,
+        observed_unix_ms: u64,
+        stop_scope: Option<StopPowerScope>,
+    ) -> io::Result<()> {
         let effect = self
             .accepted_stage_effect(operation, digest, binding)?
             .ok_or_else(invalid)?;
@@ -1681,6 +1756,7 @@ impl FixtureLog {
             daemon_generation,
             accepted_unix_ms,
             observed_unix_ms,
+            stop_scope: stop_scope.map(Box::new),
         };
         validate_power(&observation, &self.effects, &self.power)?;
         let bytes = frame(&observation)?;
@@ -1747,11 +1823,38 @@ fn validate_power(
     effects: &[Effect],
     power: &[PowerObservationV1],
 ) -> io::Result<()> {
+    if let Some(scope) = &p.stop_scope {
+        let a = &scope.authority;
+        if !(1..=64).contains(&scope.sample_sequence)
+            || !valid_digest(&scope.sample_sha256)
+            || scope.operation.is_nil()
+            || !valid_digest(&scope.request_sha256)
+            || !scope.binding.valid()
+            || scope.binding.stage != FixtureLedgerStage::PeEnsureStopped
+            || p.binding.stage != FixtureLedgerStage::StartPe
+            || p.state != PowerStateV1::Running
+            || a.version != 1
+            || a.grace_operation.is_nil()
+            || a.decision_event.is_nil()
+            || a.evidence_fence == 0
+            || a.grace_due_unix_ms == 0
+            || a.grace_due_unix_ms > a.decision_unix_ms
+            || a.decision_unix_ms > a.lease_checked_unix_ms
+            || p.observed_unix_ms < a.lease_checked_unix_ms
+            || p.observed_unix_ms >= a.lease_expires_unix_ms
+            || p.observed_unix_ms >= a.original_deadline_unix_ms
+        {
+            return Err(invalid());
+        }
+    }
     let effect = effects
         .iter()
         .find(|e| e.sequence == p.effect_sequence)
         .ok_or_else(invalid)?;
     let previous = power.iter().rev().find(|prior| prior.vmid == p.vmid);
+    if previous.is_some_and(|prior| prior.stop_scope.is_some()) && p.stop_scope.is_none() {
+        return Err(invalid());
+    }
     if p.power_version != 1
         || p.sequence != power.len() as u64 + 1
         || p.daemon_generation.is_nil()
