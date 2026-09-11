@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 use std::{io, path::PathBuf, time::Duration};
 mod late_configure;
+mod late_start;
 mod legacy_resize;
 mod start_validation;
 use late_configure::LateConfigureContext;
@@ -27,6 +28,7 @@ pub struct FixtureProvisioningPort {
     resize: Option<ResizeContext>,
     legacy_resize: Option<LegacyResizeContext>,
     late_configure: Option<LateConfigureContext>,
+    late_start: Option<late_start::LateStartContext>,
 }
 struct ResizeContext {
     client: FixtureCheckpointClient,
@@ -88,6 +90,7 @@ impl FixtureProvisioningPort {
             resize: None,
             legacy_resize: None,
             late_configure: None,
+            late_start: None,
         })
     }
     /// Collect v2 facts before the controller constructs its exact request.
@@ -108,6 +111,7 @@ impl FixtureProvisioningPort {
             resize: None,
             legacy_resize: None,
             late_configure: None,
+            late_start: None,
         })
     }
     /// Restore the exact journaled request when reconstructing an adapter.
@@ -118,7 +122,8 @@ impl FixtureProvisioningPort {
         request: crate::fixture_ipc::FixtureCloneRequest,
     ) -> io::Result<Self> {
         let vm = request.request().clone_request().vm();
-        if self.late_configure.is_some()
+        if self.late_start.is_some()
+            || self.late_configure.is_some()
             || self.legacy_resize.is_some()
             || self.resize.is_some()
             || request.fixture_id() != self.identity.fixture_id
@@ -166,7 +171,8 @@ impl FixtureProvisioningPort {
                 "resize request required",
             ));
         };
-        if self.late_configure.is_some()
+        if self.late_start.is_some()
+            || self.late_configure.is_some()
             || self.legacy_resize.is_some()
             || self.exact_identity.is_some()
             || self.checkpoint.is_some()
@@ -227,7 +233,8 @@ impl FixtureProvisioningPort {
         client: FixtureCheckpointClient,
         binding: CheckpointBinding,
     ) -> io::Result<Self> {
-        if self.late_configure.is_some()
+        if self.late_start.is_some()
+            || self.late_configure.is_some()
             || self.legacy_resize.is_some()
             || self.resize.is_some()
             || binding.generation.is_nil()
@@ -250,6 +257,9 @@ impl FixtureProvisioningPort {
         }
     }
     async fn clone_reads(&self) -> Result<FixtureCloneReads, PveReadError> {
+        if self.late_start.is_some() {
+            return Err(PveReadError::TransportUnavailable);
+        }
         if let Some(configure) = &self.late_configure {
             return Ok(configure.observation(&self.reads).await?.inventory);
         }
@@ -272,6 +282,9 @@ impl FixtureProvisioningPort {
         Ok(facts)
     }
     async fn provisioning(&self) -> Result<FixtureProvisioningReadsV2, PveReadError> {
+        if self.late_start.is_some() {
+            return Err(PveReadError::TransportUnavailable);
+        }
         if let Some(configure) = &self.late_configure {
             return Ok(configure
                 .observation(&self.reads)
@@ -355,6 +368,9 @@ impl crate::fixture_ipc::ControllerFixturePort for FixtureProvisioningPort {
     fn shared_history_provenance(
         &self,
     ) -> Option<crate::fixture_ipc::FixtureSharedHistoryProvenanceV1> {
+        if let Some(start) = &self.late_start {
+            return start.provenance().ok();
+        }
         if let Some(configure) = &self.late_configure {
             return configure.shared_history_provenance().ok();
         }
@@ -367,6 +383,9 @@ impl crate::fixture_ipc::ControllerFixturePort for FixtureProvisioningPort {
         request: &ProvisioningMutationRequestV1,
     ) -> Result<(), crate::fixture_ipc::CheckpointError> {
         use crate::fixture_ipc::{CheckpointError, FixtureCloneRequest};
+        if let Some(start) = &self.late_start {
+            return start.checkpoint(request).await;
+        }
         if let Some(configure) = &self.late_configure {
             return configure.checkpoint(request).await;
         }
@@ -587,6 +606,9 @@ impl ProvisioningFakePort for FixtureProvisioningPort {
         &self,
         request: &ProvisioningMutationRequestV1,
     ) -> Result<MutationReceipt, PveWriteError> {
+        if let Some(start) = &self.late_start {
+            return start.submit(&self.mutation, request).await;
+        }
         if let Some(configure) = &self.late_configure {
             return configure.submit(&self.mutation, request).await;
         }

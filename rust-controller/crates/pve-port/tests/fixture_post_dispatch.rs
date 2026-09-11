@@ -728,15 +728,66 @@ async fn full_start_pe_case(process_death: bool) {
                 .unwrap()
                 .ok
         );
-        assert!(
-            worker
-                .stage_request(StageCheckpointRequest::Enter {
-                    identity: identity.clone()
-                })
-                .await
-                .unwrap()
-                .ok
-        );
+        let start_port = if process_death && !restart {
+            Some(std::sync::Arc::new(
+                start_adapter(client.clone(), &identity, &start)
+                    .with_late_start_after_configure(
+                        FixtureCheckpointClient::new(client.clone(), Duration::from_secs(2))
+                            .unwrap(),
+                        generation,
+                        identity.owner,
+                        accepted[2].0.clone(),
+                        accepted[2].1.clone(),
+                    )
+                    .unwrap(),
+            ))
+        } else {
+            None
+        };
+        let checkpoint_worker = if let Some(port) = &start_port {
+            use pve_port::fixture_ipc::ControllerFixturePort;
+            assert!(
+                port.provisioning_checkpoint(accepted[2].1.request())
+                    .await
+                    .is_err()
+            );
+            assert!(port.submit_provisioning(start.request()).await.is_err());
+            assert!(port.validate_bound_start_pe().await.unwrap().is_none());
+            let provenance = port.shared_history_provenance().unwrap();
+            assert_eq!(provenance.operation(), identity.operation);
+            assert_eq!(provenance.generation(), generation);
+            let port = port.clone();
+            let request = start.request().clone();
+            let child = tokio::spawn(async move { port.provisioning_checkpoint(&request).await });
+            tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    if supervisor
+                        .stage_request(StageCheckpointRequest::Status)
+                        .await
+                        .unwrap()
+                        .phase
+                        == CheckpointPhase::Entered
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            Some(child)
+        } else {
+            assert!(
+                worker
+                    .stage_request(StageCheckpointRequest::Enter {
+                        identity: identity.clone()
+                    })
+                    .await
+                    .unwrap()
+                    .ok
+            );
+            None
+        };
         let exact_effect = wire(
             &client,
             json!({"command":"accepted_stage_effect","identity":accepted[2].0}),
@@ -820,15 +871,33 @@ async fn full_start_pe_case(process_death: bool) {
         }
         let mutation = FixtureMutationClient::new(client.clone(), Duration::from_secs(1)).unwrap();
         if !restart {
-            let receipt = mutation
-                .stage_late_with_predecessor(
-                    identity.clone(),
-                    &start,
-                    &accepted[2].0,
-                    &accepted[2].1,
+            let receipt = if let Some(port) = &start_port {
+                checkpoint_worker.unwrap().await.unwrap().unwrap();
+                let actual = port.submit_provisioning(start.request()).await.unwrap();
+                assert!(port.submit_provisioning(start.request()).await.is_err());
+                assert!(port.validate_bound_start_pe().await.unwrap().is_none());
+                let effect = wire(
+                    &client,
+                    json!({"command":"accepted_stage_effect","identity":identity}),
                 )
                 .await
                 .unwrap();
+                let bytes: Vec<u8> =
+                    serde_json::from_value(effect["accepted_effect"]["receipt"].clone()).unwrap();
+                let decoded = start.decode_receipt(&bytes).unwrap();
+                assert_eq!(decoded.receipt(), &actual);
+                decoded
+            } else {
+                mutation
+                    .stage_late_with_predecessor(
+                        identity.clone(),
+                        &start,
+                        &accepted[2].0,
+                        &accepted[2].1,
+                    )
+                    .await
+                    .unwrap()
+            };
             assert!(
                 matches!(receipt.receipt(), MutationReceipt::Task(upid) if upid.as_str().contains(":qmstart:101:"))
             );
@@ -975,6 +1044,13 @@ async fn full_start_pe_case(process_death: bool) {
             }
             assert!(wire(&client, command.clone()).await.is_err());
             full_publication = Some(wire(&control, command.clone()).await.unwrap());
+            if let Some(port) = &start_port {
+                let publication = port.validate_bound_start_pe().await.unwrap().unwrap();
+                assert_eq!(
+                    serde_json::to_value(publication).unwrap(),
+                    full_publication.clone().unwrap()
+                );
+            }
             if process_death {
                 let ledger = fs::read(directory.join("fixture.log")).unwrap();
                 let path = directory.join(format!(

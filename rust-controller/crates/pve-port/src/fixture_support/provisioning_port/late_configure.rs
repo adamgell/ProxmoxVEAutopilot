@@ -68,6 +68,7 @@ impl FixtureProvisioningPort {
             || self.checkpoint.is_some()
             || self.resize.is_some()
             || self.late_configure.is_some()
+            || self.late_start.is_some()
             || self.legacy_resize.is_some()
             || self.dispatched.lock().unwrap().is_some()
             || predecessor.fixture_id() != self.identity.fixture_id

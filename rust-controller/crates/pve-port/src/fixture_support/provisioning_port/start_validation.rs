@@ -40,6 +40,7 @@ impl FixtureProvisioningPort {
             || self.resize.is_some()
             || self.legacy_resize.is_some()
             || self.late_configure.is_some()
+            || self.late_start.is_some()
             || self
                 .dispatched
                 .lock()
