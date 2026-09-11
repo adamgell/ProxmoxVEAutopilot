@@ -31,3 +31,9 @@ changed. Inspect the exact pending container name before resuming any work
 on that resource. The first invocation using the descriptive image tag was
 refused before resource creation; the verified image was then assigned the
 launcher's required `rust-controller-task9:local` tag.
+
+Follow-up read-only diagnosis could not resolve the pending identity: the
+exact-name `docker ps -a --no-trunc --filter name=...` remained live beyond
+two minutes, and a direct Docker socket GET for that container's JSON timed
+out after 10.002 seconds with zero response bytes (curl exit 28). This is
+insufficient evidence of absence or terminal state. No retry was started.
