@@ -10,7 +10,7 @@ Production and `192.168.2.4`: read-only throughout
 | --- | --- | --- |
 | macOS Rust controller prefix | Local PostgreSQL and fixture proofs through guarded EnsureStopped; strict checks recorded in the linked evidence | Proven for the bounded fixture/native-fake slice |
 | Fixture-IPC stop path | Typed envelope, supervisor admission frame, PostgreSQL authority snapshot, fresh-power publication boundary, and fail-closed worker/source refusals | Contract/admission/refusal only; successful external stop remains open |
-| Exact-source Linux | Source `7cde09fb` built as amd64 image `sha256:02b2be47...` in 885.14s; post-build memory guard refused owned runtime at 11.32 GiB versus 12 GiB | Build proven; Linux runtime qualification open |
+| Exact-source Linux | Current source `a607861f24cac19cad4565365df2a29b58a33e0b` built as amd64 image `sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9`; pinned owned launcher attempted qualification and refused admission at 11.1177 GiB available versus its 12 GiB guard | Exact-source build and image seal proven; Linux runtime qualification open |
 | Callback compatibility | Fixture-only PeRegister/PeComplete paths are covered; generic and legacy action/result surfaces are not | Partial fixture proof; full compatibility open |
 | Production readiness | Readiness artifacts and PR are draft; no deployment, cutover, or production mutation | Not ready / acceptance open |
 
@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `314fbb95`: this branch and PR #65 contain an accumulated
+Current scope at `d55f4dbe`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -40,7 +40,12 @@ are implemented. The transaction-local alias helper at `724b6101` retains exact
 ownership and the original timestamp on replay without independent commit or
 dispatch authority.
 
-The current PR head is `314fbb95` (verified 2026-09-11). GitHub reports the
+The current PR head is `d55f4dbe` (verified 2026-09-11). The exact-source
+amd64 image is sealed as `sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9`
+with `CONTROLLER_GIT_SHA=a607861f24cac19cad4565365df2a29b58a33e0b`; the owned
+launcher evidence is retained in `requalification-a607861f-fixture-1/` and
+records `qualification: INCOMPLETE` because its host memory guard observed
+11.1177 GiB available against the 12 GiB minimum. GitHub reports the
 duplicated Linux and macOS-arm64 checks as queued, with no completed
 qualification conclusion; the draft PR remains open. The StartPe provisioning
 fact mapping added at `db84526f`/`01b2baee`, followed by the closed-response
