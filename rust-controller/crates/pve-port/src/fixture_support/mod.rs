@@ -11,7 +11,7 @@ mod stage_identity;
 mod start_authorization;
 mod start_full;
 mod start_observation;
-pub use start_full::FixtureStartPeFullV1;
+pub use start_full::{FixtureStartPeFullPublicationV1, FixtureStartPeFullV1};
 mod start_restoration;
 pub use durable_fixture_log::StartObservationV1;
 pub use durable_fixture_log::{FixtureLedgerStage, StageBinding};

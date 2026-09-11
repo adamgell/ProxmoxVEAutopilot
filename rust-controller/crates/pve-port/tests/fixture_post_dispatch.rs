@@ -460,6 +460,10 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             let replay = wire(&client, json!({"command":"start_pe_observation","identity":identity,"request":serde_json::from_slice::<Value>(&pve_port::fixture_ipc::FixtureStageRequest::new(Uuid::from_u128(1), episodes[3].request.clone()).unwrap().encode().unwrap()).unwrap()})).await.unwrap();
             assert_eq!(Some(replay), start_publication);
             let mut read = full_command.clone().unwrap();
+            assert_eq!(
+                serde_json::to_value(restored.observe_full().await.unwrap().unwrap()).unwrap(),
+                full_publication.clone().unwrap()
+            );
             read["command"] = json!("start_pe_full");
             read.as_object_mut().unwrap().remove("observation");
             assert_eq!(
@@ -835,6 +839,7 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             )
             .unwrap();
             assert!(restored.observe().await.unwrap().is_none());
+            assert!(restored.observe_full().await.unwrap().is_none());
             assert!(wire(&client, publish.clone()).await.is_err());
             let before_observation = fs::read(directory.join("fixture.log")).unwrap();
             for (pointer, value) in [
@@ -863,6 +868,7 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             }
             let observed = wire(&control, publish.clone()).await.unwrap();
             assert_eq!(observed["power"]["state"], "running");
+            assert!(restored.observe_full().await.unwrap().is_none());
             let at = chrono::Utc::now().timestamp_millis() as u64;
             let ProvisioningMutationRequestV1::Start(start_request) = start.request() else {
                 panic!()
@@ -898,6 +904,10 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             }
             assert!(wire(&client, command.clone()).await.is_err());
             full_publication = Some(wire(&control, command.clone()).await.unwrap());
+            assert_eq!(
+                serde_json::to_value(restored.observe_full().await.unwrap().unwrap()).unwrap(),
+                full_publication.clone().unwrap()
+            );
             assert!(wire(&control, command.clone()).await.is_err());
             full_command = Some(command);
             let readback = restored.observe().await.unwrap().unwrap();
@@ -983,6 +993,114 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
                 .unwrap();
                 assert_eq!(
                     restored.observe().await.unwrap_err().kind(),
+                    std::io::ErrorKind::InvalidData
+                );
+                server.await.unwrap();
+                fs::remove_file(socket).unwrap();
+            }
+            for (pointer, replacement) in [
+                (
+                    "/observation/inventory/identity/owner",
+                    json!(Uuid::now_v7()),
+                ),
+                (
+                    "/observation/inventory/identity/generation",
+                    json!(Uuid::now_v7()),
+                ),
+                (
+                    "/observation/inventory/identity/attempt",
+                    json!(Uuid::now_v7()),
+                ),
+                (
+                    "/observation/inventory/receipt_sha256",
+                    json!("a".repeat(64)),
+                ),
+                ("/observation/inventory/coverage", json!("partial")),
+                ("/observation/durable/task_upid", json!("forged")),
+                ("/observation/storage", json!([])),
+                ("/observation/bridges", json!([])),
+                ("/observation/inventory/members/1/power", json!("stopped")),
+            ] {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut forged = full_publication.clone().unwrap();
+                *forged.pointer_mut(pointer).unwrap() = replacement;
+                // Recompute corruption checksum: deep validation must still
+                // reject the forged evidence, not merely a stale checksum.
+                let typed: FixtureStartPeFullV1 =
+                    serde_json::from_value(forged["observation"].clone()).unwrap();
+                forged["sha256"] = json!(format!(
+                    "{:x}",
+                    Sha256::digest(
+                        serde_json::to_vec(&(forged["published_unix_ms"].as_u64().unwrap(), typed))
+                            .unwrap()
+                    )
+                ));
+                let socket = directory.join("forged-full.sock");
+                let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+                let compact = observed.clone();
+                let server = tokio::spawn(async move {
+                    for (command, response) in
+                        [("start_pe_observation", compact), ("start_pe_full", forged)]
+                    {
+                        let (mut stream, _) = listener.accept().await.unwrap();
+                        let size = stream.read_u32().await.unwrap() as usize;
+                        let mut bytes = vec![0; size];
+                        stream.read_exact(&mut bytes).await.unwrap();
+                        assert_eq!(
+                            serde_json::from_slice::<Value>(&bytes).unwrap()["command"],
+                            command
+                        );
+                        let reply = serde_json::to_vec(&response).unwrap();
+                        stream.write_u32(reply.len() as u32).await.unwrap();
+                        stream.write_all(&reply).await.unwrap();
+                    }
+                });
+                let reader = FixtureStartPeRestoration::restore(
+                    socket.clone(),
+                    Duration::from_secs(1),
+                    identity.clone(),
+                    start.clone(),
+                    original.clone(),
+                )
+                .unwrap();
+                assert_eq!(
+                    reader.observe_full().await.unwrap_err().kind(),
+                    std::io::ErrorKind::InvalidData,
+                    "{pointer}"
+                );
+                server.await.unwrap();
+                fs::remove_file(socket).unwrap();
+            }
+            for length in [0, 131_073] {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let socket = directory.join("oversized-full.sock");
+                let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+                let compact = observed.clone();
+                let server = tokio::spawn(async move {
+                    for round in 0..2 {
+                        let (mut stream, _) = listener.accept().await.unwrap();
+                        let size = stream.read_u32().await.unwrap() as usize;
+                        let mut bytes = vec![0; size];
+                        stream.read_exact(&mut bytes).await.unwrap();
+                        if round == 0 {
+                            let reply = serde_json::to_vec(&compact).unwrap();
+                            stream.write_u32(reply.len() as u32).await.unwrap();
+                            stream.write_all(&reply).await.unwrap();
+                        } else {
+                            stream.write_u32(length).await.unwrap();
+                        }
+                    }
+                });
+                let reader = FixtureStartPeRestoration::restore(
+                    socket.clone(),
+                    Duration::from_secs(1),
+                    identity.clone(),
+                    start.clone(),
+                    original.clone(),
+                )
+                .unwrap();
+                assert_eq!(
+                    reader.observe_full().await.unwrap_err().kind(),
                     std::io::ErrorKind::InvalidData
                 );
                 server.await.unwrap();

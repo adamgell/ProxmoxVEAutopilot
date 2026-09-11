@@ -14,7 +14,7 @@ use std::{
 };
 use uuid::Uuid;
 
-const MAX_BYTES: usize = 131_072;
+pub(super) const MAX_BYTES: usize = 131_072;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FixtureStartPeFullV1 {
@@ -27,13 +27,48 @@ pub struct FixtureStartPeFullV1 {
     pub storage: Vec<SeedStorage>,
     pub bridges: Vec<SeedBridge>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Persisted {
-    version: u8,
-    published_unix_ms: u64,
-    observation: FixtureStartPeFullV1,
+pub struct FixtureStartPeFullPublicationV1 {
+    pub version: u8,
+    pub published_unix_ms: u64,
+    pub observation: FixtureStartPeFullV1,
     sha256: String,
+}
+impl FixtureStartPeFullPublicationV1 {
+    pub(super) fn decode(
+        bytes: &[u8],
+        identity: &FixtureStageIdentity,
+        request: &FixtureStageRequest,
+        receipt: &[u8],
+        durable: &StartObservationV1,
+    ) -> io::Result<Self> {
+        if bytes.is_empty() || bytes.len() > MAX_BYTES {
+            return Err(invalid());
+        }
+        let record: Self = serde_json::from_slice(bytes)?;
+        if record.version != 1
+            || record.published_unix_ms > post_dispatch_publication::now()?
+            || record.sha256
+                != format!(
+                    "{:x}",
+                    Sha256::digest(serde_json::to_vec(&(
+                        record.published_unix_ms,
+                        &record.observation
+                    ))?)
+                )
+        {
+            return Err(invalid());
+        }
+        record.observation.validate(
+            identity,
+            request,
+            receipt,
+            durable,
+            record.published_unix_ms,
+        )?;
+        Ok(record)
+    }
 }
 impl FixtureStartPeFullV1 {
     fn validate(
@@ -203,7 +238,7 @@ pub(super) fn handle(
             "{:x}",
             Sha256::digest(serde_json::to_vec(&(published, &observation))?)
         );
-        let record = Persisted {
+        let record = FixtureStartPeFullPublicationV1 {
             version: 1,
             published_unix_ms: published,
             observation,
@@ -238,29 +273,6 @@ pub(super) fn handle(
     };
     let mut bytes = Vec::new();
     file.take((MAX_BYTES + 1) as u64).read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_BYTES {
-        return Err(invalid());
-    }
-    let record: Persisted = serde_json::from_slice(&bytes)?;
-    if record.version != 1
-        || record.published_unix_ms > post_dispatch_publication::now()?
-        || record.sha256
-            != format!(
-                "{:x}",
-                Sha256::digest(serde_json::to_vec(&(
-                    record.published_unix_ms,
-                    &record.observation
-                ))?)
-            )
-    {
-        return Err(invalid());
-    }
-    record.observation.validate(
-        &identity,
-        &request,
-        receipt,
-        durable,
-        record.published_unix_ms,
-    )?;
+    FixtureStartPeFullPublicationV1::decode(&bytes, &identity, &request, receipt, durable)?;
     Ok(bytes)
 }

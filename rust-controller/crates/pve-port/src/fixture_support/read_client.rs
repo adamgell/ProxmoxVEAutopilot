@@ -67,6 +67,28 @@ fn invalid() -> io::Error {
 }
 
 impl FixtureReadClient {
+    /// Two read-only requests under one deadline. The full bundle must match
+    /// the separately restored durable record; neither response is refreshed.
+    pub async fn start_pe_full(
+        &self,
+        identity: &super::FixtureStageIdentity,
+        request: &crate::fixture_ipc::FixtureStageRequest,
+        receipt: &[u8],
+    ) -> io::Result<Option<super::FixtureStartPeFullPublicationV1>> {
+        tokio::time::timeout(self.timeout, async {
+            let Some(durable)=self.start_pe_observation(identity,request,receipt).await? else { return Ok(None); };
+            let request_value:serde_json::Value=serde_json::from_slice(&request.encode().map_err(|_|invalid())?)?;
+            let payload=serde_json::to_vec(&serde_json::json!({"command":"start_pe_full","identity":identity,"request":request_value}))?;
+            let mut stream=UnixStream::connect(&self.socket).await?;
+            stream.write_u32(payload.len() as u32).await?; stream.write_all(&payload).await?;
+            let length=stream.read_u32().await? as usize;
+            if length==0 || length>super::start_full::MAX_BYTES {return Err(invalid());}
+            let mut bytes=vec![0;length]; stream.read_exact(&mut bytes).await?;
+            // Parse null separately without normalizing the persisted document.
+            if serde_json::from_slice::<serde_json::Value>(&bytes)?.is_null() {return Ok(None);}
+            super::FixtureStartPeFullPublicationV1::decode(&bytes,identity,request,receipt,&durable).map(Some)
+        }).await.map_err(|_|io::Error::new(io::ErrorKind::TimedOut,"fixture full StartPe readback deadline"))?
+    }
     /// Exact durable StartPe evidence; restart does not refresh its timestamps.
     pub async fn start_pe_observation(
         &self,

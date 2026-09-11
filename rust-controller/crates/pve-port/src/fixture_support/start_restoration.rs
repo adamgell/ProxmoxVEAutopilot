@@ -25,6 +25,13 @@ pub struct RestoredStartPeObservationV1 {
 }
 
 impl FixtureStartPeRestoration {
+    /// Read the independently collected full bundle without installing adapter
+    /// state or returning a controller decision. Missing evidence stays missing.
+    pub async fn observe_full(&self) -> io::Result<Option<FixtureStartPeFullPublicationV1>> {
+        self.reads
+            .start_pe_full(&self.identity, &self.request, &self.receipt)
+            .await
+    }
     pub fn restore(
         socket: PathBuf,
         timeout: Duration,
