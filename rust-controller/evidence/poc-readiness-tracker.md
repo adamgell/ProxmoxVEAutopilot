@@ -16,6 +16,13 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   the retained session ended; no PID/reap result or Linux pass claim is made.
   The known strict child-absence gate remains unresolved.
 
+- MacOS gate at `f83185f6`: formatting, strict all-target Clippy, 24 operation
+  decision tests, and controller-service tests (58 unit plus 45 service) pass.
+  The full all-features workspace run is still red in
+  `configure_worker_death_after_publication_preserves_prefix_and_uncertainty`
+  with a checkpoint timeout and worker `Storage` error; focused diagnosis is
+  required before treating it as a code regression or environment failure.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)

@@ -10,6 +10,15 @@ ended without output before producing PID/reap evidence. The attempt is
 terminal and observationally inconclusive; it adds no Linux pass claim and the
 strict reaping gate remains open.
 
+MacOS verification checkpoint at `f83185f6`: `cargo fmt --all -- --check`,
+workspace all-features Clippy with `-D warnings`, the 24-case operation decision
+suite, and the controller-service suite (58 unit plus 45 service tests) pass.
+The full all-features workspace run remains red in
+`configure_worker_death_after_publication_preserves_prefix_and_uncertainty`:
+the controller checkpoint timed out and the worker reported `Storage`. This is
+under focused reproduction and is not yet classified as either a Rust defect
+or retained Docker/fixture startup failure.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.
