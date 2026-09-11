@@ -311,11 +311,31 @@ impl OsDeployController {
                 let Some(grant) = grant else {
                     return Ok(OsDeployProgress::Idle);
                 };
-                before_close(
-                    &mut closed,
-                    self.scheduler.start_osdeploy_bound(&grant, hash),
-                )
-                .await?;
+                // Credential recovery can transfer an armed dispatch onto a
+                // replacement lease already in Running. Re-read after claim;
+                // the original snapshot may still describe Pending recovery.
+                #[cfg(feature = "fixture-ipc")]
+                let already_running_delivery = {
+                    let claimed =
+                        before_close(&mut closed, self.store.load_osdeploy_operation(operation))
+                            .await?;
+                    claimed.state() == ExecutionState::Running
+                        && claimed.dispatch().is_some()
+                        && before_close(
+                            &mut closed,
+                            self.scheduler.fixture_start_pe_requires_delivery(operation),
+                        )
+                        .await?
+                };
+                #[cfg(not(feature = "fixture-ipc"))]
+                let already_running_delivery = false;
+                if !already_running_delivery {
+                    before_close(
+                        &mut closed,
+                        self.scheduler.start_osdeploy_bound(&grant, hash),
+                    )
+                    .await?;
+                }
                 Box::pin(self.run_grant(port.as_ref(), &grant, hash, deadline, &mut closed)).await
             }),
         )

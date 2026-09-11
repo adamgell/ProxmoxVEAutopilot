@@ -115,6 +115,94 @@ async fn credential_start_pe_requires_config_and_delivers_before_single_send() {
     std::fs::remove_dir(root).unwrap();
 }
 
+#[cfg(all(feature = "fixture-ipc", unix))]
+#[tokio::test]
+async fn replacement_controller_recovers_armed_delivery_after_lease_expiry() {
+    use postgres_store::{ExecutorKind, FixtureCredentialSink, Scheduler};
+    use std::os::unix::fs::DirBuilderExt;
+    let sink_id = sqlx::types::Uuid::now_v7();
+    let s = Scenario::fixture_delivery(sink_id).await;
+    for stage in [Stage::Clone, Stage::DiskCapacity, Stage::ConfigurePe] {
+        assert_eq!(s.finish_stage(stage).await, ExecutionState::Satisfied);
+    }
+    let operation = s.ids.operation(Stage::StartPe);
+    let root = std::env::temp_dir().join(format!(
+        "controller-recovery-delivery-{}",
+        sqlx::types::Uuid::now_v7()
+    ));
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&root)
+        .unwrap();
+    let secret = b"controller-recovery-private-signing-secret";
+    // A wrong sink refuses after atomic arming, before either ack or exposure.
+    let wrong_sink = FixtureCredentialSink::open(sqlx::types::Uuid::now_v7(), &root).unwrap();
+    let interrupted =
+        OsDeployController::new(s.db.store.clone(), s.db.scheduler(), s.fake.clone(), 1)
+            .unwrap()
+            .with_fixture_credential_delivery(secret.to_vec(), wrong_sink)
+            .unwrap();
+    interrupted.open_send_admission().await.unwrap();
+    assert_eq!(
+        interrupted.run_osdeploy_once(operation).await,
+        Err(Error::Validation)
+    );
+    interrupted
+        .close_and_drain(Duration::from_secs(1))
+        .await
+        .unwrap();
+    let armed = s.db.store.load_osdeploy_operation(operation).await.unwrap();
+    assert!(armed.dispatch().is_some());
+    let prior_submissions = s.fake.recorded_provisioning_submissions().len();
+    let expiry = sqlx::query_scalar(
+        "SELECT lease_expires_at FROM rust_controller.worker_leases WHERE operation_id=$1",
+    )
+    .bind(operation.as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    s.wait_until(expiry).await;
+    let scheduler = Scheduler::new(
+        s.db.store.clone(),
+        ExecutorKind::Rust,
+        1,
+        "replacement-controller",
+    )
+    .unwrap()
+    .with_fixture_credential_delivery();
+    scheduler.reap_osdeploy_expired().await.unwrap();
+    assert_eq!(
+        s.db.store
+            .load_osdeploy_operation(operation)
+            .await
+            .unwrap()
+            .state(),
+        ExecutionState::Pending
+    );
+    let replacement = OsDeployController::new(s.db.store.clone(), scheduler, s.fake.clone(), 1)
+        .unwrap()
+        .with_fixture_credential_delivery(
+            secret.to_vec(),
+            FixtureCredentialSink::open(sink_id, &root).unwrap(),
+        )
+        .unwrap();
+    replacement.open_send_admission().await.unwrap();
+    assert_eq!(
+        replacement.run_osdeploy_once(operation).await.unwrap(),
+        Progress::Decided(ExecutionState::Satisfied)
+    );
+    assert_eq!(
+        s.fake.recorded_provisioning_submissions().len(),
+        prior_submissions + 1
+    );
+    replacement
+        .close_and_drain(Duration::from_secs(1))
+        .await
+        .unwrap();
+    std::fs::remove_file(root.join(format!("{}.credential", operation.as_uuid()))).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}
+
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
 async fn operation_scoped_ports_isolate_two_interleaved_workers() {
