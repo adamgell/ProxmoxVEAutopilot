@@ -33,6 +33,15 @@ pub enum StageCheckpointRequest {
         committed_request: Vec<u8>,
         power: super::StartPePowerAuthorizationV1,
     },
+    AdmitStop {
+        identity: FixtureStageIdentity,
+        request: Vec<u8>,
+        committed_request: Vec<u8>,
+        predecessor: FixtureStageIdentity,
+        predecessor_request: Vec<u8>,
+        predecessor_receipt: Vec<u8>,
+        authority: super::FixtureStopAuthorityV1,
+    },
     Poll {
         identity: FixtureStageIdentity,
     },
@@ -108,11 +117,55 @@ impl StageBarrier {
         &mut self,
         request: StageCheckpointRequest,
         supervisor: bool,
-        log: &super::durable_fixture_log::FixtureLog,
+        log: &mut super::durable_fixture_log::FixtureLog,
         daemon_generation: Uuid,
     ) -> io::Result<StageCheckpointReply> {
         use super::CheckpointPhase::*;
         let ok = match request {
+            StageCheckpointRequest::AdmitStop {
+                identity,
+                request,
+                committed_request,
+                predecessor,
+                predecessor_request,
+                predecessor_receipt,
+                authority,
+            } if supervisor
+                && self.bound(&identity)
+                && self.state.phase == Entered
+                && self.authorization.is_none() =>
+            {
+                let checked = (|| -> io::Result<()> {
+                    let decoded = FixtureStageRequest::decode(&request).map_err(|_| invalid())?;
+                    let prior =
+                        FixtureStageRequest::decode(&predecessor_request).map_err(|_| invalid())?;
+                    identity.validate_request(&decoded)?;
+                    predecessor.validate_request(&prior)?;
+                    decoded
+                        .validate_ensure_stopped_physical_predecessor(&prior, &predecessor_receipt)
+                        .map_err(|_| invalid())?;
+                    if request != committed_request
+                        || authority.evidence_fence != decoded.request().binding().evidence_fence()
+                    {
+                        return Err(invalid());
+                    }
+                    log.admit_stop(
+                        identity.operation,
+                        identity.request_sha256.clone(),
+                        identity.ledger_binding(),
+                        authority,
+                        predecessor.operation,
+                        &predecessor.request_sha256,
+                        predecessor.ledger_binding(),
+                        &predecessor_receipt,
+                        daemon_generation,
+                        super::post_dispatch_publication::now()?,
+                    )
+                })();
+                // Admission deliberately does not release the barrier. Stop task
+                // publication and reconciliation are separate unfinished seams.
+                checked.is_ok()
+            }
             StageCheckpointRequest::Status => supervisor,
             StageCheckpointRequest::Arm {
                 identity,

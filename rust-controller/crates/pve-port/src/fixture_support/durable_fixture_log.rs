@@ -17,6 +17,190 @@ mod power_tests {
     use super::*;
 
     #[test]
+    fn stop_admission_requires_completed_start_and_preserves_clocks_on_replay() {
+        let path = std::env::temp_dir().join(format!("stop-admission-{}", Uuid::now_v7()));
+        let mut log = FixtureLog::create(&path).unwrap();
+        let operation = Uuid::now_v7();
+        let digest = "a".repeat(64);
+        let generation = Uuid::now_v7();
+        let configure = StageBinding {
+            stage: FixtureLedgerStage::ConfigurePe,
+            attempt: Uuid::now_v7(),
+            generation: Uuid::now_v7(),
+            owner: Uuid::now_v7(),
+        };
+        log.record_stage_attempt(operation, &digest, configure)
+            .unwrap();
+        log.record_effect_receipt(
+            1,
+            101,
+            None,
+            VmState {
+                disk_bytes: 120,
+                pe_configured: true,
+            },
+            Some(b"configure".to_vec()),
+        )
+        .unwrap();
+        log.record_power_observation(
+            operation,
+            &digest,
+            configure,
+            b"configure",
+            PowerStateV1::Stopped,
+            generation,
+            10,
+            11,
+        )
+        .unwrap();
+        let start = StageBinding {
+            stage: FixtureLedgerStage::StartPe,
+            ..configure
+        };
+        let start_operation = Uuid::now_v7();
+        let receipt = br#"{"receipt":{"task":"fixture-start-task"}}"#;
+        let prior = log.power_records()[0].clone();
+        log.record_start_transition(
+            start_operation,
+            &digest,
+            start,
+            &prior,
+            receipt.to_vec(),
+            || Ok(()),
+        )
+        .unwrap();
+        let stop = StageBinding {
+            stage: FixtureLedgerStage::PeEnsureStopped,
+            attempt: Uuid::now_v7(),
+            generation: Uuid::now_v7(),
+            owner: Uuid::now_v7(),
+        };
+        let stop_operation = Uuid::now_v7();
+        let authority = FixtureStopAuthorityV1 {
+            version: 1,
+            grace_operation: Uuid::now_v7(),
+            decision_event: Uuid::now_v7(),
+            evidence_fence: 2,
+            grace_due_unix_ms: 12,
+            decision_unix_ms: 13,
+            lease_checked_unix_ms: 14,
+            lease_expires_unix_ms: 100,
+            original_deadline_unix_ms: 200,
+        };
+        let admit = |log: &mut FixtureLog, binding, authority, generation, at| {
+            log.admit_stop(
+                stop_operation,
+                digest.clone(),
+                binding,
+                authority,
+                start_operation,
+                &digest,
+                start,
+                receipt,
+                generation,
+                at,
+            )
+        };
+        let before = std::fs::read(&path).unwrap();
+        assert!(
+            admit(&mut log, stop, authority.clone(), generation, 16).is_err(),
+            "receipt alone cannot prove completed StartPe"
+        );
+        assert_eq!(before, std::fs::read(&path).unwrap());
+        log.record_start_observation(
+            start_operation,
+            &digest,
+            start,
+            generation,
+            12,
+            15,
+            "fixture-start-task".into(),
+            15,
+            15,
+        )
+        .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        for altered in [
+            FixtureStopAuthorityV1 {
+                grace_due_unix_ms: 14,
+                ..authority.clone()
+            },
+            FixtureStopAuthorityV1 {
+                lease_expires_unix_ms: 16,
+                ..authority.clone()
+            },
+            FixtureStopAuthorityV1 {
+                original_deadline_unix_ms: 16,
+                ..authority.clone()
+            },
+            FixtureStopAuthorityV1 {
+                lease_checked_unix_ms: 16,
+                ..authority.clone()
+            },
+            FixtureStopAuthorityV1 {
+                evidence_fence: 0,
+                ..authority.clone()
+            },
+        ] {
+            assert!(admit(&mut log, stop, altered, generation, 16).is_err());
+            assert_eq!(before, std::fs::read(&path).unwrap());
+        }
+        assert!(admit(&mut log, stop, authority.clone(), Uuid::now_v7(), 16).is_err());
+        assert!(admit(&mut log, stop, authority.clone(), generation, 5016).is_err());
+        admit(&mut log, stop, authority.clone(), generation, 16).unwrap();
+        let accepted = std::fs::read(&path).unwrap();
+        assert_eq!(log.records().len(), 2);
+        assert_eq!(log.effects().len(), 2);
+        assert_eq!(
+            log.power_records().last().unwrap().state,
+            PowerStateV1::Running
+        );
+        admit(&mut log, stop, authority.clone(), generation, 17).unwrap();
+        assert_eq!(accepted, std::fs::read(&path).unwrap());
+        assert!(
+            admit(
+                &mut log,
+                StageBinding {
+                    owner: Uuid::now_v7(),
+                    ..stop
+                },
+                authority.clone(),
+                generation,
+                17
+            )
+            .is_err()
+        );
+        assert!(
+            admit(
+                &mut log,
+                StageBinding {
+                    generation: Uuid::now_v7(),
+                    ..stop
+                },
+                authority.clone(),
+                generation,
+                17
+            )
+            .is_err()
+        );
+        drop(log);
+        let mut log = FixtureLog::recover(&path).unwrap();
+        assert_eq!(log.stop_admissions.len(), 1);
+        assert_eq!(log.stop_admissions[0].admitted_unix_ms, 16);
+        admit(&mut log, stop, authority, generation, 18).unwrap();
+        assert_eq!(accepted, std::fs::read(&path).unwrap());
+        let torn = path.with_extension("torn");
+        std::fs::write(&torn, &accepted[..accepted.len() - 1]).unwrap();
+        assert!(FixtureLog::recover(&torn).is_err());
+        let mut forged = log.stop_admissions[0].clone();
+        forged.authority.grace_due_unix_ms = 99;
+        std::fs::write(&torn, [before, frame(&forged).unwrap()].concat()).unwrap();
+        assert!(FixtureLog::recover(&torn).is_err());
+        std::fs::remove_file(torn).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn atomic_start_admission_survives_replay_without_consuming_duplicate_authority() {
         let path = std::env::temp_dir().join(format!("atomic-start-{}", Uuid::now_v7()));
         let mut log = FixtureLog::create(&path).unwrap();
@@ -516,6 +700,78 @@ enum Record {
     Power(PowerObservationV1),
     Start(StartAdmissionV1),
     StartObservation(StartObservationV1),
+    StopAdmission(StopAdmissionV1),
+}
+
+/// Supervisor assertion of the scheduler's guarded grace decision and current
+/// lease. This fixture record is bookkeeping, never a stop receipt or power fact.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixtureStopAuthorityV1 {
+    pub version: u8,
+    pub grace_operation: Uuid,
+    pub decision_event: Uuid,
+    pub evidence_fence: u64,
+    pub grace_due_unix_ms: u64,
+    pub decision_unix_ms: u64,
+    pub lease_checked_unix_ms: u64,
+    pub lease_expires_unix_ms: u64,
+    pub original_deadline_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StopAdmissionV1 {
+    stop_admission_version: u8,
+    operation: Uuid,
+    request_sha256: String,
+    binding: StageBinding,
+    authority: FixtureStopAuthorityV1,
+    predecessor: StartObservationV1,
+    admitted_unix_ms: u64,
+}
+
+fn validate_stop_admission(
+    admission: &StopAdmissionV1,
+    effects: &[Effect],
+    power: &[PowerObservationV1],
+    starts: &[StartObservationV1],
+) -> io::Result<()> {
+    let a = &admission.authority;
+    let p = &admission.predecessor.power;
+    let at = admission.admitted_unix_ms;
+    if admission.stop_admission_version != 1
+        || admission.operation.is_nil()
+        || !valid_digest(&admission.request_sha256)
+        || !admission.binding.valid()
+        || admission.binding.stage != FixtureLedgerStage::PeEnsureStopped
+        || a.version != 1
+        || a.grace_operation.is_nil()
+        || a.decision_event.is_nil()
+        || a.evidence_fence == 0
+        || a.grace_due_unix_ms == 0
+        || a.grace_due_unix_ms > a.decision_unix_ms
+        || a.decision_unix_ms > a.lease_checked_unix_ms
+        || a.lease_checked_unix_ms > at
+        || at - a.lease_checked_unix_ms > 5000
+        || at >= a.lease_expires_unix_ms
+        || at >= a.original_deadline_unix_ms
+        || p.state != PowerStateV1::Running
+        || p.observed_unix_ms < a.lease_checked_unix_ms
+        || at < admission.predecessor.published_unix_ms
+        || at < p.observed_unix_ms
+        || at - p.observed_unix_ms > 5000
+        || !starts.contains(&admission.predecessor)
+        || power.iter().rev().find(|entry| entry.vmid == p.vmid) != Some(p)
+        || effects
+            .iter()
+            .rev()
+            .find(|entry| entry.vmid == p.vmid)
+            .is_none_or(|effect| effect.sequence != p.effect_sequence)
+    {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 /// Atomic task-success and running-power observation, not task acceptance.
@@ -615,6 +871,7 @@ pub struct FixtureLog {
     world: BTreeMap<u32, VmState>,
     power: Vec<PowerObservationV1>,
     start_observations: Vec<StartObservationV1>,
+    stop_admissions: Vec<StopAdmissionV1>,
     poisoned: bool,
 }
 
@@ -634,6 +891,78 @@ fn frame(record: &impl Serialize) -> io::Result<Vec<u8>> {
 }
 
 impl FixtureLog {
+    /// Persist admission without recording an attempt, effect, receipt or stopped
+    /// state. Replays retain original clocks and cannot renew release authority.
+    #[allow(dead_code, clippy::too_many_arguments)]
+    pub(super) fn admit_stop(
+        &mut self,
+        operation: Uuid,
+        digest: String,
+        binding: StageBinding,
+        authority: FixtureStopAuthorityV1,
+        start_operation: Uuid,
+        start_digest: &str,
+        start_binding: StageBinding,
+        start_receipt: &[u8],
+        daemon_generation: Uuid,
+        at: u64,
+    ) -> io::Result<()> {
+        if self.poisoned || daemon_generation.is_nil() {
+            return Err(invalid());
+        }
+        let effect = self
+            .accepted_stage_effect(start_operation, start_digest, start_binding)?
+            .ok_or_else(invalid)?;
+        if effect.receipt() != Some(start_receipt) {
+            return Err(invalid());
+        }
+        let predecessor = self
+            .start_observation(start_operation, start_digest, start_binding)?
+            .ok_or_else(invalid)?
+            .clone();
+        if predecessor.power.daemon_generation != daemon_generation {
+            return Err(invalid());
+        }
+        let admission = StopAdmissionV1 {
+            stop_admission_version: 1,
+            operation,
+            request_sha256: digest,
+            binding,
+            authority,
+            predecessor,
+            admitted_unix_ms: at,
+        };
+        validate_stop_admission(
+            &admission,
+            &self.effects,
+            &self.power,
+            &self.start_observations,
+        )?;
+        if let Some(prior) = self
+            .stop_admissions
+            .iter()
+            .find(|prior| prior.operation == operation)
+        {
+            let mut replay = admission;
+            replay.admitted_unix_ms = prior.admitted_unix_ms;
+            return if prior == &replay {
+                Ok(())
+            } else {
+                Err(invalid())
+            };
+        }
+        let bytes = frame(&admission)?;
+        if bytes.len() > MAX_LINE {
+            return Err(invalid());
+        }
+        self.poisoned = true;
+        self.file.write_all(&bytes)?;
+        self.file.sync_data()?;
+        self.stop_admissions.push(admission);
+        self.poisoned = false;
+        Ok(())
+    }
+
     /// Creates a fresh file, never overwriting an existing fixture.
     pub fn create(path: &Path) -> io::Result<Self> {
         let file = OpenOptions::new()
@@ -657,6 +986,7 @@ impl FixtureLog {
             world: BTreeMap::new(),
             power: Vec::new(),
             start_observations: Vec::new(),
+            stop_admissions: Vec::new(),
             poisoned: false,
         })
     }
@@ -670,6 +1000,7 @@ impl FixtureLog {
         let mut world = BTreeMap::new();
         let mut power = Vec::new();
         let mut start_observations = Vec::new();
+        let mut stop_admissions: Vec<StopAdmissionV1> = Vec::new();
         loop {
             let mut line = Vec::new();
             let n = reader
@@ -736,6 +1067,16 @@ impl FixtureLog {
                     power.push(observation.power.clone());
                     start_observations.push(observation);
                 }
+                Record::StopAdmission(admission) => {
+                    validate_stop_admission(&admission, &effects, &power, &start_observations)?;
+                    if stop_admissions
+                        .iter()
+                        .any(|prior| prior.operation == admission.operation)
+                    {
+                        return Err(invalid());
+                    }
+                    stop_admissions.push(admission);
+                }
             }
         }
         Ok(Self {
@@ -746,6 +1087,7 @@ impl FixtureLog {
             world,
             power,
             start_observations,
+            stop_admissions,
             poisoned: false,
         })
     }

@@ -216,7 +216,7 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                     let payload = serde_json::to_vec(&stage_barrier.handle(
                         request,
                         supervisor,
-                        &log,
+                        &mut log,
                         publications.generation(),
                     )?)?;
                     let _ = stream

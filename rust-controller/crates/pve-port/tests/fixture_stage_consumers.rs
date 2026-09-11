@@ -181,6 +181,47 @@ async fn stop_identity_cannot_acquire_disk_only_release_or_effect_across_daemon_
             "predecessor":[predecessor, serde_json::from_slice::<serde_json::Value>(&start.encode().unwrap()).unwrap()]
         })).await;
         assert_eq!(reply["ok"], false);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let admission = StageCheckpointRequest::AdmitStop {
+            identity: identity.clone(),
+            request: stop.encode().unwrap(),
+            committed_request: stop.encode().unwrap(),
+            predecessor: predecessor.clone(),
+            predecessor_request: start.encode().unwrap(),
+            predecessor_receipt: start
+                .encode_receipt(
+                    4,
+                    pve_port::MutationReceipt::Task(
+                        pve_port::Upid::parse(
+                            "UPID:pve-test:00000001:00000001:00000001:qmstart:101:fake@pve:",
+                        )
+                        .unwrap(),
+                    ),
+                )
+                .unwrap(),
+            authority: pve_port::fixture_support::FixtureStopAuthorityV1 {
+                version: 1,
+                grace_operation: Uuid::now_v7(),
+                decision_event: Uuid::now_v7(),
+                evidence_fence: stop.request().binding().evidence_fence(),
+                grace_due_unix_ms: now - 2,
+                decision_unix_ms: now - 1,
+                lease_checked_unix_ms: now,
+                lease_expires_unix_ms: now + 5000,
+                original_deadline_unix_ms: now + 10000,
+            },
+        };
+        assert!(
+            !checkpoint(&client, admission.clone()).await.ok,
+            "workers cannot supply supervisor admission"
+        );
+        assert!(
+            !checkpoint(&supervisor, admission).await.ok,
+            "structural receipt cannot substitute for durable accepted StartPe history"
+        );
         let status = send(&client, serde_json::json!({"command":"status"})).await;
         assert_eq!(status["attempts"], 0);
         assert_eq!(status["effects"], 0);
