@@ -12,7 +12,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `a8079c03`: this branch and PR #65 contain an accumulated
+Current scope at `c4e152f4`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -100,7 +100,14 @@ legacy admission bytes. It proves refresh/replay without attempts, effects, or
 Stopped publication. Commit `a8079c03` adds scheduler-owned stop authority
 derived from locked PostgreSQL guarded-grace/current-lease history, including
 competing-worker refusal. The supervisor current-power IPC consumer and
-connected release/physical-stop path remain open. The generic callback
+connected release/physical-stop path remain open. Commit `c4e152f4` adds a
+supervisor-only typed Running-power publication boundary tied to exact StartPe
+identity/request/receipt, daemon generation, and explicit sample timestamp and
+status. It rejects worker-origin, stale/future/duplicate, and restarted-
+generation samples while preserving immutable completion bytes. The fixture
+world still lacks a live power-read source, so the scheduler-authority to
+publication to AdmitStop consumer remains open; no stop release, dispatch,
+reconciliation, or Stopped claim follows from this boundary. The generic callback
 mapping table below remains intentionally pending for legacy action/result
 surfaces. This fixture-only slice is not full callback compatibility or the
 entire port.
