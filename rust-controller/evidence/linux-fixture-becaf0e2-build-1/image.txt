@@ -1,0 +1,1 @@
+sha256:7c766f2c552751bf988e20cf94a33e3309a17f41f2dbd26c7531cf63a02fd560|amd64|linux|["PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","RUSTUP_HOME=/usr/local/rustup","CARGO_HOME=/usr/local/cargo","RUST_VERSION=1.92.0","CONTROLLER_GIT_SHA=becaf0e28048c70d8bde9bc70bf279b4ca7cafa5"]

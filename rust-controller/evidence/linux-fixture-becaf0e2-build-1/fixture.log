@@ -1,0 +1,550 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running unittests src/lib.rs (rust-controller/target/debug/deps/pve_port-de29167a4238efbd)
+
+running 36 tests
+test fixture_support::clone_reads::tests::legacy_inventory_does_not_relabel_opaque_configuration_digests ... ok
+test fixture_support::clone_reads::tests::preserves_observation_times_errors_and_identity ... ok
+test fixture_support::clone_reads::tests::rejects_unknown_fields_zero_time_duplicates_and_caps ... ok
+test fixture_support::durable_fixture_log::power_tests::atomic_start_admission_survives_replay_without_consuming_duplicate_authority ... ok
+test fixture_support::durable_fixture_log::power_tests::power_replay_requires_exact_effect_and_fresh_observation ... ok
+test fixture_support::fixture_daemon::snapshot::tests::inventory_is_strict_and_bounded ... ok
+test fixture_support::inventory_read::tests::projection_preserves_seed_time_and_refuses_to_invent_power ... ok
+test fixture_support::provisioning_port::tests::capability_is_sealed_and_unsupported_reads_are_unavailable ... ok
+test fixture_support::provisioning_port::tests::observations_keep_time_and_error_classes ... ok
+test fixture_support::provisioning_reads::tests::errors_remain_explicit_and_identity_and_unknown_fields_fail_closed ... ok
+test fixture_support::stage_effect::tests::legacy_clone_authorizes_only_exact_new_resize_without_reassignment ... ok
+test observer::boundary_tests::credential_denial_precedes_client_build_for_every_denied_mode ... ok
+test observer::boundary_tests::denied_production_target_never_reaches_client_builder ... ok
+test tests::clone_intent_rejects_a_upid_for_another_node ... ok
+test tests::combined_http_observation_evaluates_fresh_facts_after_collection ... ok
+test tests::contradictory_uuid_or_mac_is_never_identity_satisfied ... ok
+test tests::delayed_loopback_response_maps_to_timeout ... ok
+test tests::http_401_and_403_are_unauthorized_without_response_payloads ... ok
+test tests::http_404_and_409_remain_distinct_read_errors ... ok
+test tests::identifiers_and_base_urls_reject_unsafe_or_ambiguous_values ... ok
+test tests::injected_evaluation_clock_runs_after_http_collection_and_rejects_old_or_future_facts ... ok
+test tests::late_upid_completion_is_a_new_fact_without_replaying_requests ... ok
+test tests::loopback_target_never_uses_proxy_environment ... 
+running 1 test
+test tests::loopback_target_never_uses_proxy_environment ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 35 filtered out; finished in 0.30s
+
+ok
+test tests::not_found_and_conflict_are_unavailable_observations ... ok
+test tests::observer_never_follows_a_redirect_hop ... ok
+test tests::old_observations_are_stale ... ok
+test tests::qga_ping_uses_the_typed_post_observation_endpoint ... ok
+test tests::redirect_to_production_is_rejected_without_a_production_attempt ... ok
+test tests::retryable_protocol_response_has_at_most_one_wire_attempt ... ok
+test tests::sanitized_upid_fixture_decodes_as_completed_task ... ok
+test tests::sanitized_upid_fixture_decodes_as_failed_task ... ok
+test tests::stopped_failure_is_distinct_from_a_running_task ... ok
+test tests::task_status_rejects_route_node_mismatch_before_a_request ... ok
+test tests::timeout_is_timed_out_not_failed ... ok
+test tests::upid_requires_the_documented_proxmox_field_shape ... ok
+test tests::upid_success_is_not_vm_postcondition ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.56s
+
+     Running tests/credentials.rs (rust-controller/target/debug/deps/credentials-676816cb1741045a)
+
+running 4 tests
+test default_observer_sends_no_authorization ... ok
+test redirect_cannot_forward_token_or_issue_second_request ... ok
+test token_is_sent_once_only_in_sensitive_authorization_header ... ok
+test token_validation_and_debug_never_echo_input ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/durable_fixture_log.rs (rust-controller/target/debug/deps/durable_fixture_log-1cd00195465159ea)
+
+running 12 tests
+test acceptance_and_world_transition_recover_together_after_durable_attempt ... ok
+test duplicate_attempt_cannot_accept_and_reordered_valid_frames_fail_recovery ... ok
+test durable_fixture_log::power_tests::atomic_start_admission_survives_replay_without_consuming_duplicate_authority ... ok
+test durable_fixture_log::power_tests::power_replay_requires_exact_effect_and_fresh_observation ... ok
+test effect_lookup_rejects_invalid_identity_without_appending ... ok
+test every_truncated_record_and_checksum_corruption_fail_closed ... ok
+test invalid_inputs_do_not_append_and_create_never_overwrites ... ok
+test rejects_trailing_garbage_oversized_lines_and_replayed_frames ... ok
+test restart_preserves_every_duplicate_attempt_including_changed_digest ... ok
+test stage_identity_rejects_legacy_mixing_and_invalid_authority ... ok
+test stage_keys_replay_exactly_and_bind_original_authority ... ok
+test stage_replay_rejects_canonical_but_rebound_effects_and_ambiguous_legacy ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/fixture_checkpoint.rs (rust-controller/target/debug/deps/fixture_checkpoint-221d63a857da86b5)
+
+running 2 tests
+test missing_checkpoint_daemon_is_typed_unavailable ... ok
+test trait_object_checkpoint_preserves_native_pause_and_release ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/fixture_clone_contract.rs (rust-controller/target/debug/deps/fixture_clone_contract-c1f8ca9d2c63a3bc)
+
+running 8 tests
+test bound_stable_read_adapter_reports_unavailable_late_transport ... ok
+test clone_task_receipt_requires_source_node_worker_and_synthetic_user ... ok
+test daemon_clone_commits_receipt_and_rejects_duplicate_after_restart ... ok
+test late_authorization_candidate_requires_exact_dispatch_and_entered_owner ... ok
+test late_resize_requires_original_clone_and_never_submits_before_checkpoint ... ok
+test receipt_rejects_mismatched_fixture_request_sequence_and_extra_fields ... ok
+test request_and_original_task_receipt_round_trip_without_identity_loss ... ok
+test request_rejects_unknown_fields_versions_nil_fixture_and_invalid_typed_clone ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.20s
+
+     Running tests/fixture_controller_admission.rs (rust-controller/target/debug/deps/fixture_controller_admission-a701a0c6eac83071)
+
+running 5 tests
+test clone_admission_requires_each_daemon_read_family ... ok
+test clone_vacancy_does_not_require_power_for_an_absent_target ... ok
+test complete_inventory_does_not_upgrade_partial_identity_coverage ... ok
+test node_inventory_cannot_be_promoted_to_global_identity_coverage ... ok
+test source_power_without_explicit_unlocked_observation_blocks_clone ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running tests/fixture_daemon.rs (rust-controller/target/debug/deps/fixture_daemon-f2013948a187c6df)
+
+running 22 tests
+test accepted_effect_lookup_binds_request_and_survives_restart ... ok
+test bound_late_clone_consumes_exact_authorization_once ... ok
+test bound_late_clone_persistence_failure_creates_no_effect ... ok
+test clone_reads_preserve_seed_errors_identity_and_restart_observations ... ok
+test daemon_lifetime_keeps_a_sixty_second_hard_limit ... ok
+test delayed_payload_is_read_within_the_frame_deadline ... ok
+test durable_fixture_log::power_tests::atomic_start_admission_survives_replay_without_consuming_duplicate_authority ... ok
+test durable_fixture_log::power_tests::power_replay_requires_exact_effect_and_fresh_observation ... ok
+test effects_commit_replay_and_reject_duplicates_over_ipc ... ok
+test endpoint_substitution_and_corrupt_restart_fail_closed ... ok
+test fixture_daemon_child ... ignored, subprocess entry point only
+test killed_daemon_rebind_requires_supervisor_cleanup_and_preserves_ledger ... ok
+test late_authorization_is_supervisor_owned_atomic_and_invalidated_on_restart ... ok
+test missing_lock_or_invalid_coverage_prevents_daemon_startup ... ok
+test oversized_and_partial_requests_cannot_mutate_or_stall_daemon ... ok
+test provisioning_reads_preserve_populated_facts_errors_and_restart_identity ... ok
+test read_client_observes_daemon_owned_effect_without_writing ... ok
+test separate_process_enforces_control_boundary_and_durable_duplicate_ledger ... ok
+test snapshot_is_daemon_owned_and_survives_restart ... ok
+test stable_v2_collection_is_versioned_and_survives_restart_without_request_digest ... ok
+test supervisor_checkpoint_release_timeout_and_restart_are_owned ... ok
+test target_presence_and_power_survive_restart_without_mutation ... ok
+
+test result: ok. 21 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.89s
+
+     Running tests/fixture_inventory_projection.rs (rust-controller/target/debug/deps/fixture_inventory_projection-f673781011ec2782)
+
+running 3 tests
+test inventory_status_requires_explicit_valid_snapshot_bound_observation ... ok
+test seeded_inventory_status_supplies_its_own_power_observation ... ok
+test unrelated_inventory_identity_preserves_its_own_configuration_coverage ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/fixture_inventory_v2.rs (rust-controller/target/debug/deps/fixture_inventory_v2-93ffd9b23fa9f590)
+
+running 1 test
+test inventory_v2_preserves_opaque_identity_and_rejects_rebinding_and_partial_facts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/fixture_legacy_resize.rs (rust-controller/target/debug/deps/fixture_legacy_resize-51a4f1ba23194c47)
+
+running 1 test
+test legacy_clone_bridge_requires_original_receipt_across_daemon_restarts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+     Running tests/fixture_post_dispatch.rs (rust-controller/target/debug/deps/fixture_post_dispatch-8f682520fbcc9ea0)
+
+running 12 tests
+test every_observation_is_bounded_by_independent_acceptance_and_collection_times ... ok
+test exact_receipt_request_and_vm_identity_cannot_be_substituted ... ok
+test full_start_pe_worker_death_preserves_exact_publication_and_ledger ... ok
+test stage_publication_binds_owner_attempt_and_restart_for_clone_and_resize ... ok
+test stage_resize_observations_require_exact_digest_and_resize_receipt ... ok
+test start_full_process::daemon_child ... ok
+test start_full_process::restoration_child ... ok
+test strict_wire_rejects_missing_extra_duplicate_and_oversized_fields ... ok
+test supervisor_publication_requires_accepted_effect_and_invalidates_on_restart ... ok
+test synchronous_configure_publication_requires_resize_and_invalidates_on_restart ... ok
+test synchronous_contract_requires_configure_receipt_and_rejects_task_fields ... ok
+test typed_observations_preserve_task_states_absence_errors_and_partial_coverage ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.65s
+
+     Running tests/fixture_provisioning_reads.rs (rust-controller/target/debug/deps/fixture_provisioning_reads-919a016bcabfca4c)
+
+running 5 tests
+test lock_and_coverage_are_explicit_strict_and_never_upgraded ... ok
+test populated_config_and_media_reject_wrong_identity_time_and_invalid_content ... ok
+test populated_config_media_and_explicit_errors_round_trip_without_refresh ... ok
+test target_config_identity_time_and_power_envelopes_are_strict ... ok
+test target_presence_and_absence_keep_independent_power_observations ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/fixture_read_client.rs (rust-controller/target/debug/deps/fixture_read_client-21a5b1c422de7fd4)
+
+running 2 tests
+test stalled_peer_and_input_bounds ... ok
+test status_and_invalid_replies ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/fixture_stage.rs (rust-controller/target/debug/deps/fixture_stage-9242188a2e304a35)
+
+running 5 tests
+test controller_request_checkpoint_rejects_unbound_and_unsupported_stages ... ok
+test first_four_stage_contracts_bind_exact_request_and_receipt_kind ... ok
+test stage_transport_rejects_without_attempts_or_effects_across_restart ... ok
+test start_pe_requires_exact_configure_predecessor_and_target_start_receipt ... ok
+test start_validation_rejects_adapter_identity_before_socket_io ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.35s
+
+     Running tests/fixture_stage_consumers.rs (rust-controller/target/debug/deps/fixture_stage_consumers-953992f482cef7aa)
+
+running 2 tests
+test durable_clone_resize_configure_requires_exact_accepted_predecessor ... ok
+test stage_consumers_bind_all_fields_and_restart_without_mutation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+
+     Running tests/fixture_task.rs (rust-controller/target/debug/deps/fixture_task-62ccd373bacdd19d)
+
+running 2 tests
+test task_envelope_rejects_unknown_and_invalid_data ... ok
+test task_observation_survives_restart_and_binds_all_identity_fields ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+
+     Running tests/infrastructure_visibility.rs (rust-controller/target/debug/deps/infrastructure_visibility-781a9e260cf2e35e)
+
+running 26 tests
+test duplicate_identity_invalidates_network_report ... ok
+test duplicate_identity_is_detected_before_metadata_rejection ... ok
+test empty_network_remains_unverified ... ok
+test interface_activity_preserves_zero_one_and_missing ... ok
+test invalid_activity_is_counted ... ok
+test invalid_interface_identity_is_counted ... ok
+test invalid_or_crossnode_binding_invalidates_even_otherwise_malformed_rows ... ok
+test invalid_or_mismatched_node_binding_invalidates_node_report ... ok
+test malformed_rows_are_counted_without_losing_valid_rows ... ok
+test matching_network_node_binding_is_retained ... ok
+test matching_node_binding_is_retained ... ok
+test missing_or_nonstring_type_is_counted ... ok
+test missing_uptime_is_unknown ... ok
+test network_row_limit_accepts_1024_and_rejects_1025 ... ok
+test network_serialization_preserves_order_and_only_sanitized_fields ... ok
+test network_timestamp_is_preserved ... ok
+test node_serialization_retains_only_sanitized_visibility ... ok
+test node_timestamp_is_preserved ... ok
+test nonarray_network_data_is_invalid ... ok
+test nonobject_node_data_is_invalid ... ok
+test opaque_interface_identity_accepts_exact_byte_and_character_boundaries ... ok
+test ovs_and_missing_activity_remain_visible ... ok
+test positive_and_maximum_uptime_are_retained ... ok
+test present_invalid_uptime_invalidates_report ... ok
+test unknown_interface_types_remain_visible_without_raw_metadata ... ok
+test zero_uptime_is_visibility_not_online_authority ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/infrastructure_visibility_http.rs (rust-controller/target/debug/deps/infrastructure_visibility_http-f3f6e68b3366f797)
+
+running 22 tests
+test authenticated_network_preserves_ovs_missing_activity_and_rejected_rows ... ok
+test authenticated_node_zero_uptime_is_one_timestamped_unverified_get ... ok
+test cancelling_collection_closes_body_and_does_not_retry ... ok
+test chunked_oversize_is_rejected ... ok
+test conflict_409_is_fixed_and_not_retried ... ok
+test cross_node_network_row_rejects_report ... ok
+test declared_oversize_is_rejected_before_reading_body ... ok
+test duplicate_interface_after_rejected_metadata_rejects_report ... ok
+test eof_oversize_is_rejected ... ok
+test exactly_one_mib_valid_bodies_are_accepted ... ok
+test forbidden_403_is_fixed_and_not_retried ... ok
+test invalid_network_shape_is_rejected ... ok
+test invalid_node_data_is_rejected ... ok
+test malformed_envelopes_are_rejected ... ok
+test missing_404_is_fixed_and_not_retried ... ok
+test network_1025_rows_is_rejected ... ok
+test proxy_environment_never_receives_node_or_network_requests ... 
+running 1 test
+test authenticated_node_zero_uptime_is_one_timestamped_unverified_get ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.12s
+
+
+running 1 test
+test authenticated_network_preserves_ovs_missing_activity_and_rejected_rows ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.06s
+
+ok
+test redirects_never_contact_target_or_forward_credentials ... ok
+test request_deadline_overrides_larger_client_timeout ... ok
+test server_500_is_fixed_and_not_retried ... ok
+test unauthorized_401_is_fixed_and_not_retried ... ok
+test whole_body_deadline_includes_time_already_spent_waiting_for_headers ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.97s
+
+     Running tests/native_contract.rs (rust-controller/target/debug/deps/native_contract-f0b07b5967ac6579)
+
+running 16 tests
+test changed_digest_alone_rejects_configure_without_refresh_or_resend ... ok
+test clone_outcomes_distinguish_rejection_loss_failure_and_delayed_application ... ok
+test configure_and_start_outcomes_preserve_their_distinct_receipt_contracts ... ok
+test delayed_clone_cannot_overwrite_an_occupant_inserted_before_completion ... ok
+test every_mutable_plan_field_and_step_changes_canonical_digest ... ok
+test fixed_requests_apply_identity_preserve_disk_and_provenance ... ok
+test historical_binding_can_be_old_but_current_identity_and_final_fields_must_match ... ok
+test http_observer_never_imports_fake_provenance_from_response ... ok
+test immutable_plan_roundtrip_rejects_unknown_fields_and_invalid_values ... ok
+test missing_or_mismatched_provenance_and_stale_or_wrong_identity_cannot_configure ... ok
+test normal_infrastructure_reads_refresh_time_but_explicit_stale_config_does_not ... ok
+test request_markers_and_operation_ids_are_hashed_and_provenance_is_not_circular ... ok
+test retained_marker_does_not_hide_changed_intermediate_identity_or_disk ... ok
+test successful_clone_task_and_same_name_do_not_authorize_foreign_occupant ... ok
+test typed_fake_reads_report_inventory_storage_power_and_no_guest_readiness ... ok
+test typed_fault_hooks_preserve_read_errors_and_gate_submission ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/network_deny.rs (rust-controller/target/debug/deps/network_deny-0b4dc9799107d7a6)
+
+running 6 tests
+test adapter_permission_cannot_authorize_a_non_loopback_target ... ok
+test credentials_never_authorize_denied_targets_or_send_requests ... ok
+test every_non_loopback_target_is_denied_without_explicit_observe_permission ... ok
+test normalized_literal_loopback_targets_remain_local_test_targets ... ok
+test production_address_is_rejected_before_http_client_construction ... ok
+test production_observe_requires_explicit_read_permission ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/preflight.rs (rust-controller/target/debug/deps/preflight-92d393aef615b624)
+
+running 15 tests
+test absence_does_not_accept_stale_or_future_inventory ... ok
+test additional_nics_cannot_hide_malformed_identity_behind_unsupported_layout ... ok
+test all_preflight_routes_return_bound_typed_facts ... ok
+test every_snapshot_enforces_thirty_second_freshness_and_rejects_future_facts ... ok
+test inventory_rejects_duplicate_vmids_and_malformed_identity ... ok
+test lock_and_agent_state_are_preserved_and_normalized ... ok
+test native_config_rejects_missing_or_malformed_required_facts ... ok
+test node_storage_and_bridge_wire_validation_fails_closed ... ok
+test power_status_rejects_wrong_identity_and_unknown_states ... ok
+test sanitized_decoding_rejects_forged_or_malformed_fact_fields ... ok
+test sanitized_maps_reject_duplicate_identity_keys ... ok
+test sanitized_snapshots_round_trip_through_validated_deserialization ... ok
+test status_decode_and_timeout_failures_are_fixed_and_never_leak_body ... ok
+test target_absence_requires_inventory_exclusion_and_config_not_found ... ok
+test unsupported_configuration_is_typed_and_never_copies_raw_text ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+     Running tests/provisioning_config.rs (rust-controller/target/debug/deps/provisioning_config-47901d986ad301fc)
+
+running 20 tests
+test capacity_is_exact_positive_checked_binary_bytes ... ok
+test comma_syntax_duplicates_fail_before_unsupported_projection ... ok
+test explicit_core_fields_types_and_binding_cannot_be_defaulted ... ok
+test fake_marker_requires_fake_source_valid_provenance_and_target_binding ... ok
+test fake_provenance_object_shape_is_required_without_changing_legacy_type ... ok
+test media_discriminators_require_strings_standalone_and_in_snapshots ... ok
+test media_inventory_binds_storage_unique_bounded_volids_and_explicit_coverage ... ok
+test nested_before_state_still_rejects_object_source_discriminators ... ok
+test nested_persisted_fields_reject_duplicates_and_unknowns_without_payloads ... ok
+test old_native_parser_keeps_rejecting_rich_layout ... ok
+test persisted_config_exact_shape_rejects_missing_duplicate_and_unknown_fields ... ok
+test persisted_facts_require_objects_even_when_an_array_has_valid_ordered_fields ... ok
+test persisted_sanitized_invariants_cannot_be_forged ... ok
+test qga_is_a_bound_observation_and_auxiliary_persisted_shapes_validate ... ok
+test rich_source_discriminator_requires_strings_from_str ... ok
+test rich_source_discriminator_requires_strings_from_value ... ok
+test rich_template_and_destination_preserve_every_sanitized_field ... ok
+test standalone_classification_decoders_never_echo_untrusted_values ... ok
+test template_semantic_hash_has_independent_golden_and_exact_field_binding ... ok
+test unsupported_values_are_fixed_payload_free_and_block_template_admission ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/provisioning_evaluation.rs (rust-controller/target/debug/deps/provisioning_evaluation-820e9b2e79856ced)
+
+running 25 tests
+test all_possible_send_states_never_return_ready ... ok
+test cancellation_ineligible_state_deadline_and_freshness_boundaries ... ok
+test clone_outcome_source_change_and_request_provenance_are_conflicts ... ok
+test complete_legacy_identity_projection_can_cover_shared_namespace ... ok
+test evidence_persistence_is_required_nullable_and_route_validated ... ok
+test failed_clone_with_exact_unchanged_vacancy_is_failed ... ok
+test historical_owner_and_predecessor_cannot_cross_run_workflow_or_request ... ok
+test inventory_coverage_errors_collisions_and_legacy_projection_are_conservative ... ok
+test media_requires_both_exact_full_storage_catalogs ... ok
+test no_change_is_limited_to_capacity_and_stop_before_dispatch ... ok
+test outcome_cannot_use_stale_source_snapshot_in_inventory_comparison ... ok
+test receipt_collection_clock_and_absence_power_contradiction_are_checked ... ok
+test receipt_substitution_is_rejected_in_context_and_evidence ... ok
+test retained_capacity_including_nonintegral_bytes_continues_without_resize ... ok
+test same_target_vmid_on_another_node_blocks_even_with_local_404 ... ok
+test seven_action_physical_chain_preserves_original_clone_proof ... ok
+test snapshot_wrapper_and_collection_clocks_are_independent ... ok
+test supported_layout_lock_template_and_digest_changes_are_independent ... ok
+test synchronous_lost_receipt_requires_exact_original_reconciliation ... ok
+test task_dispatch_without_receipt_stays_unknown_even_with_desired_world ... ok
+test task_failure_and_running_do_not_mask_replaced_disks ... ok
+test task_snapshot_cannot_predate_receipt_acceptance ... ok
+test task_success_does_not_replace_missing_physical_postconditions ... ok
+test unrelated_before_and_after_categories_cannot_be_hidden_by_task_success ... ok
+test wrong_identity_projection_duplicate_keys_and_incomplete_catalogs_are_rejected ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.95s
+
+     Running tests/provisioning_expectations.rs (rust-controller/target/debug/deps/provisioning_expectations-acfa78220becdc67)
+
+running 7 tests
+test admits_explicit_capacity_and_normalizes_template_sha ... ok
+test canonical_shape_roundtrips_and_all_inputs_bind_the_fingerprint ... ok
+test enforces_approved_hash_serial_and_iso_token_rules ... ok
+test nested_vm_plan_must_keep_its_named_fields_in_new_contract ... ok
+test persisted_expectation_and_operation_shape_requires_an_object ... ok
+test persisted_expectations_and_plans_cannot_bypass_admission ... ok
+test rejects_invalid_growth_but_retains_exact_template_bytes ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/provisioning_fake.rs (rust-controller/target/debug/deps/provisioning_fake-8bcb22af9f3997f1)
+
+running 23 tests
+test accepted_task_can_physically_finish_after_strict_controller_deadline ... ok
+test clone_changes_the_shared_world_without_preconfiguring_final_identity ... ok
+test clone_preserves_source_serials_resources_and_media_without_final_preconfiguration ... ok
+test current_power_route_media_and_catalog_changes_are_rejected_at_admission ... ok
+test delayed_clone_rejects_new_target_and_legacy_replacement_without_touching_occupants ... ok
+test delayed_work_cannot_target_copied_replacement_or_independent_power_change ... ok
+test exact_before_state_rejects_tampering_even_when_digest_and_marker_are_copied ... ok
+test fixture_source_and_script_source_cannot_claim_live_pve ... ok
+test full_world_sequence_grows_80_to_120_and_preserves_power_only_fields ... ok
+test full_world_sequence_retains_160_for_requested_120 ... ok
+test full_world_sequence_retains_exact_non_whole_gib_capacity ... ok
+test history_preserves_exact_ordered_forms_and_only_allowed_effects ... ok
+test independent_qga_survives_config_power_and_does_not_invalidate_delayed_growth ... ok
+test legacy_fault_and_pause_controls_do_not_leak_into_provisioning ... ok
+test missing_distinct_catalog_and_growth_delta_reject_without_world_change ... ok
+test mixed_family_inventory_downcasts_coverage_and_reserved_identity_collisions ... ok
+test outcome_matrix_records_attempts_acceptance_and_actual_effects ... ok
+test pe_and_disk_faults_are_independent_despite_identical_start_forms ... ok
+test pending_resources_overlap_across_families_and_completions_keep_separate_queues ... ok
+test provisioning_pause_rechecks_world_and_records_only_resumed_admission ... ok
+test scripted_errors_and_pauses_are_independent_observations ... ok
+test scripts_preserve_routes_timestamps_and_unsupported_facts_without_world_effects ... ok
+test selector_priority_fifo_duplicate_and_failed_admission_do_not_consume_faults ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.10s
+
+     Running tests/provisioning_requests.rs (rust-controller/target/debug/deps/provisioning_requests-963f5a0d585a7b7a)
+
+running 12 tests
+test binding_rejects_invalid_full_workflow_hash ... ok
+test bindings_compare_attempt_identity_but_not_collection_fence ... ok
+test complete_request_json_and_digest_golden ... ok
+test constructor_serial_compatibility_is_checked_for_every_family ... ok
+test dispatch_and_receipt_reconstruction_enforce_full_request_and_provenance ... ok
+test every_action_admits_twenty_and_rejects_twenty_one_byte_desired_serials ... ok
+test every_closed_variant_has_a_pinned_complete_digest ... ok
+test every_request_hash_binds_clock_digest_operation_attempt_workflow_and_fence ... ok
+test persisted_owned_reference_tampering_never_recreates_historical_authority ... ok
+test persisted_requests_reject_missing_unknown_duplicate_and_object_discriminators ... ok
+test receipt_workers_nodes_and_vmids_are_closed ... ok
+test requests_pin_exact_forms_routes_and_distinct_start_digests ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+
+     Running tests/visibility.rs (rust-controller/target/debug/deps/visibility-fcc36fdc5feb58b2)
+
+running 17 tests
+test duplicate_identity_is_detected_even_when_metadata_is_rejected ... ok
+test duplicate_valid_vmid_rejects_response_across_nodes_and_kinds ... ok
+test empty_inventory_never_claims_verified_coverage ... ok
+test invalid_nodes_are_rejected_and_counted ... ok
+test invalid_optional_template_is_rejected_and_counted ... ok
+test invalid_vmids_are_rejected_and_counted ... ok
+test missing_identity_and_non_object_rows_are_rejected_and_counted ... ok
+test missing_or_non_string_kind_is_rejected_without_defaulting_to_qemu ... ok
+test missing_status_is_unknown ... ok
+test mixed_inventory_preserves_lxc_and_unknown_metadata ... ok
+test non_array_response_is_rejected ... ok
+test present_non_string_status_is_rejected_and_counted ... ok
+test row_limit_accepts_1024_and_rejects_1025_before_row_validation ... ok
+test sanitization_preserves_wire_order_timestamp_and_rejection_count ... ok
+test stopped_and_template_one_remain_explicit ... ok
+test unknown_kind_is_preserved_without_retaining_raw_type ... ok
+test unknown_status_is_unknown_without_retaining_raw_status ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/visibility_http.rs (rust-controller/target/debug/deps/visibility_http-d32ed6faf701d279)
+
+running 11 tests
+test authenticated_inventory_is_exactly_one_get_and_timestamped_after_collection ... ok
+test body_byte_limit_is_enforced_for_declared_chunked_and_eof_streams ... ok
+test dropped_collection_does_not_start_another_request ... ok
+test exactly_one_mib_body_is_accepted ... ok
+test http_failures_are_fixed_categories_without_retry ... ok
+test invalid_envelopes_data_and_row_limit_are_rejected ... ok
+test proxy_environment_canary_receives_no_request ... 
+running 1 test
+test authenticated_inventory_is_exactly_one_get_and_timestamped_after_collection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.12s
+
+ok
+test redirect_target_receives_no_request ... ok
+test rejected_rows_remain_successful_non_authoritative_visibility ... ok
+test request_deadline_also_bounds_an_unfinished_streaming_body ... ok
+test request_times_out_after_two_seconds_without_retry ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.50s
+
+   Doc-tests pve_port
+
+running 1 test
+test crates/pve-port/src/fixture_support/provisioning_port.rs - fixture_support::provisioning_port::FixtureProvisioningPort (line 16) ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 22 tests
+test crates/pve-port/src/fixture_ipc.rs - fixture_ipc::ControllerFixturePort (line 24) - compile fail ... ok
+test crates/pve-port/src/fixture_support/read_client.rs - fixture_support::read_client::FixtureReadClient (line 23) - compile fail ... ok
+test crates/pve-port/src/fixture_support/read_client.rs - fixture_support::read_client::FixtureReadClient (line 30) - compile fail ... ok
+test crates/pve-port/src/fixture_support/read_client.rs - fixture_support::read_client::FixtureReadClient (line 37) - compile fail ... ok
+test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::NodeVisibility (line 45) - compile fail ... ok
+test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::PveInfrastructureVisibilityReadPort (line 244) - compile fail ... ok
+test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::PveInfrastructureVisibilityReadPort (line 251) - compile fail ... ok
+test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::PveInfrastructureVisibilityReadPort (line 258) - compile fail ... ok
+test crates/pve-port/src/native.rs - native::PveMutationPort (line 444) - compile fail ... ok
+test crates/pve-port/src/native.rs - native::PveMutationPort (line 450) - compile fail ... ok
+test crates/pve-port/src/native.rs - native::PveMutationPort (line 456) - compile fail ... ok
+test crates/pve-port/src/native.rs - native::PveMutationPort (line 462) - compile fail ... ok
+test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 165) - compile fail ... ok
+test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 171) - compile fail ... ok
+test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 177) - compile fail ... ok
+test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 183) - compile fail ... ok
+test crates/pve-port/src/provisioning.rs - provisioning::ProvisioningFakePort (line 16) - compile fail ... ok
+test crates/pve-port/src/provisioning.rs - provisioning::ProvisioningFakePort (line 23) - compile fail ... ok
+test crates/pve-port/src/provisioning/evaluation/context.rs - provisioning::evaluation::context::ProvisioningCloneOwnershipV1 (line 102) - compile fail ... ok
+test crates/pve-port/src/provisioning/evaluation/context.rs - provisioning::evaluation::context::ProvisioningStageBaselineV1 (line 180) - compile fail ... ok
+test crates/pve-port/src/provisioning/evidence.rs - provisioning::evidence::ProvisioningEvidenceV1 (line 233) - compile fail ... ok
+test crates/pve-port/src/provisioning/requests.rs - provisioning::requests::ProvisioningBeforeStateV1 (line 10) - compile fail ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.19s
+
+all doctests ran in 8.72s; merged doctests compilation took 1.50s
