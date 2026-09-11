@@ -100,6 +100,23 @@ impl FixtureStopReleaseProposalV1 {
     pub fn provenance(&self) -> &crate::fixture_ipc::FixtureSharedHistoryProvenanceV1 {
         &self.provenance
     }
+
+    /// Compare the proposal with independently recomputed evidence digests.
+    /// This is intentionally a pure equality check; it cannot authorize a
+    /// release or physical submission by itself.
+    pub fn matches_evidence_digests(
+        &self,
+        request_sha256: &str,
+        receipt_sha256: &str,
+        sample_sha256: &str,
+    ) -> bool {
+        valid_sha256(request_sha256)
+            && valid_sha256(receipt_sha256)
+            && valid_sha256(sample_sha256)
+            && self.request_sha256 == request_sha256
+            && self.receipt_sha256 == receipt_sha256
+            && self.sample_sha256 == sample_sha256
+    }
 }
 
 fn valid_sha256(value: &str) -> bool {
@@ -142,6 +159,16 @@ mod stop_release_proposal_tests {
         assert_eq!(proposal.receipt_sha256(), "b".repeat(64));
         assert_eq!(proposal.sample_sha256(), "c".repeat(64));
         assert_eq!(proposal.provenance(), &provenance);
+        assert!(proposal.matches_evidence_digests(
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &"c".repeat(64),
+        ));
+        assert!(!proposal.matches_evidence_digests(
+            &"d".repeat(64),
+            &"b".repeat(64),
+            &"c".repeat(64),
+        ));
         assert!(
             FixtureStopReleaseProposalV1::new(
                 Uuid::now_v7(),
