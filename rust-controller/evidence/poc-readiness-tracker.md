@@ -53,6 +53,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Commit `d5602ab4` defines a fail-closed PeRegister witness contract binding session/context, request and result IDs/digests/revision, and the original microsecond deadline/event. Unavailable, expired, duplicate, and conflicting results refuse; authenticated verification, atomic persistence, API policy, and crash/controller progression remain open.
 - Commit `47d13f24` adds a pure verifier-authority descriptor checking numeric generation, worker identity, lease epoch, operation/result revisions, session/request/deadline binding, and duplicate/conflict identity. It grants no authentication or authorization; store-derived fencing, credential/session implementation, API policy, and crash progression remain open.
 - Commit `c204c6c0` adds an opt-in refusal-only PostgreSQL result transaction contract using that descriptor. Docker-free tests cover unavailable witness, duplicate/conflict, expiry, and stale-fence precedence; actual SQL rollback, concurrent CAS, authenticated replay, and commit-to-response crash recovery remain open.
+- Commit `4ed4a23b` adds a distinct fixture-only rollback/fence probe with session-lock contention and authority/run/row/session inspection; the original refusal-only API remains unchanged. The two-connection SQL runtime test is compiled but ignored without `PVA_START_PE_SCHEMA_TEST_DSN`; authenticated attempt authority, CAS, and crash proofs remain open.
 
 ### Final owned Linux full-run result (2026-09-10)
 
