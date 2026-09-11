@@ -155,6 +155,59 @@ mod power_refresh_tests {
             clock
         );
         let published = fs::read(&path).unwrap();
+        // A fresh DB lease check after this sample cannot use a re-read to
+        // manufacture the required post-check observation. The supervisor
+        // must arrange an independent sample after obtaining authority.
+        let stop = StageBinding {
+            stage: FixtureLedgerStage::PeEnsureStopped,
+            attempt: Uuid::now_v7(),
+            generation: Uuid::now_v7(),
+            owner: Uuid::now_v7(),
+        };
+        let authority = super::super::FixtureStopAuthorityV1 {
+            version: 1,
+            grace_operation: Uuid::now_v7(),
+            decision_event: Uuid::now_v7(),
+            evidence_fence: 1,
+            grace_due_unix_ms: clock - 2,
+            decision_unix_ms: clock - 1,
+            lease_checked_unix_ms: clock + 1,
+            lease_expires_unix_ms: clock + 10000,
+            original_deadline_unix_ms: clock + 20000,
+        };
+        for _ in 0..2 {
+            let _replay = publications.handle(
+                Command::ConsumeStopCurrentPower {
+                    identity: identity.clone(),
+                },
+                true,
+                &mut log,
+                &directory,
+            );
+            assert!(
+                log.admit_stop(
+                    Uuid::now_v7(),
+                    "b".repeat(64),
+                    stop,
+                    authority.clone(),
+                    operation,
+                    &identity.request_sha256,
+                    start,
+                    receipt,
+                    generation,
+                    clock + 2,
+                )
+                .is_err(),
+                "cached sample predates the newer lease check"
+            );
+            assert_eq!(published, fs::read(&path).unwrap());
+            assert_eq!(log.records().len(), 2);
+            assert_eq!(log.effects().len(), 2);
+            assert_eq!(
+                log.power_records().last().unwrap().state,
+                PowerStateV1::Running
+            );
+        }
         drop(log);
         let mut log = FixtureLog::recover(&path).unwrap();
         assert!(
