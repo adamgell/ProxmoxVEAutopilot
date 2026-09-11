@@ -61,6 +61,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Commit `08c9af0` adds refusal-only ConfigureDisk/StartDisk scope validation bound to exact stage/run/operation/predecessor/node/VM. Wrong-VM, aliased, running, stale/future, and malformed storage/configuration evidence refuses; disk ownership, attachment, capacity, execution fences, and later stages remain open.
 - Commit `a37ba82` adds refusal-only InstallQga host-evidence validation bound to the StartDisk predecessor/event and exact operation/attempt/node/VM. Missing, nonresponsive, wrong-target, future, and substituted evidence refuses; authenticated transport/agent, package identity, receipts, and VerifyQga remain open.
 - Commit `7f9a2ab` adds refusal-only VerifyQga receipt binding to InstallQga operation/attempt, digest, run, node, and VM. Missing, wrong-version, substituted, malformed, and nonresponsive reports refuse; receipt identity is not receipt verification and authenticated transport/journal/freshness remain open.
+- Commit `a187aed` adds refusal-only InstallQgaWatchdog binding to VerifyQga results/receipts, watchdog operation/attempt, run, VM, and agent identity. Missing, wrong-version, substituted, and incomplete claims refuse; authentication, trusted history, service postconditions, installation, and later agent stages remain open.
 
 ### Final owned Linux full-run result (2026-09-10)
 
