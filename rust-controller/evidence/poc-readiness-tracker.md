@@ -47,6 +47,15 @@ compile-fail doctests pass. This proves registered semantic provenance only; it
 does not attest delivered bytes, issue credentials, authenticate callbacks, or
 grant StartPe authority.
 
+### Materialized semantic envelope (commit `a65afa93`)
+
+`MaterializedPePackageSemanticsV1` now materializes canonical, versioned
+semantic bytes plus a distinct envelope digest from the closed registration
+identity and complete admitted plan. Four package tests and two compile-fail
+tests pass; `Debug` omits the canonical bytes and plan. Delivery credentials,
+URLs, secrets, issuance IDs, session authority, and StartPe admission remain
+outside this envelope.
+
 ### Current-head diagnostic checkpoint (2026-09-10)
 
 ### Exact-source Linux qualification at `35400bd0`

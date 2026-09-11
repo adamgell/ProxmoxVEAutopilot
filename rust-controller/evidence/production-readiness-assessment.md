@@ -44,6 +44,13 @@ URLs, credentials, and digests are not accepted. This is semantic provenance,
 not delivered-package attestation, session issuance, callback authentication,
 or dispatch authority.
 
+Commit `a65afa93` adds a closed `MaterializedPePackageSemanticsV1` envelope
+with canonical versioned semantic bytes and a separate digest. It is derived
+only from the validated registration, redacts plan/bytes from `Debug`, and
+contains no delivery credentials, URLs, secrets, issuance identity, session
+authority, or StartPe admission. This is the concrete input for future private
+preparation persistence, not proof of delivery or callback authentication.
+
 Current-head checkpoint: commit `08471af3` records that the exact-source Linux
 reaping diagnostic image built successfully, but its retained targeted run
 ended without output before producing PID/reap evidence. The attempt is
