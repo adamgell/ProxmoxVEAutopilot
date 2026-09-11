@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `fc50382e`: this branch and PR #65 contain an accumulated
+Current scope at `db84526f`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -72,6 +72,11 @@ store persists only semantic receipt fields and discards the fixture envelope,
 sequence, and supervisor identity before SQL capture. A retrieval-only API
 would fabricate unavailable evidence; response capture must be added atomically
 at successful fixture submission before observation-only loading can be proven.
+
+At `db84526f`, validated full StartPe publication now maps fixture provisioning
+facts for source/target configuration, power/coverage, and media with original
+timestamps. Missing publication and unmapped cluster inventory remain
+fail-closed; this does not claim Setup, PostgreSQL, or full evaluator parity.
 
 At `d98ba908`, the current connected StartPe adapter/recovery evidence still
 does not join the genuine daemon receipt/provenance to a PostgreSQL
