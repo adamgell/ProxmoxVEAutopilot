@@ -140,6 +140,11 @@ pub async fn run_recovery() {
     )
     .unwrap();
     let before = store.load_osdeploy_operation(operation).await.unwrap();
+    let scheduler = if matches!(&setup, Setup::Start { .. }) {
+        scheduler.with_fixture_start_pe()
+    } else {
+        scheduler
+    };
     assert_eq!(before.state(), controller_domain::ExecutionState::Running);
     assert!(before.dispatch().is_some());
     tokio::time::timeout(Duration::from_secs(33), async {
@@ -169,6 +174,88 @@ pub async fn run_recovery() {
             .await
             .unwrap();
     assert_eq!(count, 1);
+    if let Setup::Start {
+        generation,
+        owner,
+        predecessor_identity,
+        predecessor,
+        receipt,
+    } = &setup
+    {
+        assert!(before.receipt().is_none());
+        let directory = input.parent().unwrap();
+        let port = FixtureProvisioningPort::new_late(
+            directory.join("client.sock"),
+            Duration::from_secs(2),
+            identity.clone(),
+        )
+        .unwrap()
+        .with_late_start_after_configure(
+            FixtureCheckpointClient::new(directory.join("client.sock"), Duration::from_secs(2))
+                .unwrap(),
+            *generation,
+            *owner,
+            predecessor_identity.clone(),
+            FixtureStageRequest::decode(predecessor).unwrap(),
+        )
+        .unwrap()
+        .with_late_start_preflight_receipt(receipt.clone())
+        .unwrap();
+        assert!(port.original_start_pe_response().is_err());
+        assert!(
+            !scheduler
+                .discover_osdeploy_due()
+                .await
+                .unwrap()
+                .into_iter()
+                .any(|d| d.operation_id() == operation)
+        );
+        let controller = operation_controller::OsDeployController::new_fixture(
+            store.clone(),
+            scheduler,
+            Arc::new(port),
+            1,
+        )
+        .unwrap();
+        controller.open_send_admission().await.unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                controller.run_osdeploy_once(operation).await.unwrap(),
+                postgres_store::OsDeployProgress::Decided(
+                    controller_domain::ExecutionState::Unknown
+                )
+            );
+        }
+        let recovered = store.load_osdeploy_operation(operation).await.unwrap();
+        assert_eq!(
+            recovered.state(),
+            controller_domain::ExecutionState::Unknown
+        );
+        assert_eq!(recovered.attempt_id(), before.attempt_id());
+        assert_eq!(recovered.dispatch(), before.dispatch());
+        assert!(recovered.receipt().is_none());
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1",
+        )
+        .bind(identity.operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, 0);
+        let attempts: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM rust_controller.attempts WHERE operation_id=$1",
+        )
+        .bind(identity.operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(attempts, 1);
+        controller
+            .close_and_drain(Duration::from_secs(1))
+            .await
+            .unwrap();
+        return;
+    }
     if before.receipt().is_some() {
         let Setup::Configure {
             generation,

@@ -394,9 +394,10 @@ async fn fresh_controller_clone(
     )
     .unwrap();
     let daemon_path = directory.clone();
-    let daemon_lifetime = if crash_configure == Some(ConfigureCrash::StartAtWrite) {
-        15
-    } else if crash_configure == Some(ConfigureCrash::AfterReceipt) {
+    let daemon_lifetime = if matches!(
+        crash_configure,
+        Some(ConfigureCrash::StartAtWrite | ConfigureCrash::AfterReceipt)
+    ) {
         45
     } else {
         10
@@ -1574,6 +1575,19 @@ async fn start_pe_controller_death(
     .await
     .unwrap();
     assert_eq!(rows, 0);
+    fixture_prefix_process::recover(
+        directory,
+        s.db.pool.connect_options().to_url_lossy().to_string(),
+        op,
+    )
+    .await;
+    let recovered = s.db.other.load_osdeploy_operation(op).await.unwrap();
+    assert_eq!(
+        recovered.state(),
+        controller_domain::ExecutionState::Unknown
+    );
+    assert!(recovered.receipt().is_none());
+    assert_eq!(recovered.dispatch(), committed.dispatch());
     assert_eq!(fs::read(directory.join("fixture.log")).unwrap(), ledger);
     let reader =
         FixtureReadClient::new(directory.join("client.sock"), Duration::from_secs(2)).unwrap();
