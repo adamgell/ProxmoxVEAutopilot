@@ -27,6 +27,11 @@ SCRIPT = "/owned-linux-fixture/launcher.py"
 GIB = 1024**3
 CAPS = {"pg": 6 * GIB, "runner": 4 * GIB}
 TMPFS = "rw,nosuid,nodev,size=4g,mode=0700"
+# The runner image is built from this runtime source set. The launcher itself
+# and evidence metadata are host-side qualification controls mounted separately
+# and may advance after the immutable runner image is built.
+RUNTIME_PATHS = ("rust-controller/Cargo.toml", "rust-controller/Cargo.lock",
+                 "rust-controller/Dockerfile.test", "rust-controller/crates")
 SMOKE = "scheduler::osdeploy::transition::tests::private_reclaim_and_repark_require_expired_exact_epoch_and_original_budget"
 # These ignored entrypoints require input supplied by their supervising tests.
 # The full gate still includes intentional owned-storage qualification tests.
@@ -286,7 +291,12 @@ def host(args):
         return run(["docker", "--host", SOCKET, *argv], seconds, cap)
 
     host_sha = run(["git", "-C", str(root), "rev-parse", "HEAD"]).decode().strip()
-    require(host_sha == IMAGE_SOURCE, "host source revision mismatch")
+    # Do not compare the whole repository HEAD: this launcher and its retained
+    # evidence are intentionally updated after the immutable runner image. The
+    # runtime paths copied into the image must, however, remain byte-identical
+    # to the image's source seal before any owned container is created.
+    require(run(["git", "-C", str(root), "diff", "--quiet", IMAGE_SOURCE,
+                 "--", *RUNTIME_PATHS]) == b"", "runtime source revision mismatch")
     require(run(["git", "-C", str(root), "diff", "HEAD", "--", "rust-controller"]) == b"", "tracked source dirty")
     pg_image = docker("image", "inspect", PG_IMAGE, "--format", "{{.Id}}|{{.Architecture}}|{{.Os}}").decode().strip().split("|")
     runner_image = docker("image", "inspect", args.runner_image, "--format", "{{.Id}}|{{.Architecture}}|{{.Os}}").decode().strip().split("|")
