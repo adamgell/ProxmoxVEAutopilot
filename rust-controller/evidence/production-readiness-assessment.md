@@ -92,6 +92,12 @@ therefore an infrastructure/API-responsiveness blocker, not a recovery result;
 it must be retried with a fresh evidence directory after Docker responds within
 the existing bound.
 
+A targeted macOS retry of those two recovery tests, with the required
+`RUST_MIN_STACK=16777216`, also stopped before controller execution because the
+owned PostgreSQL fixture returned `local_database_unavailable: local_process_timeout`.
+The same session's read-only Docker API probe exceeded four seconds. This is
+retained as fixture admission failure and does not justify a Rust source change.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.

@@ -96,6 +96,13 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   blocker, not a recovery pass or source failure; retry requires a fresh
   evidence directory after Docker responsiveness is restored.
 
+- A targeted macOS retry with `RUST_MIN_STACK=16777216` selected only the two
+  recovery tests but both stopped before controller execution with
+  `local_database_unavailable: local_process_timeout`; the same session's
+  read-only Docker API probe exceeded four seconds. The result is retained in
+  `recovery-macos-docker-unavailable-20260911.md` and is classified as fixture
+  admission failure, not a source recovery result.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)
