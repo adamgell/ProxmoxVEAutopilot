@@ -26,8 +26,12 @@ mismatches; the type has no release or send method.
 
 ## Verification
 
-- `cargo check -p operation-controller --features fixture-ipc --all-targets`:
+- `cargo test -p pve-port --features fixture-ipc stop_release --lib`: 2 passed
+  (digest/provenance binding and accepted/refused/ambiguous transport outcomes).
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy -p pve-port --features fixture-ipc --lib -- -D warnings`:
   passed.
+- `git diff --check`: passed.
 - Existing sealed-provenance focused test and strict Clippy checks remain
   passing.
 - Stop-release proposal validation test: 1 passed, including empty, malformed,
