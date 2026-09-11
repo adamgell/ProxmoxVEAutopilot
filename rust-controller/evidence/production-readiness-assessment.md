@@ -4,6 +4,12 @@ Assessment date: 2026-09-10
 Assessment source: isolated worktree `codex/rust-controller-design`  
 Production and `192.168.2.4`: read-only throughout
 
+Current-head checkpoint: commit `08471af3` records that the exact-source Linux
+reaping diagnostic image built successfully, but its retained targeted run
+ended without output before producing PID/reap evidence. The attempt is
+terminal and observationally inconclusive; it adds no Linux pass claim and the
+strict reaping gate remains open.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.
