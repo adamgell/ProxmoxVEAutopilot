@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `01b2baee`: this branch and PR #65 contain an accumulated
+Current scope at `b37c4c84`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -92,6 +92,11 @@ fixture. The typed stop outcome APIs and immutable outcome schema therefore
 remain compile/schema-verified but lack the authentic accepted/refused/
 ambiguous PostgreSQL matrix. No production readiness or physical-stop claim is
 made.
+
+At `b37c4c84`, genuine fixture IPC submission retains a closed original
+response value for exact observation and restart proofs; restored adapters
+cannot manufacture it. PostgreSQL atomic capture and Setup integration remain
+open.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
