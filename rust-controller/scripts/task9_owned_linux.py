@@ -28,6 +28,10 @@ GIB = 1024**3
 CAPS = {"pg": 6 * GIB, "runner": 4 * GIB}
 TMPFS = "rw,nosuid,nodev,size=4g,mode=0700"
 SMOKE = "scheduler::osdeploy::transition::tests::private_reclaim_and_repark_require_expired_exact_epoch_and_original_budget"
+# These ignored entrypoints require input supplied by their supervising tests.
+# The full gate still includes intentional owned-storage qualification tests.
+SUPERVISED_CHILDREN = ("fixture_prefix_worker", "fixture_prefix_recovery_worker",
+                       "independent_recovery_reader", "dispatching_worker_a", "recovering_worker_b")
 OVERRIDES = {"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_TLS_VERIFY",
              "DOCKER_CERT_PATH", "PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE",
              "PGUSER", "PGPASSWORD", "PGPASSFILE", "PGSERVICE", "PGSERVICEFILE", "PGOPTIONS"}
@@ -221,7 +225,8 @@ def workload(mode):
     if mode == "smoke":
         return (argv + ["--lib", SMOKE, "--", "--exact", "--nocapture", "--test-threads=1"], 180)
     return (argv + ["-p", "scheduler", "-p", "osdeploy-adapter", "-p", "operation-controller",
-                   "--all-features", "--no-fail-fast", "--", "--include-ignored", "--nocapture", "--test-threads=1"], 1800)
+                   "--all-features", "--no-fail-fast", "--", "--include-ignored", "--nocapture", "--test-threads=1"]
+            + [argument for child in SUPERVISED_CHILDREN for argument in ("--skip", child)], 1800)
 
 
 def inside(mode):

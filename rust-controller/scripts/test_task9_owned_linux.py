@@ -44,6 +44,10 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(seconds, 1800)
         self.assertIn("--include-ignored", full)
         self.assertNotIn("pve-port", full)
+        skips = [full[i + 1] for i, value in enumerate(full) if value == "--skip"]
+        self.assertEqual(skips, ["fixture_prefix_worker", "fixture_prefix_recovery_worker",
+                                 "independent_recovery_reader", "dispatching_worker_a", "recovering_worker_b"])
+        self.assertFalse(any("owned_tmpfs" in value for value in skips))
 
     def receipt(self):
         return {"version": 1, "session": "a" * 32, "pg_id": "b" * 64,
