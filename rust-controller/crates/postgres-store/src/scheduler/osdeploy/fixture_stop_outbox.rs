@@ -10,6 +10,7 @@ pub struct FixtureStopOutboxConsumedV1 {
     pub attempt_id: Uuid,
     pub lease_token: Uuid,
     pub generation: i64,
+    pub supervisor_generation: Uuid,
     pub admission_sha256: String,
     pub sample_sha256: String,
     pub provenance_sha256: String,
@@ -37,8 +38,9 @@ impl Scheduler {
         request: &pve_port::fixture_ipc::FixtureStageRequest,
         sample: &VersionedTestPowerSample,
         receipt: &FixtureStopAdmissionReceiptV1,
-        provenance_sha256: &str,
+        provenance: &pve_port::fixture_ipc::FixtureSharedHistoryProvenanceV1,
     ) -> Result<(), Error> {
+        let provenance_sha256 = provenance.sha256();
         wire::require(
             provenance_sha256.len() == 64
                 && provenance_sha256.bytes().all(|b| {
@@ -78,7 +80,7 @@ impl Scheduler {
             millis < sample.authority.lease_expires_unix_ms
                 && millis < sample.authority.original_deadline_unix_ms,
         )?;
-        let selected = sqlx::query("SELECT attempt_id,lease_token,generation,admission_sha256,admission_json,sample_json,provenance_sha256 FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
+        let selected = sqlx::query("SELECT attempt_id,lease_token,generation,admission_sha256,admission_json,sample_json,provenance_sha256,supervisor_generation FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
             .bind(grant.operation_id().as_uuid()).fetch_optional(&mut *tx).await?;
         if let Some(row) = selected {
             wire::require(
@@ -91,12 +93,14 @@ impl Scheduler {
                     && row
                         .try_get::<Option<String>, _>("provenance_sha256")?
                         .as_deref()
-                        == Some(provenance_sha256),
+                        == Some(provenance_sha256.as_str())
+                    && row.try_get::<Option<Uuid>, _>("supervisor_generation")?
+                        == Some(provenance.generation()),
             )?;
         } else {
-            sqlx::query("INSERT INTO rust_controller.fixture_stop_outbox(operation_id,attempt_id,lease_token,generation,admission_sha256,admission_json,sample_json,provenance_sha256,selected_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+            sqlx::query("INSERT INTO rust_controller.fixture_stop_outbox(operation_id,attempt_id,lease_token,generation,admission_sha256,admission_json,sample_json,provenance_sha256,supervisor_generation,selected_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
                 .bind(grant.operation_id().as_uuid()).bind(grant.attempt_id().as_uuid()).bind(grant.lease_token()).bind(grant.generation())
-                .bind(digest).bind(admission).bind(sample_json).bind(provenance_sha256).bind(checked).execute(&mut *tx).await?;
+                .bind(digest).bind(admission).bind(sample_json).bind(&provenance_sha256).bind(provenance.generation()).bind(checked).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -121,7 +125,7 @@ impl Scheduler {
             snapshot.plan().stage() == OsDeployStage::PeEnsureStopped && !snapshot.cancelled(),
         )?;
         current_grant(&mut tx, self, grant, &snapshot).await?;
-        let row = sqlx::query("SELECT attempt_id,lease_token,generation,admission_sha256,admission_json,sample_json,provenance_sha256 FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
+        let row = sqlx::query("SELECT attempt_id,lease_token,generation,admission_sha256,admission_json,sample_json,provenance_sha256,supervisor_generation FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
             .bind(grant.operation_id().as_uuid()).fetch_one(&mut *tx).await?;
         let selected: FixtureStopAdmissionReceiptV1 =
             serde_json::from_str(&row.try_get::<String, _>("admission_json")?)
@@ -152,6 +156,9 @@ impl Scheduler {
         let provenance_sha256 = row
             .try_get::<Option<String>, _>("provenance_sha256")?
             .ok_or(Error::CapabilityUnavailable)?;
+        let supervisor_generation = row
+            .try_get::<Option<Uuid>, _>("supervisor_generation")?
+            .ok_or(Error::CapabilityUnavailable)?;
         let result = sqlx::query("INSERT INTO rust_controller.fixture_stop_outbox_consumptions(operation_id,consumed_at) VALUES($1,$2) ON CONFLICT(operation_id) DO NOTHING")
             .bind(grant.operation_id().as_uuid()).bind(checked).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -163,6 +170,7 @@ impl Scheduler {
             attempt_id: grant.attempt_id().as_uuid(),
             lease_token: grant.lease_token(),
             generation: grant.generation(),
+            supervisor_generation,
             admission_sha256: row.try_get("admission_sha256")?,
             sample_sha256,
             provenance_sha256,

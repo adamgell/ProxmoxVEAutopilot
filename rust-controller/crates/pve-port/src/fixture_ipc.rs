@@ -70,6 +70,10 @@ impl FixtureSharedHistoryProvenanceV1 {
         self.operation
     }
 
+    pub fn generation(&self) -> Uuid {
+        self.generation
+    }
+
     /// Canonical digest of the sealed bridge identity. This is derived only
     /// from the private provenance fields; admission/sample JSON is not used.
     pub fn sha256(&self) -> String {

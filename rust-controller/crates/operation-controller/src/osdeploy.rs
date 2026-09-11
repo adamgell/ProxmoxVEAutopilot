@@ -110,7 +110,7 @@ impl OsDeployController {
     ) -> Result<(), Error> {
         let provenance = self.require_fixture_shared_history(grant.operation_id())?;
         self.scheduler
-            .select_fixture_stop_outbox(grant, request, sample, receipt, &provenance.sha256())
+            .select_fixture_stop_outbox(grant, request, sample, receipt, &provenance)
             .await
             .map_err(Into::into)
     }
