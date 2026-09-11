@@ -1,3 +1,4 @@
+pub mod callback_contract;
 mod job;
 mod plan;
 
