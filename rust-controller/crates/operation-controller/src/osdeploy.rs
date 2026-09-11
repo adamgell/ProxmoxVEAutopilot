@@ -5,6 +5,8 @@ mod send;
 
 use admission::OsDeploySendAdmission;
 use controller_domain::{EventId, ExecutionState, OperationId};
+#[cfg(feature = "fixture-ipc")]
+use postgres_store::{FixturePeRegistrationIdentity, FixturePeRegistrationResult};
 use postgres_store::{
     LeaseGrant, OsDeployDue, OsDeployDueKind, OsDeployExecutionError, OsDeployProgress, PgStore,
     Scheduler,
@@ -217,6 +219,31 @@ impl OsDeployController {
     }
     pub async fn run_due_once(&self, due: &OsDeployDue) -> Result<OsDeployProgress, Error> {
         self.run(due.operation_id(), Some(due)).await
+    }
+
+    /// Accept the authenticated fixture PeRegister result through the same
+    /// explicitly configured controller that owns StartPe delivery. The client
+    /// supplies only its reported identity and bearer; attempt, package,
+    /// session, exposure and successor scope are resolved from durable state.
+    /// PeComplete/action/result acceptance remains a separate gated surface.
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn accept_fixture_pe_registration(
+        &self,
+        grant: &LeaseGrant,
+        authorization: &str,
+        identity: &FixturePeRegistrationIdentity,
+    ) -> Result<FixturePeRegistrationResult, Error> {
+        let config = self
+            .credential_delivery
+            .as_ref()
+            .ok_or(Error::CapabilityUnavailable)?;
+        if authorization.trim().is_empty() {
+            return Err(Error::Validation);
+        }
+        self.scheduler
+            .accept_fixture_pe_registration(grant, authorization, &config.secret, identity)
+            .await
+            .map_err(Into::into)
     }
     async fn run(
         &self,
