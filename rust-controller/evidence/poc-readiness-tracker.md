@@ -44,6 +44,13 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   Linux image, executable seal, test receipt, or qualification result exists for
   this attempt.
 
+- Commit `6c273d9b` records a successful exact-source Linux/amd64 build for
+  `becaf0e2`: image `sha256:7c766f2c...`, all Dockerfile release/test-precompile
+  gates green, and a network-disabled direct fixture run with 36 tests, one
+  ordinary doctest, and 22 compile-fail doctests. The owned-v1 PostgreSQL
+  launcher remains source/image sealed to an older qualification and was not
+  weakened or retargeted; current-source owned-v1 qualification remains open.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)

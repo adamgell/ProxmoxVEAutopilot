@@ -45,6 +45,14 @@ OrbStack was not restarted and no retained containers/images were removed. No
 image publication, executable seal, Linux test receipt, or qualification result
 can be claimed from this attempt.
 
+Current exact-source Linux build at `becaf0e2` completed successfully as image
+`sha256:7c766f2c552751bf988e20cf94a33e3309a17f41f2dbd26c7531cf63a02fd560`.
+The sealed `linux/amd64` image passed its Dockerfile release/test-precompile
+gates and a network-disabled direct `pve-port --features fixture-ipc` run (36
+tests, one ordinary doctest, and 22 compile-fail doctests). The owned-v1
+PostgreSQL launcher remains sealed to an older image/source and therefore was
+not retargeted; current-source owned-v1 qualification is still open.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.
