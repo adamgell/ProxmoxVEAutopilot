@@ -15,8 +15,10 @@ use osdeploy_adapter::{OsDeployPlanV1, OsDeployStage};
 use pve_port::ProvisioningOperationPlanV1;
 use serde::Serialize;
 pub(crate) mod execution;
+mod package_semantics;
 mod records;
 mod registration;
+pub use package_semantics::RegisteredPePackageSemanticsV1;
 mod stage;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
