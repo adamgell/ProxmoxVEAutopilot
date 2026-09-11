@@ -385,13 +385,20 @@ impl Scenario {
         &self,
         context: &ProvisioningEvaluationContextV1,
     ) -> ProvisioningEvidenceV1 {
+        self.collect_with(context, self.fake.as_ref()).await
+    }
+    pub async fn collect_with(
+        &self,
+        context: &ProvisioningEvaluationContextV1,
+        port: &dyn ProvisioningFakePort,
+    ) -> ProvisioningEvidenceV1 {
         tokio::time::timeout(std::time::Duration::from_secs(6), async {
             fn r<T>(value: Result<T, PveReadError>) -> NativeRead<T> {
                 NativeRead::new(Utc::now(), value)
             }
             let v = context.facts().plan.expected().vm();
             let node = v.node();
-            let inventory = self.fake.cluster_vms().await;
+            let inventory = port.cluster_vms().await;
             let mut identities = vec![];
             let coverage = if let Ok(inventory) = &inventory {
                 for entry in inventory.vms().values().take(32) {
@@ -399,10 +406,7 @@ impl Scenario {
                         ProvisioningIdentityReadV1::new(
                             entry.node().clone(),
                             entry.vmid(),
-                            r(self
-                                .fake
-                                .provisioning_identity(entry.node(), entry.vmid())
-                                .await),
+                            r(port.provisioning_identity(entry.node(), entry.vmid()).await),
                         )
                         .unwrap(),
                     );
@@ -423,8 +427,7 @@ impl Scenario {
                     .map(|v| v.split_once(':').unwrap().0)
                     .collect();
             for storage in storages {
-                media.push(r(self
-                    .fake
+                media.push(r(port
                     .provisioning_media(node, &StorageName::parse(storage).unwrap())
                     .await));
             }
@@ -435,7 +438,7 @@ impl Scenario {
             let task = if let Some(MutationReceipt::Task(upid)) =
                 receipt.as_ref().map(ProvisioningReceiptV1::receipt)
             {
-                Some(r(self.fake.task_status(node, upid).await))
+                Some(r(port.task_status(node, upid).await))
             } else {
                 None
             };
@@ -443,22 +446,16 @@ impl Scenario {
                 binding: context.facts().binding.clone(),
                 plan: context.facts().plan.clone(),
                 source: NativeEvidenceSource::FakePve,
-                node: Some(r(self.fake.node_status(node).await)),
-                storage: Some(r(self.fake.storage_status(node, v.storage()).await)),
-                bridges: Some(r(self.fake.bridges(node).await)),
+                node: Some(r(port.node_status(node).await)),
+                storage: Some(r(port.storage_status(node, v.storage()).await)),
+                bridges: Some(r(port.bridges(node).await)),
                 inventory: Some(r(inventory)),
                 inventory_coverage: coverage,
                 identities,
-                source_config: Some(r(self
-                    .fake
-                    .provisioning_vm_config(node, v.source_vmid())
-                    .await)),
-                source_power: Some(r(self.fake.vm_status(node, v.source_vmid()).await)),
-                target_config: Some(r(self
-                    .fake
-                    .provisioning_vm_config(node, v.target_vmid())
-                    .await)),
-                target_power: Some(r(self.fake.vm_status(node, v.target_vmid()).await)),
+                source_config: Some(r(port.provisioning_vm_config(node, v.source_vmid()).await)),
+                source_power: Some(r(port.vm_status(node, v.source_vmid()).await)),
+                target_config: Some(r(port.provisioning_vm_config(node, v.target_vmid()).await)),
+                target_power: Some(r(port.vm_status(node, v.target_vmid()).await)),
                 media,
                 qga: None,
                 task,

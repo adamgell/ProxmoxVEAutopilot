@@ -26,6 +26,25 @@ async fn fixture_prefix_recovery_worker() {
     fixture_prefix_process::run_recovery().await;
 }
 
+#[tokio::test]
+#[ignore = "owned StartPe SQL reload subprocess entry point"]
+async fn fixture_start_response_reload_worker() {
+    let dsn = std::env::var("FIXTURE_START_RESPONSE_DSN").unwrap();
+    let operation: controller_domain::OperationId =
+        serde_json::from_str(&std::env::var("FIXTURE_START_RESPONSE_OPERATION").unwrap()).unwrap();
+    let output =
+        std::path::PathBuf::from(std::env::var_os("FIXTURE_START_RESPONSE_OUTPUT").unwrap());
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&dsn)
+        .await
+        .unwrap();
+    let store = postgres_store::PgStore::new(pool.clone());
+    let snapshot = store.load_osdeploy_operation(operation).await.unwrap();
+    let bytes: Vec<u8> = sqlx::query_scalar("SELECT response_envelope FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1").bind(operation.as_uuid()).fetch_one(&pool).await.unwrap();
+    fs::write(output, serde_json::to_vec(&serde_json::json!({"pid":std::process::id(),"revision":snapshot.revision(),"accepted_at":snapshot.receipt().unwrap().accepted_at(),"response":bytes})).unwrap()).unwrap();
+}
+
 fn retime_outcome(value: &mut serde_json::Value, at: u64) {
     use serde_json::{Value, json};
     match value {
@@ -1314,7 +1333,7 @@ async fn fresh_configure_after_resize(
         original_receipt.to_vec(),
     )
     .unwrap()
-    .with_late_configure_receipt(dispatch.request(), receipt_bytes)
+    .with_late_configure_receipt(dispatch.request(), receipt_bytes.clone())
     .unwrap();
     assert_eq!(
         restored.submit_provisioning(dispatch.request()).await,
@@ -1340,6 +1359,262 @@ async fn fresh_configure_after_resize(
         .close_and_drain(Duration::from_secs(1))
         .await
         .unwrap();
+    capture_start_pe_after_genuine_prefix(
+        s,
+        directory,
+        fixture_id,
+        &identity,
+        &request,
+        &receipt_bytes,
+        &restored,
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn capture_start_pe_after_genuine_prefix(
+    s: &Scenario,
+    directory: &std::path::Path,
+    fixture_id: sqlx::types::Uuid,
+    predecessor_identity: &FixtureStageIdentity,
+    predecessor: &FixtureStageRequest,
+    predecessor_receipt: &[u8],
+    observer: &FixtureProvisioningPort,
+) {
+    let scheduler = s.db.scheduler().with_fixture_start_pe();
+    let op = s.ids.operation(osdeploy_adapter::OsDeployStage::StartPe);
+    let grant = scheduler
+        .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    scheduler
+        .start_osdeploy_bound(&grant, s.ids.workflow_sha256())
+        .await
+        .unwrap();
+    let snapshot = s.db.store.load_osdeploy_operation(op).await.unwrap();
+    let context =
+        s.db.store
+            .load_osdeploy_pve_context(
+                op,
+                snapshot.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let evidence = s.collect_with(&context, observer).await;
+    let event =
+        s.db.store
+            .record_osdeploy_pve_evidence(op, grant.attempt_id(), snapshot.revision(), &evidence)
+            .await
+            .unwrap();
+    let revision =
+        s.db.store
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .revision();
+    let request =
+        s.db.store
+            .prepare_osdeploy_pve_request(op, revision, event)
+            .await
+            .unwrap();
+    let (permit, capture) = scheduler
+        .begin_osdeploy_pve_dispatch(&grant, revision, event, &request)
+        .await
+        .unwrap();
+    let supervisor =
+        FixtureCheckpointClient::new(directory.join("supervisor.sock"), Duration::from_secs(2))
+            .unwrap();
+    let generation = supervisor
+        .stage_request(StageCheckpointRequest::Status)
+        .await
+        .unwrap()
+        .generation;
+    let owner = sqlx::types::Uuid::now_v7();
+    let envelope = FixtureStageRequest::new(fixture_id, request.clone()).unwrap();
+    let identity = FixtureStageIdentity {
+        operation: op.as_uuid(),
+        stage: FixtureLedgerStage::StartPe,
+        attempt: grant.attempt_id().as_uuid(),
+        generation,
+        owner,
+        request_sha256: envelope.request_sha256(),
+    };
+    let port = Arc::new(
+        FixtureProvisioningPort::new_late(
+            directory.join("client.sock"),
+            Duration::from_secs(2),
+            FixtureReadIdentity {
+                fixture_id,
+                operation: op.as_uuid(),
+                node: "node-a".into(),
+                source_vmid: 900,
+                target_vmid: 901,
+            },
+        )
+        .unwrap()
+        .with_late_start_after_configure(
+            FixtureCheckpointClient::new(directory.join("client.sock"), Duration::from_secs(2))
+                .unwrap(),
+            generation,
+            owner,
+            predecessor_identity.clone(),
+            predecessor.clone(),
+        )
+        .unwrap(),
+    );
+    assert!(
+        supervisor
+            .stage_request(StageCheckpointRequest::Arm {
+                identity: identity.clone(),
+                timeout_ms: 5000
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    let worker_port = port.clone();
+    let worker_request = request.clone();
+    let checkpoint =
+        tokio::spawn(async move { worker_port.provisioning_checkpoint(&worker_request).await });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if supervisor
+                .stage_request(StageCheckpointRequest::Status)
+                .await
+                .unwrap()
+                .phase
+                == CheckpointPhase::Entered
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let power = observer
+        .vm_status(&NodeName::parse("node-a").unwrap(), Vmid::new(901).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(power.power(), PowerState::Stopped);
+    assert_eq!(power.locked(), Some(false));
+    assert!(
+        supervisor
+            .stage_request(StageCheckpointRequest::AuthorizeStartPe {
+                identity,
+                request: envelope.encode().unwrap(),
+                committed_request: envelope.encode().unwrap(),
+                power: StartPePowerAuthorizationV1 {
+                    version: 1,
+                    predecessor: predecessor_identity.clone(),
+                    predecessor_request: predecessor.encode().unwrap(),
+                    predecessor_receipt: predecessor_receipt.to_vec(),
+                    power: SeedPower {
+                        power: power.power(),
+                        locked: power.locked().unwrap()
+                    }
+                },
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    checkpoint.await.unwrap().unwrap();
+    let semantic = permit.submit_fake_once(port.as_ref()).await.unwrap();
+    let original = port.captured_start_pe_response().unwrap();
+    let input = capture.bind_fixture_start_pe_response(&original).unwrap();
+    assert_eq!(input.semantic_receipt(), &semantic);
+    let ledger = fs::read(directory.join("fixture.log")).unwrap();
+    // Inject failure after the original envelope row is inserted, while still
+    // inside the semantic receipt/journal transaction.
+    sqlx::raw_sql("CREATE FUNCTION rust_controller.reject_original_fixture_response() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected original response failure'; END $$; CREATE TRIGGER reject_original_fixture_response AFTER INSERT ON rust_controller.fixture_start_pe_responses FOR EACH ROW EXECUTE FUNCTION rust_controller.reject_original_fixture_response();").execute(&s.db.pool).await.unwrap();
+    assert!(
+        scheduler
+            .record_fixture_start_pe_receipt(&input)
+            .await
+            .is_err()
+    );
+    assert!(
+        s.db.other
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .receipt()
+            .is_none()
+    );
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1",
+    )
+    .bind(op.as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 0);
+    sqlx::raw_sql("DROP TRIGGER reject_original_fixture_response ON rust_controller.fixture_start_pe_responses; DROP FUNCTION rust_controller.reject_original_fixture_response();").execute(&s.db.pool).await.unwrap();
+    let other = s.db.other_scheduler().with_fixture_start_pe();
+    let (a, b) = tokio::join!(
+        scheduler.record_fixture_start_pe_receipt(&input),
+        other.record_fixture_start_pe_receipt(&input)
+    );
+    a.unwrap();
+    b.unwrap();
+    let first = s.db.other.load_osdeploy_operation(op).await.unwrap();
+    assert_eq!(first.receipt().unwrap().receipt(), &semantic);
+    let bytes: Vec<u8> = sqlx::query_scalar("SELECT response_envelope FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1").bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(bytes, original.original_receipt());
+    // Fresh store reload preserves the original receipt and its first clock.
+    let reopened = postgres_store::PgStore::new(s.db.pool.clone());
+    scheduler
+        .record_fixture_start_pe_receipt(&input)
+        .await
+        .unwrap();
+    let reloaded = reopened.load_osdeploy_operation(op).await.unwrap();
+    assert_eq!(reloaded.receipt(), first.receipt());
+    assert_eq!(reloaded.revision(), first.revision());
+    // Independent process reconstructs SQL state without either original
+    // in-memory capability or a process-local adapter response slot.
+    let output_path = directory.join("start-response-reloaded.json");
+    let child = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "fixture_start_response_reload_worker",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(
+            "FIXTURE_START_RESPONSE_DSN",
+            s.db.pool.connect_options().to_url_lossy().to_string(),
+        )
+        .env(
+            "FIXTURE_START_RESPONSE_OPERATION",
+            serde_json::to_string(&op).unwrap(),
+        )
+        .env("FIXTURE_START_RESPONSE_OUTPUT", &output_path)
+        .kill_on_drop(true)
+        .output();
+    let child = tokio::time::timeout(Duration::from_secs(10), child)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(child.status.success(), "reload subprocess failed");
+    let child_value: serde_json::Value =
+        serde_json::from_slice(&fs::read(output_path).unwrap()).unwrap();
+    assert_ne!(child_value["pid"], serde_json::json!(std::process::id()));
+    assert_eq!(child_value["revision"], serde_json::json!(first.revision()));
+    assert_eq!(
+        child_value["accepted_at"],
+        serde_json::json!(first.receipt().unwrap().accepted_at())
+    );
+    assert_eq!(
+        child_value["response"],
+        serde_json::json!(original.original_receipt())
+    );
+    assert_eq!(fs::read(directory.join("fixture.log")).unwrap(), ledger);
+    assert!(port.submit_provisioning(&request).await.is_err());
+    assert!(s.fake.recorded_provisioning_submissions().is_empty());
 }
 
 /// Fresh controller admission must not convert an unseeded IPC world into

@@ -37,6 +37,7 @@ START_PE = "fixture_start_pe_atomic_arming_rollback_race_and_reload"
 # These ignored entrypoints require input supplied by their supervising tests.
 # The full gate still includes intentional owned-storage qualification tests.
 SUPERVISED_CHILDREN = ("fixture_prefix_worker", "fixture_prefix_recovery_worker",
+                       "fixture_start_response_reload_worker",
                        "independent_recovery_reader", "dispatching_worker_a", "recovering_worker_b")
 # These ignored tests deliberately require a caller-provided empty loopback
 # PostgreSQL DSN.  The owned-v1 launcher does not accept or synthesize a DSN;
