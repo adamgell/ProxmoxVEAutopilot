@@ -32,6 +32,8 @@ const EXPECTED_TABLES: &[&str] = &[
     "fixture_stop_outbox",
     #[cfg(feature = "fixture-ipc")]
     "fixture_stop_outbox_consumptions",
+    #[cfg(feature = "fixture-ipc")]
+    "fixture_stop_release_outcomes",
     "journal_events",
     "native_decisions",
     "native_dispatches",
@@ -172,9 +174,9 @@ async fn migration_creates_constrained_foundation_tables() {
     {
         // Both selected evidence and possible-exposure markers survive reload
         // without permitting UPDATE, DELETE or TRUNCATE through normal SQL.
-        let triggers: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_trigger WHERE tgrelid IN ('rust_controller.fixture_stop_outbox'::regclass,'rust_controller.fixture_stop_outbox_consumptions'::regclass) AND NOT tgisinternal AND tgname IN ('stop_outbox_immutable','stop_outbox_no_truncate')")
+        let triggers: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_trigger WHERE tgrelid IN ('rust_controller.fixture_stop_outbox'::regclass,'rust_controller.fixture_stop_outbox_consumptions'::regclass,'rust_controller.fixture_stop_release_outcomes'::regclass) AND NOT tgisinternal AND tgname IN ('stop_outbox_immutable','stop_outbox_no_truncate','stop_release_outcome_immutable','stop_release_outcome_no_truncate')")
             .fetch_one(&pool).await.unwrap();
-        assert_eq!(triggers, 4);
+        assert_eq!(triggers, 6);
         assert!(
             sqlx::query("TRUNCATE rust_controller.fixture_stop_outbox_consumptions")
                 .execute(&pool)
@@ -184,6 +186,12 @@ async fn migration_creates_constrained_foundation_tables() {
         let orphan = sqlx::query("INSERT INTO rust_controller.fixture_stop_outbox_consumptions(operation_id,consumed_at) VALUES($1,now())")
             .bind(uuid::Uuid::now_v7()).execute(&pool).await;
         assert!(orphan.is_err());
+        assert!(
+            sqlx::query("TRUNCATE rust_controller.fixture_stop_release_outcomes")
+                .execute(&pool)
+                .await
+                .is_err()
+        );
         PgStore::new(pool.clone()).migrate().await.unwrap();
     }
 }

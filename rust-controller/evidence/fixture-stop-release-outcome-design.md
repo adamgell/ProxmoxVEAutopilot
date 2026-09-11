@@ -5,6 +5,12 @@ Design target: the next bounded fixture-only continuation after
 it intentionally does not add a release or physical-send implementation while
 the current database consumption and checkpoint protocol are separate.
 
+The first storage-only piece is now present in migration
+`0016_fixture_stop_release_outcomes.sql`. `PgStore::migrate` applies it only
+under the existing `fixture-ipc` feature gate. The table and its immutable
+update/delete/truncate triggers are schema-only at this stage; no scheduler
+method reads or writes an outcome row, and no release authority is exposed.
+
 ## Durable outcome record
 
 Add migration `0016_fixture_stop_release_outcomes.sql` with an immutable,
@@ -94,6 +100,14 @@ tests in `crates/postgres-store/tests/postgres.rs` or a dedicated
 
 Run the focused PostgreSQL test, fixture IPC test, strict Clippy, fmt, and diff
 checks. Preserve a restart receipt and database query transcript as evidence.
+
+The storage-only migration proof currently passes:
+
+- `cargo fmt --all`: passed.
+- `cargo test -p postgres-store --features fixture-ipc --test postgres
+  migration_creates_constrained_foundation_tables -- --exact`: 1 passed;
+  inventory includes the outcome table, all six immutability triggers exist,
+  and truncate is rejected.
 
 ## Explicit non-goals and gates
 

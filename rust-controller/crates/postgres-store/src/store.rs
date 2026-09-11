@@ -202,6 +202,11 @@ impl PgStore {
             sqlx::raw_sql(include_str!("../migrations/0015_fixture_stop_outbox.sql"))
                 .execute(&mut *tx)
                 .await?;
+            sqlx::raw_sql(include_str!(
+                "../migrations/0016_fixture_stop_release_outcomes.sql"
+            ))
+            .execute(&mut *tx)
+            .await?;
             tx.commit().await?;
         }
         Ok(())
