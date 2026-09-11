@@ -117,7 +117,9 @@ pub(super) fn admit(
         || (fixture_registration
             && matches!(
                 snapshot.plan().stage(),
-                OsDeployStage::PeRegister | OsDeployStage::PeComplete
+                OsDeployStage::PeRegister
+                    | OsDeployStage::PeComplete
+                    | OsDeployStage::PeEnsureStopped
             )))
     {
         return Err(Error::CapabilityUnavailable);

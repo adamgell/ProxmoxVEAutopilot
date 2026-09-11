@@ -21,7 +21,7 @@ pub(crate) fn enabled(stage: OsDeployStage) -> Result<(), Error> {
     match stage {
         OsDeployStage::Clone | OsDeployStage::DiskCapacity | OsDeployStage::ConfigurePe => Ok(()),
         #[cfg(feature = "fixture-ipc")]
-        OsDeployStage::StartPe => Ok(()),
+        OsDeployStage::StartPe | OsDeployStage::PeEnsureStopped => Ok(()),
         _ => Err(Error::CapabilityUnavailable),
     }
 }
@@ -179,6 +179,10 @@ pub(crate) fn request(
         ProvisioningActionV1::StartPe => {
             StartProvisioningRequestV1::new(input).map(ProvisioningMutationRequestV1::Start)
         }
+        #[cfg(feature = "fixture-ipc")]
+        ProvisioningActionV1::EnsureStopped => {
+            StopProvisioningRequestV1::new(input).map(ProvisioningMutationRequestV1::Stop)
+        }
         _ => return Err(Error::CapabilityUnavailable),
     }
     .map_err(|_| Error::Validation)
@@ -252,6 +256,41 @@ async fn predecessors(
         if stage == target.snapshot.plan().stage() {
             return Ok(history);
         }
+        #[cfg(feature = "fixture-ipc")]
+        if target.snapshot.plan().stage() == OsDeployStage::PeEnsureStopped
+            && matches!(
+                stage,
+                OsDeployStage::PeRegister
+                    | OsDeployStage::PeComplete
+                    | OsDeployStage::PeShutdownGrace
+            )
+        {
+            let prior = Box::pin(load::load_records(
+                tx,
+                target.registration.ids().operation(stage),
+            ))
+            .await?;
+            Box::pin(validate(tx, &prior)).await?;
+            let decision = selected(&prior).ok_or(Error::Validation)?;
+            wire::require(
+                target
+                    .snapshot
+                    .activated_at()
+                    .is_some_and(|at| decision.value.evaluated_at <= at),
+            )?;
+            if stage == OsDeployStage::PeShutdownGrace {
+                wire::require(
+                    prior.snapshot.state() == ExecutionState::Unknown
+                        && elapsed_grace(&decision.value),
+                )?;
+            } else {
+                wire::require(
+                    prior.snapshot.state() == ExecutionState::Satisfied
+                        && decision.value.resolution == Some(NativeDecision::Satisfied),
+                )?;
+            }
+            continue;
+        }
         enabled(stage)?;
         let prior = Box::pin(load::load_records(
             tx,
@@ -303,6 +342,19 @@ async fn predecessors(
         );
     }
     Err(Error::Validation)
+}
+
+/// An elapsed shutdown timer permits a fresh physical stop observation only.
+/// It carries no claim about the VM power state.
+#[cfg(feature = "fixture-ipc")]
+pub(crate) fn elapsed_grace(decision: &wire::DecisionEnvelope) -> bool {
+    decision.resolution == Some(NativeDecision::Unknown)
+        && matches!(&decision.detail, Detail::ActivatedScopeExpired(value)
+            if value.scope_key == wire::Scope::ShutdownGrace
+                && value.reason == wire::Reason::ShutdownGraceDeadlineExpired
+                && value.pe_complete_operation_id == Some(value.anchor_operation_id)
+                && value.pe_complete_decision_event_id == Some(value.anchor_event_id)
+                && decision.evaluated_at >= value.deadline_at)
 }
 
 pub(super) async fn validate(

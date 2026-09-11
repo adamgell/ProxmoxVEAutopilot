@@ -774,6 +774,8 @@ fn validate_activations(
                     OsDeployStage::PeRegister
                 } else if stage == OsDeployStage::PeShutdownGrace {
                     OsDeployStage::PeComplete
+                } else if stage == OsDeployStage::PeEnsureStopped {
+                    OsDeployStage::PeShutdownGrace
                 } else if stage == OsDeployStage::StartPe {
                     OsDeployStage::ConfigurePe
                 } else {
@@ -789,8 +791,17 @@ fn validate_activations(
                     prior_op,
                 )?;
                 require(
-                    predecessor.value.resolution == Some(NativeDecision::Satisfied)
-                        && predecessor.value.evaluated_at <= d.value.evaluated_at
+                    (predecessor.value.resolution == Some(NativeDecision::Satisfied) || {
+                        #[cfg(feature = "fixture-ipc")]
+                        {
+                            stage == OsDeployStage::PeEnsureStopped
+                                && super::history::elapsed_grace(&predecessor.value)
+                        }
+                        #[cfg(not(feature = "fixture-ipc"))]
+                        {
+                            false
+                        }
+                    }) && predecessor.value.evaluated_at <= d.value.evaluated_at
                         && !ds.values().any(|other| {
                             other.value.operation_id == prior_op
                                 && selected(other)

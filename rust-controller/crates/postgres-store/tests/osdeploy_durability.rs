@@ -914,6 +914,7 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                                 .changed(),
                             0
                         );
+                        sqlx::raw_sql("CREATE FUNCTION rust_controller.reject_stop_activation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.scope_key='mutation_pe_ensure_stopped' THEN RAISE EXCEPTION 'fixture rollback'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_stop_activation BEFORE INSERT ON rust_controller.osdeploy_attempt_bindings FOR EACH ROW EXECUTE FUNCTION rust_controller.reject_stop_activation();").execute(&s.db.pool).await.unwrap();
                         assert!(
                             replacement
                                 .claim_osdeploy_bound(
@@ -924,6 +925,158 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                                 .await
                                 .is_err()
                         );
+                        sqlx::raw_sql("DROP TRIGGER reject_stop_activation ON rust_controller.osdeploy_attempt_bindings; DROP FUNCTION rust_controller.reject_stop_activation();").execute(&s.db.pool).await.unwrap();
+                        let unstarted =
+                            s.db.other
+                                .load_osdeploy_operation(
+                                    s.ids.operation(OsDeployStage::PeEnsureStopped),
+                                )
+                                .await
+                                .unwrap();
+                        assert_eq!(unstarted.state(), ExecutionState::Pending);
+                        assert!(unstarted.attempt_id().is_none());
+                        assert!(unstarted.deadline_at().is_none());
+                        let stop = replacement
+                            .claim_osdeploy_bound(
+                                s.ids.operation(OsDeployStage::PeEnsureStopped),
+                                s.ids.workflow_sha256(),
+                                1,
+                            )
+                            .await
+                            .unwrap()
+                            .unwrap();
+                        assert!(*stop.deadline_at() > elapsed.deadline_at().unwrap());
+                        replacement
+                            .start_osdeploy_bound(&stop, s.ids.workflow_sha256())
+                            .await
+                            .unwrap();
+                        let stop_snapshot =
+                            s.db.other
+                                .load_osdeploy_operation(stop.operation_id())
+                                .await
+                                .unwrap();
+                        let context =
+                            s.db.store
+                                .load_osdeploy_pve_context(
+                                    stop.operation_id(),
+                                    stop_snapshot.revision(),
+                                    ProvisioningEvaluationModeV1::Preflight,
+                                )
+                                .await
+                                .unwrap();
+                        let evidence = s.collect(&context).await;
+                        let event =
+                            s.db.store
+                                .record_osdeploy_pve_evidence(
+                                    stop.operation_id(),
+                                    stop.attempt_id(),
+                                    stop_snapshot.revision(),
+                                    &evidence,
+                                )
+                                .await
+                                .unwrap();
+                        let current =
+                            s.db.other
+                                .load_osdeploy_operation(stop.operation_id())
+                                .await
+                                .unwrap();
+                        let request =
+                            s.db.store
+                                .prepare_osdeploy_pve_request(
+                                    stop.operation_id(),
+                                    current.revision(),
+                                    event,
+                                )
+                                .await
+                                .unwrap();
+                        assert!(matches!(
+                            request,
+                            pve_port::ProvisioningMutationRequestV1::Stop(_)
+                        ));
+                        let (permit, capture) = replacement
+                            .begin_osdeploy_pve_dispatch(&stop, current.revision(), event, &request)
+                            .await
+                            .unwrap();
+                        assert!(
+                            replacement
+                                .begin_osdeploy_pve_dispatch(
+                                    &stop,
+                                    current.revision(),
+                                    event,
+                                    &request
+                                )
+                                .await
+                                .is_err()
+                        );
+                        let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
+                        replacement
+                            .record_osdeploy_pve_receipt(&capture, &receipt)
+                            .await
+                            .unwrap();
+                        let (event, revision) = s.observation(&stop).await;
+                        let mut result = replacement
+                            .decide_osdeploy_pve(&stop, revision, event)
+                            .await
+                            .unwrap();
+                        for _ in 0..8 {
+                            if !matches!(result, postgres_store::OsDeployProgress::Waiting) {
+                                break;
+                            }
+                            let parked_stop =
+                                s.db.other
+                                    .load_osdeploy_operation(stop.operation_id())
+                                    .await
+                                    .unwrap();
+                            s.wait_until(parked_stop.next_check_at().unwrap()).await;
+                            assert!(
+                                replacement
+                                    .discover_osdeploy_due()
+                                    .await
+                                    .unwrap()
+                                    .iter()
+                                    .any(|due| due.operation_id() == stop.operation_id())
+                            );
+                            assert!(
+                                !s.db
+                                    .scheduler()
+                                    .discover_osdeploy_due()
+                                    .await
+                                    .unwrap()
+                                    .iter()
+                                    .any(|due| due.operation_id() == stop.operation_id())
+                            );
+                            let resumed = replacement
+                                .resume_osdeploy_bound(
+                                    stop.operation_id(),
+                                    stop.attempt_id(),
+                                    parked_stop.revision(),
+                                    s.ids.workflow_sha256(),
+                                    1,
+                                )
+                                .await
+                                .unwrap()
+                                .unwrap();
+                            replacement
+                                .start_osdeploy_bound(&resumed, s.ids.workflow_sha256())
+                                .await
+                                .unwrap();
+                            let (event, revision) = s.observation(&resumed).await;
+                            result = replacement
+                                .decide_osdeploy_pve(&resumed, revision, event)
+                                .await
+                                .unwrap();
+                        }
+                        assert!(matches!(
+                            result,
+                            postgres_store::OsDeployProgress::Decided(ExecutionState::Satisfied)
+                        ));
+                        let stopped =
+                            s.db.other
+                                .load_osdeploy_operation(stop.operation_id())
+                                .await
+                                .unwrap();
+                        assert_eq!(stopped.state(), ExecutionState::Satisfied);
+                        assert_eq!(stopped.attempt_id(), Some(stop.attempt_id()));
                         let leases: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.worker_leases WHERE operation_id=$1").bind(grace.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
                         assert_eq!(leases, 0);
                         s.db.store.migrate().await.unwrap();

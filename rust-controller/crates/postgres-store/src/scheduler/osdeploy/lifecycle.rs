@@ -149,11 +149,20 @@ impl Scheduler {
             OsDeployStage::PeRegister if self.fixture_credential_delivery => Some(reg.ids().operation(OsDeployStage::StartPe)),
             #[cfg(feature = "fixture-ipc")]
             OsDeployStage::PeComplete if self.fixture_credential_delivery => Some(reg.ids().operation(OsDeployStage::PeRegister)),
+            #[cfg(feature = "fixture-ipc")]
+            OsDeployStage::PeEnsureStopped if self.fixture_credential_delivery => Some(reg.ids().operation(OsDeployStage::PeShutdownGrace)),
             _ => return Err(Error::CapabilityUnavailable),
         };
         let predecessor_event = if let Some(prior) = predecessor {
             let prior_snapshot = load::load_execution(&mut tx, prior).await?;
-            if prior_snapshot.state() != ExecutionState::Satisfied {
+            #[cfg(feature = "fixture-ipc")]
+            let elapsed = if snapshot.plan().stage() == OsDeployStage::PeEnsureStopped && prior_snapshot.state() == ExecutionState::Unknown {
+                let text: String = sqlx::query_scalar("SELECT payload_canonical_json FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND resolution IS NOT NULL AND resolution<>'ready' ORDER BY decision_revision DESC LIMIT 1").bind(prior.as_uuid()).fetch_one(&mut *tx).await?;
+                crate::osdeploy::execution::history::elapsed_grace(&wire::DecisionEnvelope::decode(&text)?)
+            } else { false };
+            #[cfg(not(feature = "fixture-ipc"))]
+            let elapsed = false;
+            if prior_snapshot.state() != ExecutionState::Satisfied && !elapsed {
                 tx.commit().await?;
                 return Ok(None);
             }

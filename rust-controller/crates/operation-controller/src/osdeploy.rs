@@ -271,6 +271,17 @@ impl OsDeployController {
                             | ProvisioningActionV1::ConfigurePe
                     ) || (plan.action() == ProvisioningActionV1::StartPe
                         && self.scheduler.fixture_start_pe_enabled())
+                        || {
+                            #[cfg(feature = "fixture-ipc")]
+                            {
+                                plan.action() == ProvisioningActionV1::EnsureStopped
+                                    && self.credential_delivery.is_some()
+                            }
+                            #[cfg(not(feature = "fixture-ipc"))]
+                            {
+                                false
+                            }
+                        }
                 }) {
                     return Err(Error::CapabilityUnavailable);
                 }
