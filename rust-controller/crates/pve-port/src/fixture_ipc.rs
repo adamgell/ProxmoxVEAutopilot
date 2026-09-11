@@ -29,6 +29,11 @@ const MAX_MESSAGE_BYTES: usize = 65_536;
 /// ```
 #[async_trait::async_trait]
 pub trait ControllerFixturePort: crate::ProvisioningFakePort {
+    /// Return an opaque proof that this port and its checkpoint client refer to
+    /// the same supervisor journal channel. `None` is the fail-closed default.
+    fn shared_history_provenance(&self) -> Option<FixtureSharedHistoryProvenanceV1> {
+        None
+    }
     /// Called after durable dispatch with the exact request committed by the scheduler.
     /// Implementations must explicitly opt in; a legacy point-only barrier cannot
     /// authorize an arbitrary provisioning stage.
@@ -43,6 +48,40 @@ pub trait ControllerFixturePort: crate::ProvisioningFakePort {
         &self,
         point: crate::FakeControllerCheckpoint,
     ) -> Result<(), CheckpointError>;
+}
+
+/// Opaque, operation-scoped join between a controller port and supervisor
+/// checkpoint channel. The fields are private so callers cannot manufacture a
+/// positive assertion by copying decoded receipt or stage identity fields.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixtureSharedHistoryProvenanceV1 {
+    operation: Uuid,
+    generation: Uuid,
+    owner: Uuid,
+    channel: String,
+}
+
+impl FixtureSharedHistoryProvenanceV1 {
+    pub fn operation(&self) -> Uuid {
+        self.operation
+    }
+
+    pub(crate) fn new(
+        operation: Uuid,
+        generation: Uuid,
+        owner: Uuid,
+        channel: String,
+    ) -> Result<Self, CheckpointError> {
+        if operation.is_nil() || generation.is_nil() || owner.is_nil() || channel.is_empty() {
+            return Err(CheckpointError::Rejected);
+        }
+        Ok(Self {
+            operation,
+            generation,
+            owner,
+            channel,
+        })
+    }
 }
 
 /// Failure to obtain supervisor release never authorizes dispatch.

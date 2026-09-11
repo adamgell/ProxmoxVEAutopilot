@@ -24,6 +24,7 @@ pub use start_observation::FixtureStartPeObservationV1;
 pub use start_restoration::{FixtureStartPeRestoration, RestoredStartPeObservationV1};
 mod clone_mutation;
 mod late_authorization;
+pub use crate::fixture_ipc::FixtureSharedHistoryProvenanceV1;
 pub use checkpoint::{
     CheckpointBinding, CheckpointPhase, CheckpointPoint, CheckpointReply, CheckpointRequest,
     CheckpointState, FixtureCheckpointClient,

@@ -1,4 +1,5 @@
 //! Supervisor-owned barriers. A daemon restart always invalidates old releases.
+use crate::fixture_ipc::CheckpointError;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, OpenOptions},
@@ -18,6 +19,41 @@ pub enum CheckpointPoint {
 mod stop_transport_tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn shared_history_provenance_requires_exact_channel_and_binding() {
+        let operation = Uuid::now_v7();
+        let binding = CheckpointBinding {
+            generation: Uuid::now_v7(),
+            owner: Uuid::now_v7(),
+            operation,
+            point: CheckpointPoint::DispatchCommitted,
+        };
+        let a = FixtureCheckpointClient::new(
+            std::path::PathBuf::from("/tmp/provenance-a.sock"),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let b = FixtureCheckpointClient::new(
+            std::path::PathBuf::from("/tmp/provenance-b.sock"),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert_eq!(
+            a.shared_history_provenance(&binding),
+            a.shared_history_provenance(&binding)
+        );
+        assert_ne!(
+            a.shared_history_provenance(&binding),
+            b.shared_history_provenance(&binding)
+        );
+        let mut other = binding;
+        other.operation = Uuid::now_v7();
+        assert_ne!(
+            a.shared_history_provenance(&binding),
+            a.shared_history_provenance(&other)
+        );
+    }
 
     fn sample() -> super::super::VersionedTestPowerSample {
         use super::super::*;
@@ -380,6 +416,21 @@ pub struct FixtureCheckpointClient {
     timeout: Duration,
 }
 impl FixtureCheckpointClient {
+    /// Construct the only provenance value a local checkpoint client can
+    /// provide. Equality requires the exact operation binding and socket path;
+    /// a decoded receipt or copied identity cannot produce this value.
+    pub fn shared_history_provenance(
+        &self,
+        binding: &CheckpointBinding,
+    ) -> Result<crate::fixture_ipc::FixtureSharedHistoryProvenanceV1, CheckpointError> {
+        crate::fixture_ipc::FixtureSharedHistoryProvenanceV1::new(
+            binding.operation,
+            binding.generation,
+            binding.owner,
+            self.socket.to_string_lossy().into_owned(),
+        )
+    }
+
     /// Consume an already installed, independently sampled fixture power value.
     /// This never installs a source, refreshes its clock, or releases a barrier.
     pub async fn consume_versioned_stop_power(

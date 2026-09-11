@@ -352,6 +352,13 @@ impl FixtureProvisioningPort {
 impl crate::native::sealed::FakeMutationCapability for FixtureProvisioningPort {}
 #[async_trait::async_trait]
 impl crate::fixture_ipc::ControllerFixturePort for FixtureProvisioningPort {
+    fn shared_history_provenance(
+        &self,
+    ) -> Option<crate::fixture_ipc::FixtureSharedHistoryProvenanceV1> {
+        let (client, binding) = self.checkpoint.as_ref()?;
+        client.shared_history_provenance(binding).ok()
+    }
+
     async fn provisioning_checkpoint(
         &self,
         request: &ProvisioningMutationRequestV1,

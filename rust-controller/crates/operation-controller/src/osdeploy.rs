@@ -77,6 +77,11 @@ pub struct OsDeployController {
     fake: Arc<ControllerPort>,
     #[cfg(feature = "fixture-ipc")]
     operation_ports: Option<std::collections::HashMap<OperationId, Arc<ControllerPort>>>,
+    #[cfg(feature = "fixture-ipc")]
+    shared_history: std::collections::HashMap<
+        OperationId,
+        pve_port::fixture_ipc::FixtureSharedHistoryProvenanceV1,
+    >,
     admission: OsDeploySendAdmission,
     workers: Semaphore,
     cap: u32,
@@ -89,15 +94,30 @@ struct FixtureDeliveryConfig {
     sink: postgres_store::FixtureCredentialSink,
 }
 impl OsDeployController {
-    /// Outbox reservation requires sealed provenance joining the operation's
-    /// accepted StartPe history to its supervisor journal. The current fixture
-    /// port exposes checkpoint hooks but cannot attest that join. Refuse before
-    /// database or IPC access; a caller-supplied receipt or history assertion
-    /// cannot enable this boundary. Historical admission remains available via
-    /// `admit_fixture_stop` and grants no exposure reservation.
+    /// Prove the operation port and supervisor use one journal channel before
+    /// any outbox work is attempted. This returns only the sealed provenance
+    /// gate; it does not dispatch a stop or create a durable outbox row.
     #[cfg(feature = "fixture-ipc")]
-    pub async fn reserve_fixture_stop_outbox(&self, _operation: OperationId) -> Result<(), Error> {
-        Err(Error::SharedHistoryUnavailable)
+    pub async fn reserve_fixture_stop_outbox(
+        &self,
+        operation: OperationId,
+    ) -> Result<pve_port::fixture_ipc::FixtureSharedHistoryProvenanceV1, Error> {
+        let port = self
+            .operation_ports
+            .as_ref()
+            .and_then(|ports| ports.get(&operation))
+            .ok_or(Error::SharedHistoryUnavailable)?;
+        let port_provenance = port
+            .shared_history_provenance()
+            .ok_or(Error::SharedHistoryUnavailable)?;
+        let configured = self
+            .shared_history
+            .get(&operation)
+            .ok_or(Error::SharedHistoryUnavailable)?;
+        if configured != &port_provenance {
+            return Err(Error::SharedHistoryUnavailable);
+        }
+        Ok(port_provenance)
     }
 
     /// Prepare database authority, obtain independent fixture power, then
@@ -266,6 +286,25 @@ impl OsDeployController {
         Ok(self)
     }
 
+    /// Bind the supervisor checkpoint channel to the operation port's opaque
+    /// provenance. A decoded receipt or caller assertion cannot satisfy this.
+    #[cfg(feature = "fixture-ipc")]
+    pub fn with_shared_history_supervisor(
+        mut self,
+        operation: OperationId,
+        supervisor: &pve_port::fixture_support::FixtureCheckpointClient,
+        binding: pve_port::fixture_support::CheckpointBinding,
+    ) -> Result<Self, Error> {
+        if binding.operation != operation.as_uuid() {
+            return Err(Error::Validation);
+        }
+        let provenance = supervisor
+            .shared_history_provenance(&binding)
+            .map_err(|_| Error::Validation)?;
+        self.shared_history.insert(operation, provenance);
+        Ok(self)
+    }
+
     fn resolve_port(&self, operation: OperationId) -> Result<Arc<ControllerPort>, Error> {
         #[cfg(feature = "fixture-ipc")]
         if let Some(ports) = &self.operation_ports {
@@ -293,6 +332,8 @@ impl OsDeployController {
             fake,
             #[cfg(feature = "fixture-ipc")]
             operation_ports: None,
+            #[cfg(feature = "fixture-ipc")]
+            shared_history: std::collections::HashMap::new(),
             admission: OsDeploySendAdmission::new(),
             workers: Semaphore::new(cap as usize),
             cap,
