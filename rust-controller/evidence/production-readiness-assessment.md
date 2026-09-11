@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `74cb6e3f`: this branch and PR #65 contain an accumulated
+Current scope at `9da7a06b`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -69,7 +69,13 @@ point-in-time fixture stop-authority revalidation: it reloads locked current
 owner/cancellation/lease/grace state, preserves the original sample authority
 clock, and rejects changed or foreign fields. The PostgreSQL regression and
 pure comparator checks pass. This is not an atomic DB-to-IPC capability; shared
-supervisor transport and cancellation ordering remain open.
+supervisor transport and cancellation ordering remain open. Commit `9da7a06b`
+adds `OsDeployController::admit_fixture_stop`, sequencing PostgreSQL authority
+preparation, versioned sample consumption, ownership/cancellation revalidation,
+committed-request checking, and typed supervisor admission. The barrier remains
+entered: no Stop submission, release, Stopped publication, or DB-to-journal
+atomicity is claimed. The transport and PostgreSQL/native-fake tests pass, while
+one shared physical StartPe/DB integration proof remains open.
 
 At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires
