@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `c53d8342`: this branch and PR #65 contain an accumulated
+Current scope at `b615ab17`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -80,7 +80,13 @@ even a valid entered EnsureStopped request returns typed
 authorization or status across worker death/restart. This is refusal evidence;
 the recoverable DB-to-IPC send/outbox and positive stop effect remain open. The
 transport and PostgreSQL/native-fake tests pass, while one shared physical
-StartPe/DB integration proof remains open.
+StartPe/DB integration proof remains open. Commit `b615ab17` adds an immutable
+supervisor stop-admission receipt carrying the persisted admission, selected
+power, StartPe predecessor, stop identity, authority, and original clock.
+Exact replay/reload preserves its digest and refusal responses carry no receipt.
+This is supervisor evidence, not a send capability; the durable PostgreSQL
+outbox, cancellation ordering, ambiguous-acknowledgement recovery, and physical
+stop execution remain open.
 
 At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires
