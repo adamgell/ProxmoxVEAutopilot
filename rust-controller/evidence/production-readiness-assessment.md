@@ -27,6 +27,15 @@ and recovered the final ledger without timeout or `Storage` failure. This is
 positive focused recovery evidence, but the earlier broad all-features workspace
 run remains unresolved because suite-level fixture contention was not ruled out.
 
+Clean serial all-features workspace verification at `8c1cbb69` then completed
+successfully with `RUST_MIN_STACK=16777216`, offline/locked Cargo, and one test
+thread. It passed the full workspace test and doctest set, including the
+previously red worker-death path, PostgreSQL-native (60), PostgreSQL OSDeploy
+(65), durability (128), registration (51), scheduler (62), fixture, visibility,
+compatibility, and service suites, with zero failures. This closes the broad
+macOS test gate for that source; it does not close exact-source Linux or the
+remaining production integration gates.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.

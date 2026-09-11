@@ -30,6 +30,13 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   broad-suite contention/startup condition, but does not close the full
   all-features workspace gate.
 
+- A clean serial all-features workspace run at `8c1cbb69` completed with zero
+  failures across the full test and doctest set. It includes the worker-death
+  recovery path and the PostgreSQL-native, OSDeploy, durability, registration,
+  scheduler, fixture, visibility, compatibility, and service suites. This is
+  complete macOS workspace evidence for that source; Linux exact-source and
+  production integration gates remain distinct.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)
