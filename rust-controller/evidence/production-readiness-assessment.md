@@ -350,6 +350,34 @@ qualification or production-readiness gates.
 
 ## Not yet proven
 
+### PeComplete input authority checked at `70ebd0fc`
+
+The approved boot-files-staged milestone is named in
+`docs/superpowers/specs/2026-09-05-rust-osdeploy-durability/next-durable-transaction-boundaries.md:89`,
+but its immutable result definition is not implemented. In particular,
+`crates/postgres-store/src/osdeploy/package_semantics.rs:69-77` produces only the
+registered identity and plan, while
+`crates/osdeploy-adapter/src/pe_complete_boundary.rs:124-149` requires the exact
+required step identities to come from durable deployment history. The current
+plan has no required WinPE step set or boot-files milestone payload schema;
+the only callers of that boundary are tests supplying their own IDs.
+Authentication of the newly accepted PeRegister result supplies session provenance,
+not the missing expected completion evidence. Consequently a signed
+`boot_files_staged=true` callback cannot yet select PeComplete success.
+
+The next schema must bind a versioned, server-admitted completion requirement to
+the immutable package: stable required step/milestone IDs, required result fields
+and success/failure semantics, plus the canonical definition digest. Delivery
+must expose that same definition under the existing session/package binding;
+callback adjudication must resolve it from committed state, retain the original
+PeCompletion deadline, and select equivalent versus conflicting reports durably.
+This is a completion-evidence prerequisite independent of the later generic
+guest-action API. Once present, the selected result transaction must also create
+the real grace attempt in Waiting with its original scope and due proof, as
+specified by `next-durable-schema-proposal.md:49-51`; a grace-only placeholder
+would not close this prerequisite. This source audit enabled no accepting API
+and claims no new runtime tests.
+
 - Complete sixteen-stage OSDeploy service execution, including callback, guest-agent, host-side QGA, media, firmware, disk-growth, and terminal/recovery behavior.
 - Independent-process restart, crash, restore, rollback, and response-loss behavior across the complete service workflow.
 - Compatibility with every retained Python/Ansible ingress and callback contract under a real dual-executor handoff.
