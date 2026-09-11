@@ -64,6 +64,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Commit `a187aed` adds refusal-only InstallQgaWatchdog binding to VerifyQga results/receipts, watchdog operation/attempt, run, VM, and agent identity. Missing, wrong-version, substituted, and incomplete claims refuse; authentication, trusted history, service postconditions, installation, and later agent stages remain open.
 - Commit `ed76e78` adds refusal-only InstallAgent artifact binding to watchdog/VerifyQga predecessors, exact VM/agent identity, operation/attempt, package UUID/hash, and watchdog receipt digest. Missing, mismatched, substituted, and incomplete claims refuse; byte verification, signing, enrollment, service proof, and later agent stages remain open.
 - Commit `c9aa2f6` adds refusal-only AgentHeartbeat session/freshness/sequence binding to InstallAgent evidence. Missing, stale, future, substituted, replayed, and out-of-order reports refuse; authenticated agent, trusted timestamp, durable sequence CAS, and VerifyOperational remain open.
+- Commit `8ef7f77` adds refusal-only VerifyOperational aggregation across VM/run/agent/session/artifact, heartbeat, operation/attempt, and freshness bindings. Missing, partial, contradictory, stale, version-mismatched, and substituted aggregates refuse; this completes later-stage refusal contracts, not executable sixteen-stage readiness.
 
 ### Final owned Linux full-run result (2026-09-10)
 
