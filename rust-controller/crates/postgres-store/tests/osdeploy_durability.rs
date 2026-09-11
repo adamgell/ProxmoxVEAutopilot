@@ -946,6 +946,7 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                             .unwrap()
                             .unwrap();
                         assert!(*stop.deadline_at() > elapsed.deadline_at().unwrap());
+                        assert!(replacement.fixture_stop_authority(&stop).await.is_err());
                         replacement
                             .start_osdeploy_bound(&stop, s.ids.workflow_sha256())
                             .await
@@ -997,6 +998,24 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                             .begin_osdeploy_pve_dispatch(&stop, current.revision(), event, &request)
                             .await
                             .unwrap();
+                        let authority = replacement.fixture_stop_authority(&stop).await.unwrap();
+                        assert_eq!(authority.grace_operation, grace.as_uuid());
+                        assert_eq!(authority.evidence_fence, request.binding().evidence_fence());
+                        assert_eq!(authority.grace_due_unix_ms, due.timestamp_millis() as u64);
+                        assert_eq!(
+                            authority.original_deadline_unix_ms,
+                            stop.deadline_at().timestamp_millis() as u64
+                        );
+                        assert!(authority.decision_unix_ms >= authority.grace_due_unix_ms);
+                        assert!(authority.lease_checked_unix_ms >= authority.decision_unix_ms);
+                        assert!(authority.lease_checked_unix_ms < authority.lease_expires_unix_ms);
+                        assert!(
+                            s.db.scheduler()
+                                .with_fixture_credential_delivery()
+                                .fixture_stop_authority(&stop)
+                                .await
+                                .is_err()
+                        );
                         assert!(
                             replacement
                                 .begin_osdeploy_pve_dispatch(

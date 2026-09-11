@@ -13,10 +13,18 @@ lease check, and be no more than five seconds old. Guarded-grace decision time
 must follow its due time and precede the lease check; admission must precede both
 lease expiry and the original operation deadline.
 
-The fixture supervisor supplies the grace operation, decision event, evidence
-fence and clocks. This IPC layer does not independently query PostgreSQL or prove
-that the supplied event is the scheduler's actual guarded-grace decision. A
-connected scheduler supervisor must supply and verify that authority.
+`Scheduler::fixture_stop_authority` now collects the grace operation, selected
+decision event, committed request evidence fence and current lease clocks from
+PostgreSQL. It takes only a lease grant, acquires the normal authority/run locks,
+reloads the full guarded-grace history, and validates the current owner, token,
+attempt, generation, cancellation state and deadline. An uncommitted stop and a
+different worker are refused. The operation creates no journal event or lease.
+
+The IPC `AdmitStop` layer still accepts a supervisor-supplied DTO; it does not
+independently query PostgreSQL. There is no connected supervisor consumer calling
+the scheduler method or publishing fresh power after its database clock yet.
+Consequently this method is a database observation, not an unforgeable dispatch
+capability, and does not close the supervisor integration gate.
 
 Admission leaves the barrier entered. It creates no stop attempt, effect,
 receipt, task success or stopped-power fact, and cannot release stop dispatch.
@@ -27,6 +35,17 @@ history without treating old authority as current release permission. Replacemen
 worker adoption of an admitted stop remains a separate implementation step.
 
 ## Verification on macOS
+
+The PostgreSQL `fixture_pecomplete_authenticated_report_and_atomic_grace` proof
+passed with authority collection assertions (1 test, 145.31 seconds). It reaches
+the stop through authenticated completion and the real elapsed grace clock, then
+proves pre-dispatch refusal, current-owner collection with the exact committed
+request fence/deadline, and refusal of another worker with the same enabled
+capabilities. The first run exposed a test identity mistake: its purported other
+worker used the same scheduler worker ID. The corrected negative case uses a
+different worker ID. Default compilation and strict all-feature/all-target
+postgres-store Clippy passed after the correction, as did formatting and whitespace
+checks.
 
 The focused ledger test passed. It exercises accepted-receipt-only refusal,
 grace/lease/deadline ordering, missing freshness, wrong daemon generation,
@@ -45,9 +64,10 @@ formatting and whitespace checks passed.
 
 ## Remaining connected work
 
-The present fresh-power source is the StartPe completion publication. General
-post-grace execution needs a refreshable current-power publication tied to the
-current lease, plus scheduler authority collection. Successful stop dispatch,
+The ledger preserves refreshable current-power observations separately from the
+immutable StartPe completion publication. General post-grace execution still
+needs a supervisor IPC consumer that obtains the database authority and publishes
+fresh power after that lease check. Successful stop dispatch,
 task-success and stopped-power publication, restoration/reconciliation and
 independent recovery are still gated. This evidence does not qualify production
 or legacy behavior, and current-source Linux qualification remains outstanding.

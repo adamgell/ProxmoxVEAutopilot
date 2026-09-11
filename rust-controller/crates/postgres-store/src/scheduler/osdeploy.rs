@@ -21,6 +21,8 @@ mod fixture_delivery;
 #[cfg(feature = "fixture-ipc")]
 pub(crate) mod fixture_registration;
 #[cfg(feature = "fixture-ipc")]
+mod fixture_stop;
+#[cfg(feature = "fixture-ipc")]
 pub use fixture_delivery::{
     FixtureCredentialEnvelope, FixtureCredentialSink, FixtureDeliveryAck, FixtureDeliveryRecovery,
 };
