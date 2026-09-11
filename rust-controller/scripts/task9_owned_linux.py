@@ -122,7 +122,7 @@ def validate_receipt(value):
 
 def profile_args(session, role, pg_id=None, receipt_path=None, script_path=None, mode="smoke"):
     require(re.fullmatch(r"[0-9a-f]{32}", session) is not None and role in CAPS)
-    require(mode in ("smoke", "full", "fixture"))
+    require(mode in ("smoke", "full", "fixture", "recovery"))
     argv = ["create", "--pull=never", "--name", "task9-" + session + "-" + role,
             "--label", LABEL + ".session=" + session, "--label", LABEL + ".role=" + role,
             "--memory", str(CAPS[role]), "--memory-swap", str(CAPS[role]),
@@ -226,7 +226,7 @@ CGROUP_FILES = ["/sys/fs/cgroup/" + name for name in
 
 def workload(mode):
     """Closed test selections; fixture children are launched only by their parent tests."""
-    require(mode in ("smoke", "full", "fixture"), "unknown workload")
+    require(mode in ("smoke", "full", "fixture", "recovery"), "unknown workload")
     if mode == "fixture":
         return (["cargo", "test", "--offline", "--locked", "-p", "pve-port",
                  "--features", "fixture-ipc", "--no-fail-fast", "--",
@@ -234,6 +234,10 @@ def workload(mode):
     argv = ["cargo", "test", "--offline", "--locked", "-p", "postgres-store"]
     if mode == "smoke":
         return (argv + ["--lib", SMOKE, "--", "--exact", "--nocapture", "--test-threads=1"], 180)
+    if mode == "recovery":
+        return (["cargo", "test", "--offline", "--locked", "-p", "operation-controller",
+                 "--features", "fixture-ipc", "--test", "postgres_fixture_clone",
+                 "configure_worker_death_after_", "--", "--nocapture", "--test-threads=1"], 300)
     return (argv + ["-p", "scheduler", "-p", "osdeploy-adapter", "-p", "operation-controller",
                    "--all-features", "--no-fail-fast", "--", "--include-ignored", "--nocapture", "--test-threads=1"]
             + [argument for child in (*SUPERVISED_CHILDREN, *DSN_ONLY_TESTS)
@@ -394,10 +398,10 @@ def host(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--inside", choices=("smoke", "full", "fixture"))
+    parser.add_argument("--inside", choices=("smoke", "full", "fixture", "recovery"))
     parser.add_argument("--runner-image")
     parser.add_argument("--evidence")
-    parser.add_argument("--mode", choices=("smoke", "full", "fixture"), default="smoke")
+    parser.add_argument("--mode", choices=("smoke", "full", "fixture", "recovery"), default="smoke")
     args = parser.parse_args()
     if args.inside:
         return inside(args.inside)

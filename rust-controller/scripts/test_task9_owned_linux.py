@@ -51,6 +51,14 @@ class ContractTests(unittest.TestCase):
                                  "session_schema_creation_rolls_back_without_leaving_tables"])
         self.assertFalse(any("owned_tmpfs" in value for value in skips))
 
+    def test_recovery_workload_is_narrow_and_bounded(self):
+        argv, seconds = gate.workload("recovery")
+        self.assertEqual(seconds, 300)
+        self.assertIn("operation-controller", argv)
+        self.assertIn("postgres_fixture_clone", argv)
+        self.assertIn("configure_worker_death_after_", argv)
+        self.assertNotIn("--include-ignored", argv)
+
     def receipt(self):
         return {"version": 1, "session": "a" * 32, "pg_id": "b" * 64,
                 "pg_image": gate.PG_IMAGE, "runner_image": gate.RUNNER_IMAGE,
