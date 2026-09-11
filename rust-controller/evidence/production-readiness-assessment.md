@@ -63,6 +63,11 @@ progress and macOS queued; this is not completed CI evidence. No exact-source
 Linux runtime qualification is recorded for this current source. Historical
 sections below retain the limits at their named revisions.
 
+The generic callback mapping table below remains intentionally pending for the
+legacy action/result surfaces. It does not negate the fixture-only PeRegister
+transaction and focused proof added in `e47ece9b` and exposed through the
+controller in `617f5b0b`.
+
 Commit `029555f1` adds safe operation-scoped fixture
 port resolution. An immutable per-operation binding is retained across the
 complete invocation, and the capacity-two interleaving proof verifies isolated
