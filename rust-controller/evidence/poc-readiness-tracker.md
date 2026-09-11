@@ -9,7 +9,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Disposable non-production mutation proof and production cutover each require separate approval. A goal to become ready does not grant those approvals.
 - RustedOutClient is excluded. Reliability, OOBE, remote control, operator UX, adoption and other downstream product work wait for Rust contracts to stabilize.
 
-### Current credential and delivery gate (source `02a4f69e`)
+### Current credential and delivery gate (source `8ca992d6`)
 
 Trusted server-created fixture origins and durable fixture credential alias
 ownership are implemented. The private transaction-local alias retention helper
@@ -28,7 +28,7 @@ still open. Authenticated callbacks, PeRegister, production legacy-run import,
 later workflow stages, and production-candidate acceptance remain incomplete.
 Historical milestone sections below describe their named revisions; statements
 that alias ownership was absent at those revisions do not describe current code.
-The current PR head is `02a4f69e` (verified 2026-09-11). GitHub reports the
+The current PR head is `8ca992d6` (verified 2026-09-11). GitHub reports the
 duplicated Linux and macOS-arm64 checks as queued, with no completed
 qualification conclusion; no readiness claim is inferred from that snapshot.
 
