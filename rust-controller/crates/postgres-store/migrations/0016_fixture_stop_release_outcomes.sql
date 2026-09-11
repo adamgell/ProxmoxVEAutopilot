@@ -5,6 +5,9 @@ ALTER TABLE rust_controller.fixture_stop_outbox
     CHECK(provenance_sha256 IS NULL OR provenance_sha256 ~ '^[0-9a-f]{64}$');
 ALTER TABLE rust_controller.fixture_stop_outbox
     ADD COLUMN IF NOT EXISTS supervisor_generation uuid;
+ALTER TABLE rust_controller.fixture_stop_outbox
+    ADD COLUMN IF NOT EXISTS request_sha256 text
+    CHECK(request_sha256 IS NULL OR request_sha256 ~ '^[0-9a-f]{64}$');
 
 CREATE TABLE IF NOT EXISTS rust_controller.fixture_stop_release_outcomes (
     operation_id uuid PRIMARY KEY

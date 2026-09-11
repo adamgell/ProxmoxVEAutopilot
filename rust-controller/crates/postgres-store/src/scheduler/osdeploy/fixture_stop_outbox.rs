@@ -10,6 +10,11 @@ pub struct FixtureStopOutboxConsumedV1 {
     pub attempt_id: Uuid,
     pub lease_token: Uuid,
     pub generation: i64,
+    /// Digest of the committed PeEnsureStopped request.  This is derived
+    /// from the locked execution snapshot, rather than supplied by the
+    /// consumer, so a later release proposal cannot substitute another stop
+    /// request while retaining the same admission/sample evidence.
+    pub request_sha256: String,
     pub supervisor_generation: Uuid,
     pub admission_sha256: String,
     pub sample_sha256: String,
@@ -201,13 +206,14 @@ impl Scheduler {
             millis < sample.authority.lease_expires_unix_ms
                 && millis < sample.authority.original_deadline_unix_ms,
         )?;
-        let selected = sqlx::query("SELECT attempt_id,lease_token,generation,admission_sha256,admission_json,sample_json,provenance_sha256,supervisor_generation FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
+        let selected = sqlx::query("SELECT attempt_id,lease_token,generation,request_sha256,admission_sha256,admission_json,sample_json,provenance_sha256,supervisor_generation FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
             .bind(grant.operation_id().as_uuid()).fetch_optional(&mut *tx).await?;
         if let Some(row) = selected {
             wire::require(
                 row.try_get::<Uuid, _>("attempt_id")? == grant.attempt_id().as_uuid()
                     && row.try_get::<Uuid, _>("lease_token")? == grant.lease_token()
                     && row.try_get::<i64, _>("generation")? == grant.generation()
+                    && row.try_get::<String, _>("request_sha256")? == request.request_sha256()
                     && row.try_get::<String, _>("admission_sha256")? == digest
                     && row.try_get::<String, _>("admission_json")? == admission
                     && row.try_get::<String, _>("sample_json")? == sample_json
@@ -219,9 +225,9 @@ impl Scheduler {
                         == Some(provenance.generation()),
             )?;
         } else {
-            sqlx::query("INSERT INTO rust_controller.fixture_stop_outbox(operation_id,attempt_id,lease_token,generation,admission_sha256,admission_json,sample_json,provenance_sha256,supervisor_generation,selected_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+            sqlx::query("INSERT INTO rust_controller.fixture_stop_outbox(operation_id,attempt_id,lease_token,generation,request_sha256,admission_sha256,admission_json,sample_json,provenance_sha256,supervisor_generation,selected_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
                 .bind(grant.operation_id().as_uuid()).bind(grant.attempt_id().as_uuid()).bind(grant.lease_token()).bind(grant.generation())
-                .bind(digest).bind(admission).bind(sample_json).bind(&provenance_sha256).bind(provenance.generation()).bind(checked).execute(&mut *tx).await?;
+                .bind(request.request_sha256()).bind(digest).bind(admission).bind(sample_json).bind(&provenance_sha256).bind(provenance.generation()).bind(checked).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -246,7 +252,7 @@ impl Scheduler {
             snapshot.plan().stage() == OsDeployStage::PeEnsureStopped && !snapshot.cancelled(),
         )?;
         current_grant(&mut tx, self, grant, &snapshot).await?;
-        let row = sqlx::query("SELECT attempt_id,lease_token,generation,admission_sha256,admission_json,sample_json,provenance_sha256,supervisor_generation FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
+        let row = sqlx::query("SELECT attempt_id,lease_token,generation,request_sha256,admission_sha256,admission_json,sample_json,provenance_sha256,supervisor_generation FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
             .bind(grant.operation_id().as_uuid()).fetch_one(&mut *tx).await?;
         let selected: FixtureStopAdmissionReceiptV1 =
             serde_json::from_str(&row.try_get::<String, _>("admission_json")?)
@@ -263,7 +269,12 @@ impl Scheduler {
                     == row.try_get::<String, _>("admission_sha256")?
                 && row.try_get::<Uuid, _>("attempt_id")? == grant.attempt_id().as_uuid()
                 && row.try_get::<Uuid, _>("lease_token")? == grant.lease_token()
-                && row.try_get::<i64, _>("generation")? == grant.generation(),
+                && row.try_get::<i64, _>("generation")? == grant.generation()
+                && row.try_get::<String, _>("request_sha256")?
+                    == snapshot
+                        .dispatch()
+                        .ok_or(Error::CapabilityUnavailable)?
+                        .request_sha256(),
         )?;
         let checked = now(&mut tx).await?;
         let millis = u64::try_from(checked.timestamp_millis()).map_err(|_| Error::Validation)?;
@@ -274,6 +285,7 @@ impl Scheduler {
         let sample_value = serde_json::to_value(&sample).map_err(|_| Error::Validation)?;
         let sample_sha256 =
             event_journal::payload_digest(&sample_value).map_err(|_| Error::Validation)?;
+        let request_sha256 = row.try_get::<String, _>("request_sha256")?;
         let provenance_sha256 = row
             .try_get::<Option<String>, _>("provenance_sha256")?
             .ok_or(Error::CapabilityUnavailable)?;
@@ -291,6 +303,7 @@ impl Scheduler {
             attempt_id: grant.attempt_id().as_uuid(),
             lease_token: grant.lease_token(),
             generation: grant.generation(),
+            request_sha256,
             supervisor_generation,
             admission_sha256: row.try_get("admission_sha256")?,
             sample_sha256,
@@ -308,6 +321,7 @@ fn validate_consumed_proposal(
             && consumed.attempt_id == proposal.attempt()
             && consumed.lease_token == proposal.lease_owner()
             && consumed.supervisor_generation == proposal.generation()
+            && consumed.request_sha256 == proposal.request_sha256()
             && consumed.admission_sha256 == proposal.receipt_sha256()
             && consumed.sample_sha256 == proposal.sample_sha256()
             && consumed.provenance_sha256 == proposal.provenance_sha256(),
