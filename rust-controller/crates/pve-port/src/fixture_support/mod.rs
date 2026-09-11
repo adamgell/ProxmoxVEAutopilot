@@ -48,6 +48,7 @@ mod fixture_daemon;
 mod inventory_read;
 mod post_dispatch;
 mod post_dispatch_publication;
+mod test_power_source;
 pub use post_dispatch_publication::{
     FixturePostDispatchPublication, FixtureSynchronousPublication,
 };

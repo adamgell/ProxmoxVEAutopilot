@@ -22,6 +22,160 @@ mod power_refresh_tests {
     use super::*;
 
     #[test]
+    fn explicit_test_power_refreshes_completed_start_and_fences_restart() {
+        use super::super::durable_fixture_log::{
+            FixtureLedgerStage, PowerStateV1, StageBinding, VmState,
+        };
+        let directory =
+            std::env::temp_dir().join(format!("power-source-publication-{}", Uuid::now_v7()));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("fixture.log");
+        let mut log = FixtureLog::create(&path).unwrap();
+        let mut publications = Publications::new();
+        let generation = publications.generation();
+        let clock = now().unwrap();
+        let digest = "a".repeat(64);
+        let configure = StageBinding {
+            stage: FixtureLedgerStage::ConfigurePe,
+            attempt: Uuid::now_v7(),
+            generation: Uuid::now_v7(),
+            owner: Uuid::now_v7(),
+        };
+        let operation = Uuid::now_v7();
+        log.record_stage_attempt(operation, &digest, configure)
+            .unwrap();
+        log.record_effect_receipt(
+            1,
+            109,
+            None,
+            VmState {
+                disk_bytes: 120,
+                pe_configured: true,
+            },
+            Some(b"configure".to_vec()),
+        )
+        .unwrap();
+        log.record_power_observation(
+            operation,
+            &digest,
+            configure,
+            b"configure",
+            PowerStateV1::Stopped,
+            generation,
+            clock - 20,
+            clock - 19,
+        )
+        .unwrap();
+        let start = StageBinding {
+            stage: FixtureLedgerStage::StartPe,
+            ..configure
+        };
+        let operation = Uuid::now_v7();
+        let receipt = br#"{"receipt":{"task":"fixture-start-task"}}"#;
+        let prior = log.power_records()[0].clone();
+        log.record_start_transition(operation, &digest, start, &prior, receipt.to_vec(), || {
+            Ok(())
+        })
+        .unwrap();
+        log.record_start_observation(
+            operation,
+            &digest,
+            start,
+            generation,
+            clock - 18,
+            clock - 17,
+            "fixture-start-task".into(),
+            clock - 17,
+            clock - 17,
+        )
+        .unwrap();
+        let identity = super::super::FixtureStageIdentity {
+            operation,
+            stage: start.stage,
+            attempt: start.attempt,
+            generation: start.generation,
+            owner: start.owner,
+            request_sha256: digest,
+        };
+        let sample = super::super::test_power_source::TestPowerSample {
+            version: 1,
+            identity: identity.clone(),
+            vmid: 109,
+            daemon_generation: generation,
+            observed_unix_ms: clock,
+            lease_expires_unix_ms: clock + 10000,
+            power: super::super::SeedPower {
+                power: crate::PowerState::Running,
+                locked: false,
+            },
+        };
+        let before = fs::read(&path).unwrap();
+        assert!(
+            publications
+                .handle(
+                    Command::InstallTestPowerSource {
+                        sample: sample.clone()
+                    },
+                    false,
+                    &mut log,
+                    &directory
+                )
+                .is_err()
+        );
+        publications
+            .handle(
+                Command::InstallTestPowerSource { sample },
+                true,
+                &mut log,
+                &directory,
+            )
+            .unwrap();
+        assert_eq!(
+            before,
+            fs::read(&path).unwrap(),
+            "installing source does not publish power"
+        );
+        let response = publications
+            .handle(
+                Command::ConsumeStopCurrentPower {
+                    identity: identity.clone(),
+                },
+                true,
+                &mut log,
+                &directory,
+            )
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&response).unwrap();
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["sample"]["observed_unix_ms"], clock);
+        assert_eq!(log.records().len(), 2);
+        assert_eq!(log.effects().len(), 2);
+        assert_eq!(
+            serde_json::to_value(log.power_records().last().unwrap()).unwrap()["observed_unix_ms"],
+            clock
+        );
+        let published = fs::read(&path).unwrap();
+        drop(log);
+        let mut log = FixtureLog::recover(&path).unwrap();
+        assert!(
+            Publications::new()
+                .handle(
+                    Command::ConsumeStopCurrentPower { identity },
+                    true,
+                    &mut log,
+                    &directory
+                )
+                .is_err()
+        );
+        assert_eq!(published, fs::read(&path).unwrap());
+        drop(log);
+        for entry in fs::read_dir(&directory).unwrap() {
+            fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
     fn current_power_consumer_refuses_without_independent_source() {
         let directory = std::env::temp_dir().join(format!("power-consumer-{}", Uuid::now_v7()));
         fs::create_dir(&directory).unwrap();
@@ -139,6 +293,10 @@ pub struct FixtureSynchronousPublication {
 #[allow(clippy::enum_variant_names)] // Wire command names share their protocol namespace.
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Command {
+    /// Explicit synthetic input, restricted to the fixture supervisor socket.
+    InstallTestPowerSource {
+        sample: super::test_power_source::TestPowerSample,
+    },
     /// Probe the supervisor-owned live read path. Cached completion publications
     /// and worker-supplied power are deliberately not accepted as a source.
     ConsumeStopCurrentPower {
@@ -256,15 +414,54 @@ impl Publications {
         directory: &Path,
     ) -> io::Result<Vec<u8>> {
         let (value, observation, stage) = match command {
+            Command::InstallTestPowerSource { sample } if supervisor => {
+                sample.install(directory, self.generation, now()?)?;
+                return Ok(serde_json::to_vec(&serde_json::json!({"ok":true}))?);
+            }
             Command::ConsumeStopCurrentPower { identity } if supervisor => {
                 identity.validate()?;
                 if identity.stage != super::FixtureLedgerStage::StartPe {
                     return Err(invalid());
                 }
-                // There is no independent current-power reader in this daemon.
-                // In particular, neither accepted task receipts nor World can
-                // establish power after shutdown grace. Do not refresh their
-                // timestamp or enter the publication/admission paths.
+                match super::test_power_source::TestPowerSample::read(
+                    directory,
+                    &identity,
+                    self.generation,
+                    now()?,
+                ) {
+                    Ok(sample) => {
+                        let published = if sample.power.power == crate::PowerState::Running {
+                            let receipt = log
+                                .accepted_stage_effect(
+                                    identity.operation,
+                                    &identity.request_sha256,
+                                    identity.ledger_binding(),
+                                )?
+                                .and_then(|effect| effect.receipt())
+                                .ok_or_else(invalid)?
+                                .to_vec();
+                            Some(log.refresh_start_power(
+                                identity.operation,
+                                &identity.request_sha256,
+                                identity.ledger_binding(),
+                                &receipt,
+                                self.generation,
+                                sample.daemon_generation,
+                                sample.vmid,
+                                sample.observed_unix_ms,
+                                now()?,
+                            )?)
+                        } else {
+                            None
+                        };
+                        return Ok(serde_json::to_vec(&serde_json::json!({
+                            "ok":true, "source":"explicit_test_power", "sample":sample,
+                            "running_publication": published,
+                        }))?);
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
                 return Ok(serde_json::to_vec(&serde_json::json!({
                     "ok": false,
                     "reason": "current_power_source_unavailable",
