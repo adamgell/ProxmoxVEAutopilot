@@ -12,7 +12,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `3bfcd11c`: this branch and PR #65 contain an accumulated
+Current scope at `2d82f114`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -66,11 +66,15 @@ sections below retain the limits at their named revisions.
 Commit `3bfcd11c` binds the fixture delivery path to an immutable selected
 completion-package schema, preserving historical origins while making the
 canonical `boot-files-staged.v1` definition available to arming, issuance and
-reload. PeComplete report adjudication and truthful grace activation remain
-closed. The generic callback mapping table below remains intentionally pending for the
-legacy action/result surfaces. It does not negate the fixture-only PeRegister
-transaction and focused proof added in `e47ece9b` and exposed through the
-controller in `617f5b0b`.
+reload. Commit `2d82f114` now adds fixture-only authenticated PeComplete report
+adjudication and an atomic, lease-free parked shutdown-grace record. Equivalent
+reports replay immutably; conflicting, invalid, stale, cancelled, or
+unsupported reports fail closed. The grace due projection can be repaired from
+immutable history. Elapsed-grace adjudication still refuses the parked scope,
+so EnsureStopped and stop-stage readiness remain open. The generic callback
+mapping table below remains intentionally pending for legacy action/result
+surfaces. This fixture-only slice is not full callback compatibility or the
+entire port.
 
 Commit `029555f1` adds safe operation-scoped fixture
 port resolution. An immutable per-operation binding is retained across the
@@ -359,7 +363,7 @@ qualification or production-readiness gates.
 
 ## Not yet proven
 
-### PeComplete input authority checked at `70ebd0fc`
+### PeComplete input authority checked at `70ebd0fc` (historical gap; fixture slice closed at `2d82f114`)
 
 The approved boot-files-staged milestone is named in
 `docs/superpowers/specs/2026-09-05-rust-osdeploy-durability/next-durable-transaction-boundaries.md:89`,
@@ -371,8 +375,9 @@ required step identities to come from durable deployment history. The current
 plan has no required WinPE step set or boot-files milestone payload schema;
 the only callers of that boundary are tests supplying their own IDs.
 Authentication of the newly accepted PeRegister result supplies session provenance,
-not the missing expected completion evidence. Consequently a signed
-`boot_files_staged=true` callback cannot yet select PeComplete success.
+not the missing expected completion evidence at that historical checkpoint.
+Consequently a signed `boot_files_staged=true` callback could not yet select
+PeComplete success there.
 
 The next schema must bind a versioned, server-admitted completion requirement to
 the immutable package: stable required step/milestone IDs, required result fields
@@ -385,7 +390,8 @@ guest-action API. Once present, the selected result transaction must also create
 the real grace attempt in Waiting with its original scope and due proof, as
 specified by `next-durable-schema-proposal.md:49-51`; a grace-only placeholder
 would not close this prerequisite. This source audit enabled no accepting API
-and claims no new runtime tests.
+and claims no new runtime tests; it is retained as the historical reason for
+the schema work below.
 
 Subsequent source progress: the `fixture-ipc` feature now exposes explicit
 `materialize_fixture_completion_package()`. Its separate canonical package
@@ -397,10 +403,11 @@ false reports failure, and absent or extra fields must be rejected. This defines
 reported fixture evidence, not independent verification of guest disk contents.
 Focused tests verify determinism, exact canonical digest, changed operation
 bindings, rejection of a changed unregistered plan fingerprint, and preservation
-of the existing materialization bytes. Delivery still uses its existing schema;
-adopting this explicit schema, validating reports, and the atomic grace
-transaction remain unimplemented. No callback acceptance is enabled by producing
-the package.
+of the existing materialization bytes. Delivery now uses the persisted
+completion-schema selector for the fixture entry point. Commit `2d82f114`
+validates the selected package and report, persists the fixture-only completion
+result, and creates/repairs a parked grace projection. No callback acceptance is
+enabled for legacy or generic action/result surfaces by this package work.
 
 Delivery adoption now has an explicit immutable origin selector. Migration 0013
 defaults existing origins to their original package schema; only the new
