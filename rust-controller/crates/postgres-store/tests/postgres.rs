@@ -28,6 +28,10 @@ const EXPECTED_TABLES: &[&str] = &[
     "fixture_pe_delivery_exposures",
     #[cfg(feature = "fixture-ipc")]
     "fixture_pe_registrations",
+    #[cfg(feature = "fixture-ipc")]
+    "fixture_stop_outbox",
+    #[cfg(feature = "fixture-ipc")]
+    "fixture_stop_outbox_consumptions",
     "journal_events",
     "native_decisions",
     "native_dispatches",
@@ -164,6 +168,24 @@ async fn migration_creates_constrained_foundation_tables() {
     .expect("foundation table inventory must be queryable");
 
     assert_eq!(tables, EXPECTED_TABLES);
+    #[cfg(feature = "fixture-ipc")]
+    {
+        // Both selected evidence and possible-exposure markers survive reload
+        // without permitting UPDATE, DELETE or TRUNCATE through normal SQL.
+        let triggers: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_trigger WHERE tgrelid IN ('rust_controller.fixture_stop_outbox'::regclass,'rust_controller.fixture_stop_outbox_consumptions'::regclass) AND NOT tgisinternal AND tgname IN ('stop_outbox_immutable','stop_outbox_no_truncate')")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(triggers, 4);
+        assert!(
+            sqlx::query("TRUNCATE rust_controller.fixture_stop_outbox_consumptions")
+                .execute(&pool)
+                .await
+                .is_err()
+        );
+        let orphan = sqlx::query("INSERT INTO rust_controller.fixture_stop_outbox_consumptions(operation_id,consumed_at) VALUES($1,now())")
+            .bind(uuid::Uuid::now_v7()).execute(&pool).await;
+        assert!(orphan.is_err());
+        PgStore::new(pool.clone()).migrate().await.unwrap();
+    }
 }
 
 #[tokio::test]
