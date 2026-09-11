@@ -4,7 +4,6 @@ use super::{OsDeployControllerError as Error, READ_BOUND, before_close, budget_d
 use postgres_store::{
     LeaseGrant, OsDeployDispatchPermit, OsDeployExecutionError, OsDeployResponseCapture, Scheduler,
 };
-use pve_port::ProvisioningFakePort;
 use std::time::Duration;
 use tokio::time::{Instant, sleep, timeout_at};
 
@@ -25,10 +24,10 @@ fn retry_delay(attempt: usize) -> Duration {
     clippy::too_many_arguments,
     reason = "governing private signature keeps consumed capabilities and original endpoint explicit"
 )]
-pub(super) async fn submit_and_capture_once<P: ProvisioningFakePort + ?Sized>(
+pub(super) async fn submit_and_capture_once(
     admission: &OsDeploySendAdmission,
     scheduler: &Scheduler,
-    fake: &P,
+    fake: &super::ControllerPort,
     grant: &LeaseGrant,
     workflow_sha256: &str,
     permit: OsDeployDispatchPermit,
@@ -69,6 +68,20 @@ pub(super) async fn submit_and_capture_once<P: ProvisioningFakePort + ?Sized>(
     };
     // A returned original response needs no new authority. The original outer
     // controller deadline still owns this entire future, including each retry.
+    #[cfg(feature = "fixture-ipc")]
+    let original = fake.original_start_pe_response()?;
+    #[cfg(feature = "fixture-ipc")]
+    let fixture_input = original
+        .as_ref()
+        .map(|response| capture.bind_fixture_start_pe_response(response))
+        .transpose()?;
+    #[cfg(feature = "fixture-ipc")]
+    if fixture_input
+        .as_ref()
+        .is_some_and(|input| input.semantic_receipt() != &receipt)
+    {
+        return Err(Error::Validation);
+    }
     for attempt in 0..=2 {
         if attempt > 0
             && timeout_at(whole, sleep(retry_delay(attempt)))
@@ -77,10 +90,15 @@ pub(super) async fn submit_and_capture_once<P: ProvisioningFakePort + ?Sized>(
         {
             return Ok(OsDeploySendObservation::Uncertain);
         }
-        match timeout_at(
-            whole,
-            scheduler.record_osdeploy_pve_receipt(&capture, &receipt),
-        )
+        match timeout_at(whole, async {
+            #[cfg(feature = "fixture-ipc")]
+            if let Some(input) = &fixture_input {
+                return scheduler.record_fixture_start_pe_receipt(input).await;
+            }
+            scheduler
+                .record_osdeploy_pve_receipt(&capture, &receipt)
+                .await
+        })
         .await
         {
             Ok(Ok(())) => return Ok(OsDeploySendObservation::ReceiptCaptured),

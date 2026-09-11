@@ -366,6 +366,16 @@ impl FixtureProvisioningPort {
 impl crate::native::sealed::FakeMutationCapability for FixtureProvisioningPort {}
 #[async_trait::async_trait]
 impl crate::fixture_ipc::ControllerFixturePort for FixtureProvisioningPort {
+    fn original_start_pe_response(
+        &self,
+    ) -> Result<Option<FixtureStartPeResponseV1>, crate::fixture_ipc::CheckpointError> {
+        if self.late_start.is_none() {
+            return Ok(None);
+        }
+        self.captured_start_pe_response()
+            .map(Some)
+            .ok_or(crate::fixture_ipc::CheckpointError::Rejected)
+    }
     fn shared_history_provenance(
         &self,
     ) -> Option<crate::fixture_ipc::FixtureSharedHistoryProvenanceV1> {

@@ -1547,6 +1547,19 @@ async fn capture_start_pe_after_genuine_prefix(
     checkpoint.await.unwrap().unwrap();
     let semantic = permit.submit_fake_once(port.as_ref()).await.unwrap();
     let original = port.captured_start_pe_response().unwrap();
+    let controller_port: &dyn pve_port::fixture_ipc::ControllerFixturePort = port.as_ref();
+    let controller_capture = controller_port
+        .original_start_pe_response()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        controller_capture.original_receipt(),
+        original.original_receipt()
+    );
+    assert_eq!(
+        controller_capture.provenance_sha256(),
+        original.provenance_sha256()
+    );
     let input = capture.bind_fixture_start_pe_response(&original).unwrap();
     assert_eq!(input.semantic_receipt(), &semantic);
     let ledger = fs::read(directory.join("fixture.log")).unwrap();

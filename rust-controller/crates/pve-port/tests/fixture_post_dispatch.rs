@@ -754,6 +754,7 @@ async fn full_start_pe_case(process_death: bool) {
             assert!(port.submit_provisioning(start.request()).await.is_err());
             assert!(port.validate_bound_start_pe().await.unwrap().is_none());
             assert!(port.captured_start_pe_response().is_none());
+            assert!(port.original_start_pe_response().is_err());
             let provenance = port.shared_history_provenance().unwrap();
             assert_eq!(provenance.operation(), identity.operation);
             assert_eq!(provenance.generation(), generation);
@@ -1203,6 +1204,7 @@ async fn full_start_pe_case(process_death: bool) {
                     .with_late_start_receipt(start.request(), original.clone())
                     .unwrap();
                 assert!(restored.captured_start_pe_response().is_none());
+                assert!(restored.original_start_pe_response().is_err());
                 let recovered_task = restored.task_status(vm.node(), &task_upid).await.unwrap();
                 assert_eq!(recovered_task.upid(), task.upid());
                 assert_eq!(recovered_task.state(), task.state());

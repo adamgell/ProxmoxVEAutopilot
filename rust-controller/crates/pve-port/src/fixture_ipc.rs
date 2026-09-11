@@ -33,6 +33,13 @@ const MAX_MESSAGE_BYTES: usize = 65_536;
 /// ```
 #[async_trait::async_trait]
 pub trait ControllerFixturePort: crate::ProvisioningFakePort {
+    /// Original IPC capture only. Bound StartPe adapters must reject missing
+    /// capture, including restored adapters; they must not fall back to None.
+    fn original_start_pe_response(
+        &self,
+    ) -> Result<Option<crate::fixture_support::FixtureStartPeResponseV1>, CheckpointError> {
+        Ok(None)
+    }
     /// Return an opaque proof that this port and its checkpoint client refer to
     /// the same supervisor journal channel. `None` is the fail-closed default.
     fn shared_history_provenance(&self) -> Option<FixtureSharedHistoryProvenanceV1> {
