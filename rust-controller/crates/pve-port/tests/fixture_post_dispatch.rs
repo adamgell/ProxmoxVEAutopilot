@@ -45,6 +45,26 @@ fn retime(value: &mut Value, at: u64) {
     }
 }
 
+fn start_adapter(
+    socket: std::path::PathBuf,
+    identity: &FixtureStageIdentity,
+    request: &pve_port::fixture_ipc::FixtureStageRequest,
+) -> FixtureProvisioningPort {
+    let vm = request.request().plan().expected().vm();
+    FixtureProvisioningPort::new_late(
+        socket,
+        std::time::Duration::from_secs(1),
+        FixtureReadIdentity {
+            fixture_id: request.fixture_id(),
+            operation: identity.operation,
+            node: vm.node().to_string(),
+            source_vmid: vm.source_vmid().get(),
+            target_vmid: vm.target_vmid().get(),
+        },
+    )
+    .unwrap()
+}
+
 #[tokio::test]
 async fn supervisor_publication_requires_accepted_effect_and_invalidates_on_restart() {
     use std::{
@@ -460,6 +480,21 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             let replay = wire(&client, json!({"command":"start_pe_observation","identity":identity,"request":serde_json::from_slice::<Value>(&pve_port::fixture_ipc::FixtureStageRequest::new(Uuid::from_u128(1), episodes[3].request.clone()).unwrap().encode().unwrap()).unwrap()})).await.unwrap();
             assert_eq!(Some(replay), start_publication);
             let mut read = full_command.clone().unwrap();
+            let restored_request = pve_port::fixture_ipc::FixtureStageRequest::new(
+                Uuid::from_u128(1),
+                episodes[3].request.clone(),
+            )
+            .unwrap();
+            let receipt: Vec<u8> = serde_json::from_value(expected["receipt"].clone()).unwrap();
+            let validated = start_adapter(client.clone(), identity, &restored_request)
+                .validate_start_pe(identity, &restored_request, &receipt)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(validated.publication()).unwrap(),
+                full_publication.clone().unwrap()
+            );
             assert_eq!(
                 serde_json::to_value(restored.observe_full().await.unwrap().unwrap()).unwrap(),
                 full_publication.clone().unwrap()
@@ -840,6 +875,13 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             .unwrap();
             assert!(restored.observe().await.unwrap().is_none());
             assert!(restored.observe_full().await.unwrap().is_none());
+            assert!(
+                start_adapter(client.clone(), &identity, &start)
+                    .validate_start_pe(&identity, &start, &original)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
             assert!(wire(&client, publish.clone()).await.is_err());
             let before_observation = fs::read(directory.join("fixture.log")).unwrap();
             for (pointer, value) in [
@@ -904,6 +946,15 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             }
             assert!(wire(&client, command.clone()).await.is_err());
             full_publication = Some(wire(&control, command.clone()).await.unwrap());
+            let validated = start_adapter(client.clone(), &identity, &start)
+                .validate_start_pe(&identity, &start, &original)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(validated.publication()).unwrap(),
+                full_publication.clone().unwrap()
+            );
             assert_eq!(
                 serde_json::to_value(restored.observe_full().await.unwrap().unwrap()).unwrap(),
                 full_publication.clone().unwrap()
@@ -1055,17 +1106,13 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
                         stream.write_all(&reply).await.unwrap();
                     }
                 });
-                let reader = FixtureStartPeRestoration::restore(
-                    socket.clone(),
-                    Duration::from_secs(1),
-                    identity.clone(),
-                    start.clone(),
-                    original.clone(),
-                )
-                .unwrap();
+                let reader = start_adapter(socket.clone(), &identity, &start);
                 assert_eq!(
-                    reader.observe_full().await.unwrap_err().kind(),
-                    std::io::ErrorKind::InvalidData,
+                    reader
+                        .validate_start_pe(&identity, &start, &original)
+                        .await
+                        .unwrap_err(),
+                    PveReadError::InvalidResponse,
                     "{pointer}"
                 );
                 server.await.unwrap();

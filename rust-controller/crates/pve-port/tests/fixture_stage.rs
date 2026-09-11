@@ -4,6 +4,47 @@ use provisioning_support::chain;
 use pve_port::{fixture_ipc::*, *};
 
 #[tokio::test]
+async fn start_validation_rejects_adapter_identity_before_socket_io() {
+    use pve_port::fixture_support::*;
+    use serde_json::json;
+    use uuid::Uuid;
+    let request = FixtureStageRequest::new(Uuid::now_v7(), chain()[3].request.clone()).unwrap();
+    let identity = FixtureStageIdentity {
+        operation: request.request().binding().operation_id().as_uuid(),
+        attempt: request.request().binding().attempt_id().as_uuid(),
+        generation: Uuid::now_v7(),
+        owner: Uuid::now_v7(),
+        stage: FixtureLedgerStage::StartPe,
+        request_sha256: request.request_sha256(),
+    };
+    let stable = json!({"fixture_id":request.fixture_id(),"operation":identity.operation,"node":"pve-test","source_vmid":900,"target_vmid":101});
+    for (field, value) in [
+        ("fixture_id", json!(Uuid::now_v7())),
+        ("operation", json!(Uuid::now_v7())),
+        ("node", json!("other-node")),
+        ("source_vmid", json!(901)),
+        ("target_vmid", json!(102)),
+    ] {
+        let mut wrong = stable.clone();
+        wrong[field] = value;
+        let adapter = FixtureProvisioningPort::new_late(
+            "/nonexistent-validation.sock".into(),
+            std::time::Duration::from_millis(10),
+            serde_json::from_value(wrong).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            adapter
+                .validate_start_pe(&identity, &request, b"{}")
+                .await
+                .unwrap_err(),
+            PveReadError::InvalidResponse,
+            "{field}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn controller_request_checkpoint_rejects_unbound_and_unsupported_stages() {
     use pve_port::fixture_support::*;
     let episodes = chain();

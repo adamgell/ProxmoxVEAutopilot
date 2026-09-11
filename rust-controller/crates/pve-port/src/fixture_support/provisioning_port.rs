@@ -6,8 +6,10 @@ use serde_json::json;
 use std::{io, path::PathBuf, time::Duration};
 mod late_configure;
 mod legacy_resize;
+mod start_validation;
 use late_configure::LateConfigureContext;
 use legacy_resize::LegacyResizeContext;
+pub use start_validation::FixtureStartPeValidationOutcome;
 
 /// Local synthetic provisioning capability. Configure `with_checkpoint` before
 /// controller use; an unconfigured checkpoint fails closed.
