@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `083effdc`: this branch and PR #65 contain an accumulated
+Current scope at `33a60c0c`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -94,6 +94,13 @@ is present: an immutable fixture outcome table/migration with accepted,
 refused, and ambiguous states, digest and foreign-key constraints, and
 immutability triggers. Migration inventory coverage passes; transaction-owned
 prepare/record APIs and recovery tests remain open.
+
+At `33a60c0c`, sealed shared-history provenance now has a canonical
+length-delimited SHA-256 fingerprint derived only from its private operation,
+generation, owner, and channel fields. Focused tests prove stability,
+channel-change sensitivity, and canonical digest shape. This supplies the
+digest source for the future transaction API; no outcome rows or release
+authority are written yet.
 
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
