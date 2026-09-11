@@ -192,7 +192,7 @@ impl OsDeployTransitionProof {
         evidence_event: EventId,
     ) -> Result<Self, Error> {
         let f = ExceptionalFacts::locked(s, tx, op, revision).await?;
-        admit(&f.snapshot, f.snapshot.plan().workflow_sha256())?;
+        admit(s, &f.snapshot, f.snapshot.plan().workflow_sha256())?;
         if f.snapshot.state() != ExecutionState::Unknown || f.snapshot.attempt_id() != Some(attempt)
         {
             return Err(Error::FenceLost);

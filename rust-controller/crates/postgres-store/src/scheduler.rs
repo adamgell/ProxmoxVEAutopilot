@@ -32,9 +32,20 @@ pub struct Scheduler {
     executor_kind: ExecutorKind,
     generation: i64,
     worker_id: String,
+    fixture_start_pe: bool,
 }
 
 impl Scheduler {
+    /// Enables fixture boot arming only; conveys no callback authentication.
+    #[cfg(feature = "fixture-ipc")]
+    pub fn with_fixture_start_pe(mut self) -> Self {
+        self.fixture_start_pe = true;
+        self
+    }
+
+    pub fn fixture_start_pe_enabled(&self) -> bool {
+        self.fixture_start_pe
+    }
     /// Select only an explicitly configured contract and canonical plan, inside
     /// the same cap/authority/claim transaction. Unrelated work stays pending.
     pub async fn claim_next_bound(
@@ -65,6 +76,7 @@ impl Scheduler {
             executor_kind,
             generation,
             worker_id,
+            fixture_start_pe: false,
         })
     }
 

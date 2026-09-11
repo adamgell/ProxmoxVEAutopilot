@@ -218,7 +218,8 @@ impl OsDeployController {
                         ProvisioningActionV1::Clone
                             | ProvisioningActionV1::EnsureCapacity
                             | ProvisioningActionV1::ConfigurePe
-                    )
+                    ) || (plan.action() == ProvisioningActionV1::StartPe
+                        && self.scheduler.fixture_start_pe_enabled())
                 }) {
                     return Err(Error::CapabilityUnavailable);
                 }

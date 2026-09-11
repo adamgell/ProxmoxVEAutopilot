@@ -19,7 +19,10 @@ impl Scheduler {
             let mut tx = self.store.pool().begin().await?;
             authority(self, &mut tx).await?;
             let snapshot = locked_execution(&mut tx, grant.operation_id()).await?;
-            admit(&snapshot, request.binding().workflow_sha256())?;
+            if snapshot.plan().stage() == OsDeployStage::StartPe && !self.fixture_start_pe {
+                return Err(Error::CapabilityUnavailable);
+            }
+            admit(self, &snapshot, request.binding().workflow_sha256())?;
             let (current, epoch) = current_grant(&mut tx, self, grant, &snapshot).await?;
             if snapshot.revision() != expected_revision || snapshot.state() != ExecutionState::Running {
                 return Err(Error::FenceLost);
@@ -46,6 +49,17 @@ impl Scheduler {
                 }))?;
             decision.resolution = Some(NativeDecision::Ready);
             append_osdeploy_decision(&mut tx, event, "osdeploy:dispatch", &decision).await?;
+            #[cfg(feature = "fixture-ipc")]
+            if snapshot.plan().stage() == OsDeployStage::StartPe {
+                let registration = load::load_registration(&mut tx, snapshot.run_id()).await?;
+                let package = registration.materialize_pe_package_semantics().map_err(|_| Error::Validation)?;
+                let budget = registration.plan().policy().registration_seconds();
+                let deadline = at.checked_add_signed(chrono::Duration::seconds(i64::from(budget))).ok_or(Error::Validation)?;
+                sqlx::query("INSERT INTO rust_controller.osdeploy_deadlines(run_id,scope_key,anchor_operation_id,anchor_event_id,opened_at,budget_seconds,deadline_at) VALUES($1,'pe_registration',$2,$3,$4,$5,$6)")
+                    .bind(snapshot.run_id().as_uuid()).bind(grant.operation_id().as_uuid()).bind(event.as_uuid()).bind(at).bind(i32::try_from(budget).map_err(|_| Error::Validation)?).bind(deadline).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO rust_controller.fixture_pe_boot_sessions(operation_id,run_id,attempt_id,dispatch_event_id,package_sha256,package_canonical_bytes,original_generation,worker_id,lease_acquisition_event_id,opened_at,registration_deadline) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
+                    .bind(grant.operation_id().as_uuid()).bind(snapshot.run_id().as_uuid()).bind(current.attempt_id().as_uuid()).bind(event.as_uuid()).bind(package.envelope_sha256()).bind(package.canonical_bytes()).bind(self.generation).bind(&self.worker_id).bind(epoch.as_uuid()).bind(at).bind(deadline).execute(&mut *tx).await?;
+            }
             sqlx::query("INSERT INTO rust_controller.osdeploy_pve_dispatches(operation_id,run_id,attempt_id,dispatch_event_id,dispatch_revision,preflight_event_id,workflow_sha256,pve_plan_sha256,request_sha256,request_canonical_json,source,original_generation,dispatched_at,lease_acquisition_event_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'fake_pve',$11,$12,$13)")
                 .bind(grant.operation_id().as_uuid()).bind(snapshot.run_id().as_uuid()).bind(grant.attempt_id().as_uuid())
                 .bind(event.as_uuid()).bind(revision).bind(preflight_event.as_uuid()).bind(snapshot.plan().workflow_sha256())
@@ -164,6 +178,9 @@ impl PgStore {
         sqlx::query("SELECT singleton_key FROM rust_controller.orchestration_authority WHERE singleton_key=1 FOR SHARE")
             .fetch_one(&mut *tx).await?;
         let snapshot = locked_execution(&mut tx, operation).await?;
+        if snapshot.plan().stage() == OsDeployStage::StartPe && snapshot.attempt_id().is_none() {
+            return Err(Error::CapabilityUnavailable);
+        }
         history::enabled(snapshot.plan().stage())?;
         let f = evidence.facts();
         let b = &f.binding;

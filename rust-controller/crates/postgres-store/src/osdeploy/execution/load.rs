@@ -197,6 +197,37 @@ pub(super) async fn load_records(
         .find(|d| matches!(d.value.detail, Detail::RunCancelled(_)))
         .map(|d| d.value.evaluated_at);
     let receipt_revision = receipt.as_ref().map(|r| r.revision);
+    #[cfg(feature = "fixture-ipc")]
+    if plan.stage() == OsDeployStage::StartPe {
+        let session = sqlx::query("SELECT s.*,e.payload_canonical_json AS epoch_json,EXISTS(SELECT 1 FROM rust_controller.osdeploy_pve_dispatches d WHERE d.operation_id=s.operation_id AND d.dispatch_event_id=s.dispatch_event_id AND d.lease_acquisition_event_id=s.lease_acquisition_event_id AND d.original_generation=s.original_generation) AS dispatch_matches FROM rust_controller.fixture_pe_boot_sessions s JOIN rust_controller.osdeploy_decisions e ON e.event_id=s.lease_acquisition_event_id AND e.operation_id=s.operation_id WHERE s.operation_id=$1")
+            .bind(operation.as_uuid()).fetch_optional(&mut **tx).await?;
+        require(session.is_some() == dispatch.is_some())?;
+        if let (Some(s), Some(d)) = (session, dispatch.as_ref()) {
+            let package = registration
+                .materialize_pe_package_semantics()
+                .map_err(|_| Error::Validation)?;
+            let epoch = DecisionEnvelope::decode(&s.try_get::<String, _>("epoch_json")?)?;
+            let Detail::LeaseAcquired(lease) = epoch.detail else {
+                return Err(Error::Validation);
+            };
+            let scope = scopes.get("pe_registration").ok_or(Error::Validation)?;
+            require(
+                s.try_get::<bool, _>("dispatch_matches")?
+                    && s.try_get::<Uuid, _>("run_id")? == run
+                    && Some(id::<AttemptId>(s.try_get("attempt_id")?)?) == attempt
+                    && s.try_get::<Uuid, _>("dispatch_event_id")? == d.event.as_uuid()
+                    && s.try_get::<String, _>("package_sha256")? == package.envelope_sha256()
+                    && s.try_get::<Vec<u8>, _>("package_canonical_bytes")?
+                        == package.canonical_bytes()
+                    && s.try_get::<i64, _>("original_generation")? == d.value.original_generation()
+                    && s.try_get::<String, _>("worker_id")? == lease.worker_id
+                    && s.try_get::<DateTime<Utc>, _>("opened_at")? == d.value.dispatched_at()
+                    && scope.anchor == d.event
+                    && scope.anchor_op == operation
+                    && s.try_get::<DateTime<Utc>, _>("registration_deadline")? == scope.deadline,
+            )?;
+        }
+    }
     let own = own.into_iter().cloned().collect();
     let snapshot = OsDeployOperationSnapshot {
         operation_id: operation,
@@ -330,12 +361,7 @@ async fn load_decisions(
         require(
             v.attempt_id.map(|a| a.as_uuid()) == r.try_get::<Option<Uuid>, _>("bound_attempt")?
                 && (!matches!(v.detail, Detail::StageActivated(_))
-                    || matches!(
-                        stage,
-                        OsDeployStage::Clone
-                            | OsDeployStage::DiskCapacity
-                            | OsDeployStage::ConfigurePe
-                    )),
+                    || super::history::enabled(stage).is_ok()),
         )?;
         require(
             canonical(&v)? == text
@@ -492,10 +518,7 @@ fn validate_activations(
 ) -> Result<(), Error> {
     for d in own {
         if let Detail::StageActivated(a) = &d.value.detail {
-            require(matches!(
-                stage,
-                OsDeployStage::Clone | OsDeployStage::DiskCapacity | OsDeployStage::ConfigurePe
-            ))?;
+            require(super::history::enabled(stage).is_ok())?;
             let scope = scopes.get(&name(a.scope_key)?).ok_or(Error::Validation)?;
             require(
                 scope.anchor == a.anchor_event_id
@@ -513,6 +536,8 @@ fn validate_activations(
             } else {
                 let prior = if stage == OsDeployStage::DiskCapacity {
                     OsDeployStage::Clone
+                } else if stage == OsDeployStage::StartPe {
+                    OsDeployStage::ConfigurePe
                 } else {
                     OsDeployStage::DiskCapacity
                 };

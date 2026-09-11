@@ -56,11 +56,16 @@ pub(super) async fn locked_execution_with_cap(
     load::load_execution(tx, operation).await
 }
 
-pub(super) fn admit(snapshot: &OsDeployOperationSnapshot, hash: &str) -> Result<(), Error> {
-    if !matches!(
+pub(super) fn admit(
+    scheduler: &Scheduler,
+    snapshot: &OsDeployOperationSnapshot,
+    hash: &str,
+) -> Result<(), Error> {
+    if !(matches!(
         snapshot.plan().stage(),
         OsDeployStage::Clone | OsDeployStage::DiskCapacity | OsDeployStage::ConfigurePe
-    ) {
+    ) || (scheduler.fixture_start_pe && snapshot.plan().stage() == OsDeployStage::StartPe))
+    {
         return Err(Error::CapabilityUnavailable);
     }
     if !wire::hash_valid(hash) {

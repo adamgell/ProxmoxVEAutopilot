@@ -5,6 +5,195 @@ mod osdeploy_execution_support;
 )]
 mod osdeploy_support;
 
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
+async fn fixture_start_pe_atomic_arming_rollback_race_and_reload() {
+    async fn observe(
+        s: &osdeploy_execution_support::Scenario,
+        scheduler: &postgres_store::Scheduler,
+        grant: &postgres_store::LeaseGrant,
+    ) -> controller_domain::ExecutionState {
+        let (event, revision) = s.observation(grant).await;
+        match scheduler
+            .decide_osdeploy_pve(grant, revision, event)
+            .await
+            .unwrap()
+        {
+            postgres_store::OsDeployProgress::Decided(state) => state,
+            postgres_store::OsDeployProgress::Waiting => controller_domain::ExecutionState::Waiting,
+            postgres_store::OsDeployProgress::Idle => panic!("fixture unexpectedly idle"),
+        }
+    }
+    use controller_domain::ExecutionState;
+    use osdeploy_adapter::OsDeployStage;
+    use postgres_store::{ExecutorKind, OsDeployExecutionError, Scheduler};
+    use pve_port::ProvisioningEvaluationModeV1;
+    let s = osdeploy_execution_support::Scenario::new(300, true).await;
+    for stage in [
+        OsDeployStage::Clone,
+        OsDeployStage::DiskCapacity,
+        OsDeployStage::ConfigurePe,
+    ] {
+        assert_eq!(s.finish_stage(stage).await, ExecutionState::Satisfied);
+    }
+    let op = s.ids.operation(OsDeployStage::StartPe);
+    assert!(matches!(
+        s.db.scheduler()
+            .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+            .await,
+        Err(OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    let scheduler = s.db.scheduler().with_fixture_start_pe();
+    let grant = scheduler
+        .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    scheduler
+        .start_osdeploy_bound(&grant, s.ids.workflow_sha256())
+        .await
+        .unwrap();
+    let snapshot = s.db.store.load_osdeploy_operation(op).await.unwrap();
+    let context =
+        s.db.store
+            .load_osdeploy_pve_context(
+                op,
+                snapshot.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let evidence = s.collect(&context).await;
+    let event =
+        s.db.store
+            .record_osdeploy_pve_evidence(op, grant.attempt_id(), snapshot.revision(), &evidence)
+            .await
+            .unwrap();
+    let revision =
+        s.db.store
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .revision();
+    let request =
+        s.db.store
+            .prepare_osdeploy_pve_request(op, revision, event)
+            .await
+            .unwrap();
+    let stale = Scheduler::new(s.db.store.clone(), ExecutorKind::Rust, 2, "osdeploy-worker")
+        .unwrap()
+        .with_fixture_start_pe();
+    assert!(matches!(
+        stale
+            .begin_osdeploy_pve_dispatch(&grant, revision, event, &request)
+            .await,
+        Err(OsDeployExecutionError::FenceLost)
+    ));
+    assert!(matches!(
+        scheduler
+            .begin_osdeploy_pve_dispatch(&grant, revision + 1, event, &request)
+            .await,
+        Err(OsDeployExecutionError::FenceLost)
+    ));
+    // Fail after session insertion, at the following dispatch insert.
+    sqlx::raw_sql("CREATE FUNCTION rust_controller.reject_fixture_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected fixture dispatch failure'; END $$; CREATE TRIGGER reject_fixture_dispatch BEFORE INSERT ON rust_controller.osdeploy_pve_dispatches FOR EACH ROW EXECUTE FUNCTION rust_controller.reject_fixture_dispatch();").execute(&s.db.pool).await.unwrap();
+    assert!(
+        scheduler
+            .begin_osdeploy_pve_dispatch(&grant, revision, event, &request)
+            .await
+            .is_err()
+    );
+    let rolled_back: (i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM rust_controller.fixture_pe_boot_sessions),(SELECT count(*) FROM rust_controller.osdeploy_deadlines WHERE scope_key='pe_registration')").fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(rolled_back, (0, 0));
+    assert_eq!(
+        s.db.other
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .revision(),
+        revision
+    );
+    sqlx::raw_sql("DROP TRIGGER reject_fixture_dispatch ON rust_controller.osdeploy_pve_dispatches; DROP FUNCTION rust_controller.reject_fixture_dispatch();").execute(&s.db.pool).await.unwrap();
+    let (a, b) = tokio::join!(
+        scheduler.begin_osdeploy_pve_dispatch(&grant, revision, event, &request),
+        scheduler.begin_osdeploy_pve_dispatch(&grant, revision, event, &request)
+    );
+    assert_ne!(a.is_ok(), b.is_ok());
+    let (permit, capture) = a.or(b).unwrap();
+    let original = s.db.other.load_osdeploy_operation(op).await.unwrap();
+    let session: (uuid::Uuid,uuid::Uuid,chrono::DateTime<chrono::Utc>,String) = sqlx::query_as("SELECT attempt_id,dispatch_event_id,registration_deadline,package_sha256 FROM rust_controller.fixture_pe_boot_sessions WHERE operation_id=$1").bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(session.0, grant.attempt_id().as_uuid());
+    assert!(session.2 > original.dispatch().unwrap().dispatched_at());
+    // Lost commit response/restarted caller cannot authorize a second start.
+    let restarted = s.db.scheduler().with_fixture_start_pe();
+    assert!(
+        restarted
+            .begin_osdeploy_pve_dispatch(&grant, revision, event, &request)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        s.db.other
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .dispatch(),
+        original.dispatch()
+    );
+    let receipt = permit.submit_fake_once(s.fake.as_ref()).await.unwrap();
+    restarted
+        .record_osdeploy_pve_receipt(&capture, &receipt)
+        .await
+        .unwrap();
+    let mut state = observe(&s, &restarted, &grant).await;
+    for _ in 0..8 {
+        if state != ExecutionState::Waiting {
+            break;
+        }
+        let snapshot = s.db.store.load_osdeploy_operation(op).await.unwrap();
+        s.wait_until(snapshot.next_check_at().unwrap()).await;
+        let resumed = restarted
+            .resume_osdeploy_bound(
+                op,
+                grant.attempt_id(),
+                snapshot.revision(),
+                s.ids.workflow_sha256(),
+                1,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        restarted
+            .start_osdeploy_bound(&resumed, s.ids.workflow_sha256())
+            .await
+            .unwrap();
+        state = observe(&s, &restarted, &resumed).await;
+    }
+    assert_eq!(state, ExecutionState::Satisfied);
+    assert_eq!(s.fake.recorded_provisioning_submissions().len(), 4);
+    let retained: (uuid::Uuid,uuid::Uuid,chrono::DateTime<chrono::Utc>,String) = sqlx::query_as("SELECT attempt_id,dispatch_event_id,registration_deadline,package_sha256 FROM rust_controller.fixture_pe_boot_sessions WHERE operation_id=$1").bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(retained, session);
+    assert!(matches!(
+        restarted
+            .claim_osdeploy_bound(
+                s.ids.operation(OsDeployStage::PeRegister),
+                s.ids.workflow_sha256(),
+                1
+            )
+            .await,
+        Err(OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    sqlx::query("DELETE FROM rust_controller.fixture_pe_boot_sessions WHERE operation_id=$1")
+        .bind(op.as_uuid())
+        .execute(&s.db.pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        s.db.other.load_osdeploy_operation(op).await,
+        Err(OsDeployExecutionError::Validation)
+    ));
+}
+
 #[tokio::test]
 async fn dispatch_keeps_original_preflight_fence_separate_from_current_cas() {
     use pve_port::ProvisioningEvaluationModeV1;

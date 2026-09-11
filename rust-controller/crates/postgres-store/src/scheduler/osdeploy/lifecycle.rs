@@ -60,7 +60,7 @@ impl Scheduler {
             let mut tx = self.store.pool().begin().await?;
             authority(self, &mut tx).await?;
             let snapshot = Box::pin(locked_execution_with_cap(&mut tx, operation, true)).await?;
-            admit(&snapshot, workflow_sha256)?;
+            admit(self, &snapshot, workflow_sha256)?;
             if snapshot.revision() != expected_revision || snapshot.attempt_id() != Some(attempt) {
                 return Err(Error::FenceLost);
             }
@@ -121,7 +121,10 @@ impl Scheduler {
         let mut tx = self.store.pool().begin().await?;
         authority(self, &mut tx).await?;
         let snapshot = locked_execution_with_cap(&mut tx, operation, true).await?;
-        admit(&snapshot, workflow_sha256)?;
+        if snapshot.plan().stage() == OsDeployStage::StartPe && !self.fixture_start_pe {
+            return Err(Error::CapabilityUnavailable);
+        }
+        admit(self, &snapshot, workflow_sha256)?;
         if snapshot.state() == ExecutionState::Pending && snapshot.attempt_id().is_some() {
             let grant = reclaim_lease(self, &mut tx, &snapshot, cap).await?;
             tx.commit().await?;
@@ -139,6 +142,7 @@ impl Scheduler {
             OsDeployStage::Clone => None,
             OsDeployStage::DiskCapacity => Some(reg.ids().operation(OsDeployStage::Clone)),
             OsDeployStage::ConfigurePe => Some(reg.ids().operation(OsDeployStage::DiskCapacity)),
+            OsDeployStage::StartPe if self.fixture_start_pe => Some(reg.ids().operation(OsDeployStage::ConfigurePe)),
             _ => return Err(Error::CapabilityUnavailable),
         };
         let predecessor_event = if let Some(prior) = predecessor {
@@ -271,7 +275,7 @@ impl Scheduler {
         let mut tx = self.store.pool().begin().await?;
         authority(self, &mut tx).await?;
         let snapshot = locked_execution(&mut tx, grant.operation_id()).await?;
-        admit(&snapshot, workflow_sha256)?;
+        admit(self, &snapshot, workflow_sha256)?;
         let (current, epoch) = current_grant(&mut tx, self, grant, &snapshot).await?;
         let at = now(&mut tx).await?;
         active_at(&current, at)?;
@@ -336,7 +340,7 @@ impl Scheduler {
         let mut tx = self.store.pool().begin().await?;
         authority(self, &mut tx).await?;
         let snapshot = locked_execution(&mut tx, grant.operation_id()).await?;
-        admit(&snapshot, workflow_sha256)?;
+        admit(self, &snapshot, workflow_sha256)?;
         let (mut current, epoch) = current_grant(&mut tx, self, grant, &snapshot).await?;
         let at = now(&mut tx).await?;
         active_at(&current, at)?;
@@ -389,7 +393,7 @@ impl Scheduler {
         let mut tx = self.store.pool().begin().await?;
         authority(self, &mut tx).await?;
         let snapshot = locked_execution(&mut tx, grant.operation_id()).await?;
-        admit(&snapshot, workflow_sha256)?;
+        admit(self, &snapshot, workflow_sha256)?;
         let (current, _) = current_grant(&mut tx, self, grant, &snapshot).await?;
         let checked_at = now(&mut tx).await?;
         active_at(&current, checked_at)?;

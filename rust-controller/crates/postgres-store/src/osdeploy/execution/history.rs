@@ -20,6 +20,8 @@ struct PhysicalHistory {
 pub(crate) fn enabled(stage: OsDeployStage) -> Result<(), Error> {
     match stage {
         OsDeployStage::Clone | OsDeployStage::DiskCapacity | OsDeployStage::ConfigurePe => Ok(()),
+        #[cfg(feature = "fixture-ipc")]
+        OsDeployStage::StartPe => Ok(()),
         _ => Err(Error::CapabilityUnavailable),
     }
 }
@@ -173,6 +175,10 @@ pub(crate) fn request(
         ProvisioningActionV1::ConfigurePe => {
             ConfigureProvisioningRequestV1::new(input).map(ProvisioningMutationRequestV1::Configure)
         }
+        #[cfg(feature = "fixture-ipc")]
+        ProvisioningActionV1::StartPe => {
+            StartProvisioningRequestV1::new(input).map(ProvisioningMutationRequestV1::Start)
+        }
         _ => return Err(Error::CapabilityUnavailable),
     }
     .map_err(|_| Error::Validation)
@@ -319,6 +325,11 @@ pub(crate) async fn load_context(
     mode: ProvisioningEvaluationModeV1,
 ) -> Result<ProvisioningEvaluationContextV1, Error> {
     let records = Box::pin(load::load_records(tx, operation)).await?;
+    if records.snapshot.plan().stage() == OsDeployStage::StartPe
+        && records.snapshot.attempt_id().is_none()
+    {
+        return Err(Error::CapabilityUnavailable);
+    }
     enabled(records.snapshot.plan().stage())?;
     if revision < 0 || records.snapshot.revision() != revision {
         return Err(Error::FenceLost);
