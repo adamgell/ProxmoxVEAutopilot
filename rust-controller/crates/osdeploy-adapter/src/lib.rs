@@ -6,8 +6,13 @@ mod plan;
 mod provisioning;
 mod restore;
 mod stages;
+mod start_pe_arming;
 pub use provisioning::pve_expectations;
 pub use restore::restore_osdeploy_plan_v1;
+pub use start_pe_arming::{
+    AuthenticatedPeWitnessV1, PeRegistrationAnchorV1, StartPeArmingContextV1, StartPeArmingError,
+    StartPeArmingRefusal, StartPeAtomicArmingProposalV1,
+};
 
 pub use guest_action::GuestActionIdentity;
 pub use input_values::{
