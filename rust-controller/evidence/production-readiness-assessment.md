@@ -36,6 +36,15 @@ compatibility, and service suites, with zero failures. This closes the broad
 macOS test gate for that source; it does not close exact-source Linux or the
 remaining production integration gates.
 
+The next exact-source Linux attempt targeted `a5ef79e9bd712df563c593284a408d2324649ad6`.
+Release workspace/examples and `controller-service` compilation completed inside
+the approved `linux/amd64` Docker workflow, but Docker/buildx stopped producing
+output during workspace test precompilation and remained unresponsive for more
+than seven minutes. Only the local build-client processes were terminated;
+OrbStack was not restarted and no retained containers/images were removed. No
+image publication, executable seal, Linux test receipt, or qualification result
+can be claimed from this attempt.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.

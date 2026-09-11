@@ -37,6 +37,13 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   complete macOS workspace evidence for that source; Linux exact-source and
   production integration gates remain distinct.
 
+- The subsequent exact-source Linux build for `a5ef79e9` completed release and
+  controller-service compilation, then stalled in Docker/buildx during workspace
+  test precompilation for more than seven minutes. Only the local build clients
+  were terminated; Docker/OrbStack and retained evidence were left intact. No
+  Linux image, executable seal, test receipt, or qualification result exists for
+  this attempt.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)
