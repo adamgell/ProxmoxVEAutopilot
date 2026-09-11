@@ -1112,6 +1112,30 @@ async fn full_start_pe_case(process_death: bool) {
                     assert_eq!(identity.config_digest(), member.config.digest());
                     assert_eq!(identity.observed_at(), member.config.observed_at());
                 }
+                // Query identity is independent from valid publication identity:
+                // a complete bundle must not turn a missing member into a match.
+                let vm = start.request().plan().expected().vm();
+                let other_node = NodeName::parse("other-node").unwrap();
+                let absent = Vmid::new(777).unwrap();
+                assert!(cluster.find(absent).is_none());
+                let ledger_before_queries = fs::read(directory.join("fixture.log")).unwrap();
+                for (node, vmid) in [(&other_node, vm.target_vmid()), (vm.node(), absent)] {
+                    assert!(port.provisioning_vm_config(node, vmid).await.is_err());
+                    assert!(port.provisioning_identity(node, vmid).await.is_err());
+                    assert!(port.vm_status(node, vmid).await.is_err());
+                }
+                assert!(
+                    port.provisioning_media(
+                        vm.node(),
+                        &StorageName::parse("absent-storage").unwrap()
+                    )
+                    .await
+                    .is_err()
+                );
+                assert_eq!(
+                    fs::read(directory.join("fixture.log")).unwrap(),
+                    ledger_before_queries
+                );
                 assert!(
                     port.node_status(start.request().plan().expected().vm().node())
                         .await
