@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `9c09361e`: this branch and PR #65 contain an accumulated
+Current scope at `957ada1a`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -68,6 +68,12 @@ immutable fixture outcome record and transaction-owned prepare/record APIs for
 accepted, refused, and ambiguous submit results. This is a design gate only;
 the schema, APIs, and recovery tests remain to be implemented before release
 authority can be connected.
+
+At `957ada1a`, a pure fixture compatibility classifier records legacy completion
+branches for awaiting-reboot failures, required reboot success, skipped and
+explicit reboot states, and the inclusive retry boundary. Five callback-contract
+tests pass; no controller caller, database write, retry authority, or service
+recovery behavior is enabled by this classifier.
 
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
