@@ -37,6 +37,11 @@ SMOKE = "scheduler::osdeploy::transition::tests::private_reclaim_and_repark_requ
 # The full gate still includes intentional owned-storage qualification tests.
 SUPERVISED_CHILDREN = ("fixture_prefix_worker", "fixture_prefix_recovery_worker",
                        "independent_recovery_reader", "dispatching_worker_a", "recovering_worker_b")
+# These ignored tests deliberately require a caller-provided empty loopback
+# PostgreSQL DSN.  The owned-v1 launcher does not accept or synthesize a DSN;
+# they remain a separate opt-in qualification lane.
+DSN_ONLY_TESTS = ("concurrent_result_probe_conflicts_then_rolls_back_and_releases_lock",
+                  "session_schema_creation_rolls_back_without_leaving_tables")
 OVERRIDES = {"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_TLS_VERIFY",
              "DOCKER_CERT_PATH", "PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE",
              "PGUSER", "PGPASSWORD", "PGPASSFILE", "PGSERVICE", "PGSERVICEFILE", "PGOPTIONS"}
@@ -231,7 +236,8 @@ def workload(mode):
         return (argv + ["--lib", SMOKE, "--", "--exact", "--nocapture", "--test-threads=1"], 180)
     return (argv + ["-p", "scheduler", "-p", "osdeploy-adapter", "-p", "operation-controller",
                    "--all-features", "--no-fail-fast", "--", "--include-ignored", "--nocapture", "--test-threads=1"]
-            + [argument for child in SUPERVISED_CHILDREN for argument in ("--skip", child)], 1800)
+            + [argument for child in (*SUPERVISED_CHILDREN, *DSN_ONLY_TESTS)
+               for argument in ("--skip", child)], 1800)
 
 
 def inside(mode):
