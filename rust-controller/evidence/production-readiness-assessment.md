@@ -49,7 +49,7 @@ are implemented. The transaction-local alias helper at `724b6101` retains exact
 ownership and the original timestamp on replay without independent commit or
 dispatch authority.
 
-The current PR head is `e83f7bd0a5030f622a86b709bf6ccd4c7b856fec` (verified 2026-09-11). The exact-source
+The current PR head is tracked by GitHub PR metadata (verified 2026-09-11). The exact-source
 amd64 image is sealed as `sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9`
 with `CONTROLLER_GIT_SHA=a607861f24cac19cad4565365df2a29b58a33e0b`; the owned
 launcher evidence is retained in `requalification-1450a556-fixture-1/` and
