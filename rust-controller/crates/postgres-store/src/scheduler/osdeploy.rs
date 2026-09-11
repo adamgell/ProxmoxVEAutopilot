@@ -32,6 +32,8 @@ pub use fixture_delivery::{
 pub use fixture_registration::{FixturePeRegistrationIdentity, FixturePeRegistrationResult};
 #[cfg(feature = "fixture-ipc")]
 pub use fixture_stop_outbox::FixtureStopOutboxConsumedV1;
+#[cfg(feature = "fixture-ipc")]
+pub use fixture_stop_outbox::{FixtureStopReleaseOutcomeStateV1, FixtureStopReleaseOutcomeV1};
 mod lifecycle;
 mod pve;
 mod receipt;

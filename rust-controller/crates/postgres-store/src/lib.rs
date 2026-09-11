@@ -19,7 +19,7 @@ pub use scheduler::{
     FixtureBootFilesStagedResult, FixtureCredentialEnvelope, FixtureCredentialSink,
     FixtureDeliveryAck, FixtureDeliveryRecovery, FixturePeCompletionReport,
     FixturePeCompletionResult, FixturePeRegistrationIdentity, FixturePeRegistrationResult,
-    FixtureStopOutboxConsumedV1,
+    FixtureStopOutboxConsumedV1, FixtureStopReleaseOutcomeStateV1, FixtureStopReleaseOutcomeV1,
 };
 pub mod native;
 mod osdeploy;

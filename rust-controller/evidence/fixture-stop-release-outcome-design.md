@@ -28,6 +28,16 @@ provenance digest only after the one-use consumption marker commits. The
 existing boolean method remains a compatibility wrapper; neither method grants
 release or submit authority.
 
+The transaction-owned bookkeeping boundary is now available through
+`Scheduler::prepare_fixture_stop_release` and
+`Scheduler::record_fixture_stop_release_outcome`. Preparation locks and
+rechecks the selected row and one-use consumption marker against both
+authority domains. Recording permits one immutable `accepted`, `refused`, or
+`ambiguous` row; an identical replay returns the same outcome while a sequence,
+state, or receipt-digest conflict is rejected. Accepted outcomes require a
+canonical receipt payload; refused and ambiguous outcomes cannot carry one.
+These methods return no release capability and do not invoke a fixture command.
+
 ## Durable outcome record
 
 Add migration `0016_fixture_stop_release_outcomes.sql` with an immutable,
