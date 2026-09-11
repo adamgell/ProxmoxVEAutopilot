@@ -9,6 +9,17 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Disposable non-production mutation proof and production cutover each require separate approval. A goal to become ready does not grant those approvals.
 - RustedOutClient is excluded. Reliability, OOBE, remote control, operator UX, adoption and other downstream product work wait for Rust contracts to stabilize.
 
+### Operation-scoped fixture resolution (commit `029555f1`)
+
+The controller now owns an immutable `OperationId -> Arc<ControllerFixturePort>`
+map for fixture runs. Each invocation resolves its port once and retains it
+through collection, checkpoint, dispatch, and post-dispatch observation. The
+capacity-two interleaving proof verifies operation-specific submissions,
+receipts, terminal projections, and physical target isolation; duplicate and
+missing bindings fail closed. This is an execution-isolation prerequisite,
+not StartPe or full-port implementation. Exact-source Linux qualification for
+this revision remains outstanding.
+
 ### Current-head diagnostic checkpoint (2026-09-10)
 
 - Commit `08471af3` records the terminal exact-current-source Linux reaping

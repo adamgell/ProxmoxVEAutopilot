@@ -4,6 +4,14 @@ Assessment date: 2026-09-10
 Assessment source: isolated worktree `codex/rust-controller-design`  
 Production and `192.168.2.4`: read-only throughout
 
+Latest source milestone: commit `029555f1` adds safe operation-scoped fixture
+port resolution. An immutable per-operation binding is retained across the
+complete invocation, and the capacity-two interleaving proof verifies isolated
+effects, receipts, PostgreSQL terminal projections, duplicate-binding
+rejection, and missing-binding refusal. StartPe and later stages remain
+fail-closed; exact-source Linux qualification for this revision is still
+required.
+
 Current-head checkpoint: commit `08471af3` records that the exact-source Linux
 reaping diagnostic image built successfully, but its retained targeted run
 ended without output before producing PID/reap evidence. The attempt is
