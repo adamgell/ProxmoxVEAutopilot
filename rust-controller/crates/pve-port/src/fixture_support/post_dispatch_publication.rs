@@ -43,6 +43,15 @@ pub struct FixtureSynchronousPublication {
 #[allow(clippy::enum_variant_names)] // Wire command names share their protocol namespace.
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Command {
+    PublishStartPeFull {
+        identity: super::FixtureStageIdentity,
+        request: serde_json::Value,
+        observation: Box<super::FixtureStartPeFullV1>,
+    },
+    StartPeFull {
+        identity: super::FixtureStageIdentity,
+        request: serde_json::Value,
+    },
     PublishStartPeObservation {
         identity: super::FixtureStageIdentity,
         request: serde_json::Value,
@@ -137,6 +146,27 @@ impl Publications {
         directory: &Path,
     ) -> io::Result<Vec<u8>> {
         let (value, observation, stage) = match command {
+            Command::PublishStartPeFull {
+                identity,
+                request,
+                observation,
+            } if supervisor => {
+                let accepted = self
+                    .accepted
+                    .get(&(identity.operation, identity.request_sha256.clone()))
+                    .copied()
+                    .ok_or_else(invalid)?;
+                return super::start_full::handle(
+                    directory,
+                    log,
+                    identity,
+                    request,
+                    Some((*observation, self.generation, accepted)),
+                );
+            }
+            Command::StartPeFull { identity, request } if !supervisor => {
+                return super::start_full::handle(directory, log, identity, request, None);
+            }
             Command::PublishStartPeObservation {
                 identity,
                 request,

@@ -399,6 +399,8 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
     let mut start_publication = None;
     let mut start_publish_command = None;
     let mut start_readback = None;
+    let mut full_publication = None;
+    let mut full_command: Option<Value> = None;
     for restart in [false, true] {
         if restart {
             fs::remove_file(directory.join("client.sock")).unwrap();
@@ -457,6 +459,34 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             );
             let replay = wire(&client, json!({"command":"start_pe_observation","identity":identity,"request":serde_json::from_slice::<Value>(&pve_port::fixture_ipc::FixtureStageRequest::new(Uuid::from_u128(1), episodes[3].request.clone()).unwrap().encode().unwrap()).unwrap()})).await.unwrap();
             assert_eq!(Some(replay), start_publication);
+            let mut read = full_command.clone().unwrap();
+            read["command"] = json!("start_pe_full");
+            read.as_object_mut().unwrap().remove("observation");
+            assert_eq!(
+                wire(&client, read.clone()).await.unwrap(),
+                full_publication.clone().unwrap()
+            );
+            let path = directory.join(format!(
+                "start-full-{}-{}.json",
+                identity.operation, identity.request_sha256
+            ));
+            let persisted = fs::read(&path).unwrap();
+            for malformed in [persisted[..persisted.len() / 2].to_vec(), b"{}".to_vec()] {
+                fs::write(&path, malformed).unwrap();
+                assert!(wire(&client, read.clone()).await.is_err());
+            }
+            fs::write(&path, &persisted).unwrap();
+            assert_eq!(
+                wire(&client, read.clone()).await.unwrap(),
+                full_publication.clone().unwrap()
+            );
+            for field in ["owner", "generation", "attempt"] {
+                let mut wrong = read.clone();
+                wrong["identity"][field] = json!(Uuid::now_v7());
+                assert!(wire(&client, wrong).await.is_err());
+            }
+            assert_eq!(reader.status().await.unwrap().effects, 4);
+            assert!(wire(&control, full_command.clone().unwrap()).await.is_err());
             assert!(
                 wire(&control, start_publish_command.clone().unwrap())
                     .await
@@ -833,6 +863,43 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             }
             let observed = wire(&control, publish.clone()).await.unwrap();
             assert_eq!(observed["power"]["state"], "running");
+            let at = chrono::Utc::now().timestamp_millis() as u64;
+            let ProvisioningMutationRequestV1::Start(start_request) = start.request() else {
+                panic!()
+            };
+            let members:Vec<_> = [source(), start_request.expected_before().config().clone()].into_iter().enumerate().map(|(index, config)| json!({"identity":{"kind":"pve_digest","value":config.digest()},"config":config,"power":if index==0 {"stopped"} else {"running"},"coverage":"complete"})).collect();
+            use sha2::{Digest, Sha256};
+            let media = |storage: &str, iso: &str| {
+                ProvisioningMediaInventoryV1::new(
+                    node(),
+                    StorageName::parse(storage).unwrap(),
+                    vec![iso.into()],
+                    ProvisioningCoverageV1::Complete,
+                    chrono::DateTime::from_timestamp_millis(at as i64).unwrap(),
+                )
+                .unwrap()
+            };
+            let mut full = json!({"version":1,"inventory":{"version":2,"fixture_id":start.fixture_id(),"identity":identity,"receipt_sha256":format!("{:x}",Sha256::digest(&original)),"observed_unix_ms":at,"coverage":"complete","members":members},"durable":observed,"deployment_media":media("local","local:iso/deployment.iso"),"driver_media":media("drivers","drivers:iso/virtio.iso"),"node_status":{"online":true,"uptime_seconds":1},"storage":[{"name":"local-lvm","active":true,"enabled":true,"available_bytes":1000000000u64,"content":["images"]}],"bridges":[{"name":"vmbr0","active":true}]});
+            retime(&mut full, at);
+            full["durable"] = observed.clone();
+            let command = json!({"command":"publish_start_pe_full","identity":identity,"request":serde_json::from_slice::<Value>(&start.encode().unwrap()).unwrap(),"observation":full});
+            for (pointer, value) in [
+                ("/observation/inventory/coverage", json!("partial")),
+                ("/observation/durable/task_upid", json!("forged")),
+                ("/observation/node_status/online", json!(false)),
+                ("/observation/storage", json!([])),
+                ("/observation/bridges", json!([])),
+                ("/observation/inventory/members/1/power", json!("stopped")),
+                ("/observation/driver_media/iso_volids", json!([])),
+            ] {
+                let mut wrong = command.clone();
+                *wrong.pointer_mut(pointer).unwrap() = value;
+                assert!(wire(&control, wrong).await.is_err());
+            }
+            assert!(wire(&client, command.clone()).await.is_err());
+            full_publication = Some(wire(&control, command.clone()).await.unwrap());
+            assert!(wire(&control, command.clone()).await.is_err());
+            full_command = Some(command);
             let readback = restored.observe().await.unwrap().unwrap();
             assert!(matches!(
                 readback.task.result,
