@@ -111,6 +111,11 @@ does not release a barrier, dispatch `qm stop`, publish stopped power, or prove
 replacement-worker recovery; positive end-to-end reservation evidence remains
 an explicit follow-up gate.
 
+The local verification note `local-macos-suite-20260911.md` records that the
+broad all-feature workspace invocation is not a valid qualification result
+under concurrent subprocess load; the affected `fixture_post_dispatch` and
+`postgres_native` targets pass when rerun serially with one test thread.
+
 The follow-on fixture IPC contract `FixtureStopReleaseProposalV1` binds the
 operation, attempt, lease owner, generation, request/receipt/sample digests,
 and sealed provenance for a future supervisor release/send step. It is
