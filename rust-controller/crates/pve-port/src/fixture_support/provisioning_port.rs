@@ -283,7 +283,7 @@ impl FixtureProvisioningPort {
     }
     async fn provisioning(&self) -> Result<FixtureProvisioningReadsV2, PveReadError> {
         if self.late_start.is_some() {
-            return Err(PveReadError::TransportUnavailable);
+            return self.start_provisioning().await;
         }
         if let Some(configure) = &self.late_configure {
             return Ok(configure

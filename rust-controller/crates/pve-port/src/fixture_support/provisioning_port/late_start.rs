@@ -95,8 +95,8 @@ impl FixtureProvisioningPort {
         Ok(self)
     }
 
-    /// Explicit readback only; absence is not success. Generic evaluator facts
-    /// remain unavailable for this context until their mapping is implemented.
+    /// Explicit readback only; absence is not success. Every mapped provisioning
+    /// read also validates this same accepted publication before returning facts.
     pub async fn validate_bound_start_pe(
         &self,
     ) -> Result<Option<FixtureStartPeFullPublicationV1>, PveReadError> {
@@ -115,6 +115,68 @@ impl FixtureProvisioningPort {
             .start_pe_full(&bound.identity, &bound.request, &receipt)
             .await
             .map_err(transport)
+    }
+
+    pub(super) async fn start_provisioning(
+        &self,
+    ) -> Result<FixtureProvisioningReadsV2, PveReadError> {
+        let full = self
+            .validate_bound_start_pe()
+            .await?
+            .ok_or(PveReadError::TransportUnavailable)?
+            .observation;
+        let inventory = &full.inventory;
+        let member = |vmid| {
+            inventory
+                .members
+                .iter()
+                .find(|member| {
+                    member.config.node().as_str() == self.identity.node
+                        && member.config.vmid().get() == vmid
+                })
+                .ok_or(PveReadError::InvalidResponse)
+        };
+        let source = member(self.identity.source_vmid)?;
+        let target = member(self.identity.target_vmid)?;
+        let config = |member: &FixtureInventoryMemberV2| SeedRead::Observed {
+            observed_unix_ms: inventory.observed_unix_ms,
+            value: SeedConfig::Present {
+                config: Box::new(member.config.clone()),
+            },
+        };
+        let power = |member: &FixtureInventoryMemberV2| SeedRead::Observed {
+            observed_unix_ms: inventory.observed_unix_ms,
+            value: SeedPower {
+                power: member.power,
+                locked: member.config.locked(),
+            },
+        };
+        let coverage = |member: &FixtureInventoryMemberV2| SeedRead::Observed {
+            observed_unix_ms: inventory.observed_unix_ms,
+            value: member.coverage,
+        };
+        let media = |value: ProvisioningMediaInventoryV1| -> Result<_, PveReadError> {
+            Ok(SeedRead::Observed {
+                observed_unix_ms: value
+                    .observed_at()
+                    .timestamp_millis()
+                    .try_into()
+                    .map_err(|_| PveReadError::InvalidResponse)?,
+                value,
+            })
+        };
+        Ok(FixtureProvisioningReadsV2 {
+            version: 2,
+            identity: self.identity.clone(),
+            source_config: config(source),
+            target_config: config(target),
+            source_power: power(source),
+            target_power: power(target),
+            source_coverage: coverage(source),
+            target_coverage: coverage(target),
+            deployment_media: media(full.deployment_media)?,
+            driver_media: media(full.driver_media)?,
+        })
     }
 }
 impl LateStartContext {

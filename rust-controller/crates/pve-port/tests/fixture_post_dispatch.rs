@@ -876,6 +876,12 @@ async fn full_start_pe_case(process_death: bool) {
                 let actual = port.submit_provisioning(start.request()).await.unwrap();
                 assert!(port.submit_provisioning(start.request()).await.is_err());
                 assert!(port.validate_bound_start_pe().await.unwrap().is_none());
+                let vm = start.request().plan().expected().vm();
+                assert!(
+                    port.provisioning_vm_config(vm.node(), vm.target_vmid())
+                        .await
+                        .is_err()
+                );
                 let effect = wire(
                     &client,
                     json!({"command":"accepted_stage_effect","identity":identity}),
@@ -1046,6 +1052,37 @@ async fn full_start_pe_case(process_death: bool) {
             full_publication = Some(wire(&control, command.clone()).await.unwrap());
             if let Some(port) = &start_port {
                 let publication = port.validate_bound_start_pe().await.unwrap().unwrap();
+                for member in &publication.observation.inventory.members {
+                    let config = port
+                        .provisioning_vm_config(member.config.node(), member.config.vmid())
+                        .await
+                        .unwrap();
+                    assert_eq!(config, member.config);
+                    let power = port
+                        .vm_status(member.config.node(), member.config.vmid())
+                        .await
+                        .unwrap();
+                    assert_eq!(power.power(), member.power);
+                    assert_eq!(
+                        power.observed_at().timestamp_millis() as u64,
+                        publication.observation.inventory.observed_unix_ms
+                    );
+                }
+                for media in [
+                    &publication.observation.deployment_media,
+                    &publication.observation.driver_media,
+                ] {
+                    assert_eq!(
+                        port.provisioning_media(media.node(), media.storage())
+                            .await
+                            .unwrap(),
+                        *media
+                    );
+                }
+                assert!(
+                    port.cluster_vms().await.is_err(),
+                    "unmapped inventory must remain closed"
+                );
                 assert_eq!(
                     serde_json::to_value(publication).unwrap(),
                     full_publication.clone().unwrap()
