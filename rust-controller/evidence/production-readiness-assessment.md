@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `8f3d1608`: this branch and PR #65 contain an accumulated
+Current scope at `e495a3bc`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -47,6 +47,12 @@ focused subprocess and 12-test regression suite pass with Clippy warnings
 denied. Generic evaluator mapping, durable receipt restoration, Setup/DB
 callback integration, and the authentic stop outcome matrix remain open. This
 is still a bounded PoC increment, not the entire port.
+
+At `e495a3bc`, the connected stop-outcome audit confirms that the authentic
+matrix is not yet safely testable: the harness still does not return the
+store-issued lease, stop authority, shared-history provenance, and consumed
+outbox envelope as one legitimate chain. Synthetic SQL rows would bypass
+locked execution and current-grant checks, so the matrix remains open.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
