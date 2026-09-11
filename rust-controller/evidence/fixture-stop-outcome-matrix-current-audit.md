@@ -1,7 +1,7 @@
 # Current fixture stop outcome matrix audit
 
 Audit baseline: `8f3d1608` (bound StartPe adapter) and current branch
-`b886d34e`.
+`8c43967f` (verified 2026-09-11).
 
 ## Result
 
