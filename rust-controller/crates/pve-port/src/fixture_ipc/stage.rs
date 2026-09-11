@@ -107,6 +107,12 @@ mod stop_release_proposal_tests {
         )
         .unwrap();
         assert_eq!(proposal.operation(), operation);
+        assert!(!proposal.attempt().is_nil());
+        assert!(!proposal.lease_owner().is_nil());
+        assert!(!proposal.generation().is_nil());
+        assert_eq!(proposal.request_sha256(), "request");
+        assert_eq!(proposal.receipt_sha256(), "receipt");
+        assert_eq!(proposal.sample_sha256(), "sample");
         assert_eq!(proposal.provenance(), &provenance);
         assert!(
             FixtureStopReleaseProposalV1::new(
@@ -121,6 +127,33 @@ mod stop_release_proposal_tests {
             )
             .is_err()
         );
+
+        for (request, receipt, sample) in [
+            (String::new(), "receipt".to_owned(), "sample".to_owned()),
+            ("request".to_owned(), String::new(), "sample".to_owned()),
+            ("request".to_owned(), "receipt".to_owned(), String::new()),
+        ] {
+            let provenance = crate::fixture_ipc::FixtureSharedHistoryProvenanceV1::new(
+                operation,
+                Uuid::now_v7(),
+                Uuid::now_v7(),
+                "/tmp/fixture-stop.sock".to_owned(),
+            )
+            .unwrap();
+            assert!(
+                FixtureStopReleaseProposalV1::new(
+                    operation,
+                    Uuid::now_v7(),
+                    Uuid::now_v7(),
+                    Uuid::now_v7(),
+                    request,
+                    receipt,
+                    sample,
+                    provenance,
+                )
+                .is_err()
+            );
+        }
     }
 }
 
