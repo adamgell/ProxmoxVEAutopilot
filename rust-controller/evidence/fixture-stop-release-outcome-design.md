@@ -11,6 +11,13 @@ under the existing `fixture-ipc` feature gate. The table and its immutable
 update/delete/truncate triggers are schema-only at this stage; no scheduler
 method reads or writes an outcome row, and no release authority is exposed.
 
+The sealed bridge now also exposes `FixtureSharedHistoryProvenanceV1::sha256`
+and `FixtureStopReleaseProposalV1::provenance_sha256`. The digest is derived
+from the private operation, generation, owner, and channel fields using a
+length-delimited canonical encoding; it is never fabricated from admission or
+sample JSON. The focused proposal test proves stability for the same sealed
+identity and separation when the channel changes.
+
 ## Durable outcome record
 
 Add migration `0016_fixture_stop_release_outcomes.sql` with an immutable,
@@ -108,6 +115,11 @@ The storage-only migration proof currently passes:
   migration_creates_constrained_foundation_tables -- --exact`: 1 passed;
   inventory includes the outcome table, all six immutability triggers exist,
   and truncate is rejected.
+- `cargo test -p pve-port --features fixture-ipc stop_release --lib`: 2
+  passed, including sealed-provenance digest stability and channel separation.
+- `cargo clippy -p pve-port --features fixture-ipc --lib -- -D warnings`:
+  passed.
+- `git diff --check`: passed.
 
 ## Explicit non-goals and gates
 

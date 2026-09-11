@@ -101,6 +101,11 @@ impl FixtureStopReleaseProposalV1 {
         &self.provenance
     }
 
+    /// Canonical digest of the private, sealed shared-history identity.
+    pub fn provenance_sha256(&self) -> String {
+        self.provenance.sha256()
+    }
+
     /// Compare the proposal with independently recomputed evidence digests.
     /// This is intentionally a pure equality check; it cannot authorize a
     /// release or physical submission by itself.
@@ -159,6 +164,16 @@ mod stop_release_proposal_tests {
         assert_eq!(proposal.receipt_sha256(), "b".repeat(64));
         assert_eq!(proposal.sample_sha256(), "c".repeat(64));
         assert_eq!(proposal.provenance(), &provenance);
+        assert_eq!(proposal.provenance_sha256(), provenance.sha256());
+        assert_eq!(provenance.sha256().len(), 64);
+        let other_channel = crate::fixture_ipc::FixtureSharedHistoryProvenanceV1::new(
+            operation,
+            provenance.generation,
+            provenance.owner,
+            "/tmp/other-stop.sock".to_owned(),
+        )
+        .unwrap();
+        assert_ne!(provenance.sha256(), other_channel.sha256());
         assert!(proposal.matches_evidence_digests(
             &"a".repeat(64),
             &"b".repeat(64),

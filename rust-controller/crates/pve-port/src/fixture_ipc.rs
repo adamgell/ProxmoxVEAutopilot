@@ -6,6 +6,7 @@
 
 use crate::{CloneProvisioningRequestV1, MutationReceipt, Upid};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 mod stage;
@@ -67,6 +68,24 @@ pub struct FixtureSharedHistoryProvenanceV1 {
 impl FixtureSharedHistoryProvenanceV1 {
     pub fn operation(&self) -> Uuid {
         self.operation
+    }
+
+    /// Canonical digest of the sealed bridge identity. This is derived only
+    /// from the private provenance fields; admission/sample JSON is not used.
+    pub fn sha256(&self) -> String {
+        let mut canonical = Vec::new();
+        for value in [
+            self.operation.to_string(),
+            self.generation.to_string(),
+            self.owner.to_string(),
+            self.channel.clone(),
+        ] {
+            canonical.extend_from_slice(value.len().to_string().as_bytes());
+            canonical.push(b':');
+            canonical.extend_from_slice(value.as_bytes());
+            canonical.push(b'|');
+        }
+        format!("{:x}", Sha256::digest(canonical))
     }
 
     pub(crate) fn new(
