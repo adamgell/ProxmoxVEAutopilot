@@ -1,0 +1,9 @@
+   Compiling tower-http v0.6.11
+   Compiling sqlx-postgres v0.8.6
+   Compiling reqwest v0.12.28
+   Compiling pve-port v0.1.0 (/workspace/rust-controller/crates/pve-port)
+   Compiling sqlx v0.8.6
+   Compiling osdeploy-adapter v0.1.0 (/workspace/rust-controller/crates/osdeploy-adapter)
+   Compiling postgres-store v0.1.0 (/workspace/rust-controller/crates/postgres-store)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.05s
+     Running unittests src/lib.rs (target/debug/deps/postgres_store-b82f3332cbf49861)
