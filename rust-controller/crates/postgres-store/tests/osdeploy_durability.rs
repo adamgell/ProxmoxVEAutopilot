@@ -1244,6 +1244,33 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
             assert_eq!(expired.state(), ExecutionState::Unknown);
             assert_eq!(expired.deadline_at(), Some(deadline));
             assert_eq!(expired.attempt_id(), Some(registration_grant.attempt_id()));
+            // A recovered callback arriving after the original budget cannot
+            // reopen the stage, even with its actual delivered credential.
+            let expected = osdeploy_support::plan();
+            let identity = postgres_store::FixturePeRegistrationIdentity {
+                vm_uuid: expected.vm().uuid().to_string(),
+                mac: expected.vm().mac().to_string(),
+                agent_id: expected.names().expected_agent_id().to_owned(),
+            };
+            let authorization = format!("Bearer {}", accepted.lines().last().unwrap());
+            assert!(
+                replacement
+                    .accept_fixture_pe_registration(&next, &authorization, secret, &identity)
+                    .await
+                    .is_err()
+            );
+            let after_callback =
+                s.db.other
+                    .load_osdeploy_operation(registration)
+                    .await
+                    .unwrap();
+            assert_eq!(after_callback.state(), ExecutionState::Unknown);
+            assert_eq!(after_callback.revision(), expired.revision());
+            assert_eq!(after_callback.attempt_id(), expired.attempt_id());
+            assert_eq!(after_callback.deadline_at(), Some(deadline));
+            let selected_or_continued: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM rust_controller.fixture_pe_registrations)+(SELECT count(*) FROM rust_controller.osdeploy_deadlines WHERE scope_key='pe_completion')")
+                .fetch_one(&s.db.pool).await.unwrap();
+            assert_eq!(selected_or_continued, 0);
             assert!(
                 replacement
                     .start_osdeploy_bound(&next, s.ids.workflow_sha256())
