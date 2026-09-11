@@ -1009,6 +1009,19 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                         assert!(authority.decision_unix_ms >= authority.grace_due_unix_ms);
                         assert!(authority.lease_checked_unix_ms >= authority.decision_unix_ms);
                         assert!(authority.lease_checked_unix_ms < authority.lease_expires_unix_ms);
+                        let prepared_bytes = serde_json::to_vec(&authority).unwrap();
+                        replacement
+                            .revalidate_fixture_stop_authority(&stop, &authority)
+                            .await
+                            .unwrap();
+                        assert_eq!(serde_json::to_vec(&authority).unwrap(), prepared_bytes);
+                        assert!(
+                            s.db.scheduler()
+                                .with_fixture_credential_delivery()
+                                .revalidate_fixture_stop_authority(&stop, &authority)
+                                .await
+                                .is_err()
+                        );
                         assert!(
                             s.db.scheduler()
                                 .with_fixture_credential_delivery()

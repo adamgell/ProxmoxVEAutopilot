@@ -2,7 +2,30 @@
 use super::*;
 use pve_port::fixture_support::FixtureStopAuthorityV1;
 
+fn unchanged(
+    prepared: &FixtureStopAuthorityV1,
+    mut current: FixtureStopAuthorityV1,
+) -> Result<(), Error> {
+    wire::require(
+        prepared.lease_checked_unix_ms >= current.decision_unix_ms
+            && prepared.lease_checked_unix_ms <= current.lease_checked_unix_ms,
+    )?;
+    current.lease_checked_unix_ms = prepared.lease_checked_unix_ms;
+    wire::require(&current == prepared)
+}
+
 impl Scheduler {
+    /// Revalidate ownership and cancellation after obtaining a scoped power
+    /// sample, without replacing the preparation clock embedded in that sample.
+    /// This is a point-in-time database check, not an admission or send permit.
+    pub async fn revalidate_fixture_stop_authority(
+        &self,
+        grant: &LeaseGrant,
+        prepared: &FixtureStopAuthorityV1,
+    ) -> Result<(), Error> {
+        unchanged(prepared, self.fixture_stop_authority(grant).await?)
+    }
+
     /// Reload the guarded grace decision and current committed stop lease under
     /// the scheduler's normal lock order. The returned clocks expire naturally;
     /// callers must obtain fresh supervisor power evidence after this check.
@@ -59,5 +82,51 @@ impl Scheduler {
         };
         tx.commit().await?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn prepared_stop_authority_preserves_clock_and_rejects_changed_scope() {
+        let prepared = FixtureStopAuthorityV1 {
+            version: 1,
+            grace_operation: uuid::Uuid::now_v7(),
+            decision_event: uuid::Uuid::now_v7(),
+            evidence_fence: 1,
+            grace_due_unix_ms: 10,
+            decision_unix_ms: 11,
+            lease_checked_unix_ms: 12,
+            lease_expires_unix_ms: 30,
+            original_deadline_unix_ms: 40,
+        };
+        let mut current = prepared.clone();
+        current.lease_checked_unix_ms = 13;
+        assert!(unchanged(&prepared, current.clone()).is_ok());
+        for field in [
+            "version",
+            "grace_operation",
+            "decision_event",
+            "evidence_fence",
+            "grace_due_unix_ms",
+            "decision_unix_ms",
+            "lease_checked_unix_ms",
+            "lease_expires_unix_ms",
+            "original_deadline_unix_ms",
+        ] {
+            let mut value = serde_json::to_value(&prepared).unwrap();
+            value[field] = if field.ends_with("operation") || field == "decision_event" {
+                serde_json::json!(uuid::Uuid::now_v7())
+            } else {
+                serde_json::json!(99)
+            };
+            assert!(
+                unchanged(&serde_json::from_value(value).unwrap(), current.clone()).is_err(),
+                "accepted changed {field}"
+            );
+        }
+        current.lease_checked_unix_ms = 11;
+        assert!(unchanged(&prepared, current).is_err());
     }
 }
