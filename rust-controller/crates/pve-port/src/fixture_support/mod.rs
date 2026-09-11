@@ -16,7 +16,7 @@ mod start_restoration;
 pub use durable_fixture_log::FixtureStopAuthorityV1;
 pub use durable_fixture_log::StartObservationV1;
 pub use durable_fixture_log::{FixtureLedgerStage, StageBinding};
-pub use stage_checkpoint::{StageCheckpointReply, StageCheckpointRequest};
+pub use stage_checkpoint::{StageCheckpointRefusal, StageCheckpointReply, StageCheckpointRequest};
 pub use stage_identity::FixtureStageIdentity;
 pub use start_authorization::StartPePowerAuthorizationV1;
 pub use start_observation::FixtureStartPeObservationV1;

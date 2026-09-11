@@ -50,9 +50,17 @@ pub enum StageCheckpointRequest {
 #[serde(deny_unknown_fields)]
 pub struct StageCheckpointReply {
     pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<StageCheckpointRefusal>,
     pub generation: Uuid,
     pub identity: Option<FixtureStageIdentity>,
     pub phase: super::CheckpointPhase,
+}
+/// A successful admission has no authority to release a physical stop.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StageCheckpointRefusal {
+    StopReleaseAuthorityUnavailable,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,6 +93,7 @@ impl StageBarrier {
         let result = Self {
             state: StageCheckpointReply {
                 ok: false,
+                refusal: None,
                 generation: Uuid::now_v7(),
                 identity: None,
                 phase: super::CheckpointPhase::Idle,
@@ -121,6 +130,7 @@ impl StageBarrier {
         daemon_generation: Uuid,
     ) -> io::Result<StageCheckpointReply> {
         use super::CheckpointPhase::*;
+        let mut refusal = None;
         let ok = match request {
             StageCheckpointRequest::AdmitStop {
                 identity,
@@ -198,8 +208,17 @@ impl StageBarrier {
                 && self.authorization.is_none() =>
             {
                 let valid = FixtureStageRequest::decode(&request).ok().is_some_and(|r| {
-                    identity.validate_request(&r).is_ok()
-                        && r.request().plan().action() != crate::ProvisioningActionV1::EnsureStopped
+                    if identity.validate_request(&r).is_err() {
+                        return false;
+                    }
+                    if r.request().plan().action() == crate::ProvisioningActionV1::EnsureStopped {
+                        // Point-in-time DB checks and a durable admission record
+                        // do not bridge cancellation/lease changes into this IPC
+                        // release. No generic disk-state authorization can do so.
+                        refusal = Some(StageCheckpointRefusal::StopReleaseAuthorityUnavailable);
+                        return false;
+                    }
+                    true
                 }) && request == committed_request
                     && after.disk_bytes > 0;
                 if valid {
@@ -254,6 +273,7 @@ impl StageBarrier {
         }
         let mut reply = self.state.clone();
         reply.ok = ok;
+        reply.refusal = refusal;
         Ok(reply)
     }
     pub(crate) fn validate_submission(

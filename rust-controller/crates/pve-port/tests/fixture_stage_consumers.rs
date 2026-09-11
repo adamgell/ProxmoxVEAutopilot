@@ -151,21 +151,33 @@ async fn stop_identity_cannot_acquire_disk_only_release_or_effect_across_daemon_
         );
         kill_entered_stop_worker(&directory, &identity).await;
         dead_worker_identity = Some(identity.clone());
-        assert!(
-            !checkpoint(
-                &supervisor,
-                StageCheckpointRequest::AuthorizeRelease {
-                    identity: identity.clone(),
-                    request: stop.encode().unwrap(),
-                    committed_request: stop.encode().unwrap(),
-                    after: VmState {
-                        disk_bytes: stop.request().plan().expected().effective_capacity_bytes(),
-                        pe_configured: true
-                    },
-                }
+        let release_reply = checkpoint(
+            &supervisor,
+            StageCheckpointRequest::AuthorizeRelease {
+                identity: identity.clone(),
+                request: stop.encode().unwrap(),
+                committed_request: stop.encode().unwrap(),
+                after: VmState {
+                    disk_bytes: stop.request().plan().expected().effective_capacity_bytes(),
+                    pe_configured: true,
+                },
+            },
+        )
+        .await;
+        assert!(!release_reply.ok);
+        assert_eq!(release_reply.phase, CheckpointPhase::Entered);
+        assert_eq!(
+            release_reply.refusal,
+            Some(
+                pve_port::fixture_support::StageCheckpointRefusal::StopReleaseAuthorityUnavailable
             )
-            .await
-            .ok
+        );
+        assert_eq!(
+            checkpoint(&supervisor, StageCheckpointRequest::Status)
+                .await
+                .refusal,
+            None,
+            "refusals describe the request, not persisted execution state"
         );
         let predecessor = FixtureStageIdentity {
             operation: start.request().binding().operation_id().as_uuid(),
