@@ -64,6 +64,17 @@ containers and reported `ValueError: child group remains`; the qualification
 field is consequently `INCOMPLETE`. This is retained as a failed Linux
 qualification result and is not evidence of production readiness.
 
+The corrected full rerun used launcher commit `a0e36390` against the same
+exact-source image. The runner reached terminal exit `1` without OOM or restart.
+The DSN-only tests were excluded as intended and the repeated native cleanup
+and reap helper tests passed, but the operation-controller recovery group still
+failed with fixture-worker `Storage`, recovery `Elapsed`, and initial-worker
+`BrokenPipe` outcomes. The complete recovered output is retained at
+`requalification-a0e36390-full-1/runner-docker.log`; the host launcher had been
+detached before it could write its final state. This narrows the remaining Linux
+blocker to controller-fixture recovery under the full workload; it does not
+establish Linux qualification or production readiness.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.

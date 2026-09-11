@@ -1,0 +1,1165 @@
+
+running 6 tests
+test osdeploy::admission::tests::close_publishes_before_contended_lifecycle_wait ... ok
+test osdeploy::budget_tests::checkpoint_failure_and_cancellation_stop_dispatch_continuation ... ok
+test osdeploy::budget_tests::client_wall_clock_shift_cannot_extend_local_deadline ... ok
+test osdeploy::budget_tests::lease_status_roundtrip_delay_consumes_budget ... ok
+test osdeploy::collect::tests::expired_endpoint_does_not_poll_a_physical_read ... ok
+test osdeploy::send::tests::selected_retry_delays_are_exactly_100_then_250_milliseconds ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+
+running 24 tests
+test additional_matrix_rows ... ok
+test all_execution_states_guard_preflight_and_unknown_requires_narrow_mode ... ok
+test changed_attempt_or_digest_never_authorizes ... ok
+test coherent_receipt_and_task_substitution_cannot_replace_persisted_upid ... ok
+test configure_response_loss_can_reconcile_only_from_owned_exact_postconditions ... ok
+test contradictory_target_identity_never_authorizes ... ok
+test deadline_or_transport_loss_require_reconciliation_to_settle ... ok
+test decision_matrix ... ok
+test different_vm_desired_uuid_or_mac_collision_never_authorizes ... ok
+test duplicate_boot_volume_cannot_establish_unique_clone_ownership ... ok
+test every_desired_field_is_required_for_configure_and_start_satisfaction ... ok
+test freshness_rejects_future_and_accepts_exact_boundary ... ok
+test independent_fresh_reads_can_agree_without_identical_timestamps ... ok
+test outcome_observations_must_postdate_dispatch_including_absence_and_power ... ok
+test ownership_reload_requires_full_historical_success_and_coverage ... ok
+test ownership_roundtrip_preserves_dispatch_before_intervening_observations ... ok
+test provenance_conflict_precedes_running_task_and_cancellation ... ok
+test receipt_requires_persisted_dispatch_and_preflight_cannot_ignore_it ... ok
+test receipt_survives_later_evidence_fences_but_evidence_context_does_not ... ok
+test running_clone_cannot_treat_unowned_occupant_as_pending_owned_work ... ok
+test stale_inventory_never_authorizes ... ok
+test successful_proof_cannot_use_target_snapshot_from_before_dispatch ... ok
+test unauthorized_required_read_precedes_missing_observation ... ok
+test validated_roundtrip_rejects_cross_binding_and_fake_source_relabeling ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+
+running 52 tests
+test committed_dispatch_captures_ipc_clone_receipt_in_independent_store ... 
+running 1 test
+test independent_recovery_reader ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.15s
+
+ok
+test configure_worker_death_after_publication_preserves_prefix_and_uncertainty ... 
+running 1 test
+test fixture_prefix_worker ... FAILED
+
+failures:
+
+failures:
+    fixture_prefix_worker
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.11s
+
+FAILED
+test configure_worker_death_after_receipt_reconciles_exact_prefix_to_satisfied ... 
+running 1 test
+test fixture_prefix_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.86s
+
+
+running 1 test
+test fixture_prefix_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 1.71s
+
+
+running 1 test
+
+running 1 test
+FAILED
+test configure_worker_death_before_publication_preserves_prefix_and_uncertainty ... 
+running 1 test
+test fixture_prefix_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 1.00s
+
+
+running 1 test
+test fixture_prefix_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 1.94s
+
+
+running 1 test
+
+running 1 test
+test fixture_prefix_recovery_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 28.94s
+
+ok
+test fresh_controller_clone_reaches_satisfied_from_supervisor_publication ... 
+running 1 test
+test fixture_prefix_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.91s
+
+ok
+test fresh_controller_clone_then_disk_capacity_then_configure_pe_reaches_satisfied ... 
+running 1 test
+test fixture_prefix_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.86s
+
+
+running 1 test
+test fixture_prefix_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 1.65s
+
+
+running 1 test
+test fixture_prefix_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 2.80s
+
+ok
+test fresh_controller_ipc_collection_without_seed_cannot_dispatch ... ok
+test fresh_controller_late_clone_records_exact_durable_receipt ... 
+running 1 test
+test fixture_prefix_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.92s
+
+ok
+test osdeploy_support::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test osdeploy_support::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test osdeploy_support::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test osdeploy_support::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test osdeploy_support::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test osdeploy_support::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test osdeploy_support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test osdeploy_support::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test osdeploy_support::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test osdeploy_support::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test osdeploy_support::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test osdeploy_support::local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+test osdeploy_support::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test osdeploy_support::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test osdeploy_support::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test osdeploy_support::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test osdeploy_support::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test osdeploy_support::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test osdeploy_support::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test osdeploy_support::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test osdeploy_support::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+
+failures:
+
+failures:
+    configure_worker_death_after_publication_preserves_prefix_and_uncertainty
+    configure_worker_death_after_receipt_reconciles_exact_prefix_to_satisfied
+
+test result: FAILED. 50 passed; 2 failed; 0 ignored; 0 measured; 3 filtered out; finished in 376.93s
+
+
+running 46 tests
+test accepted_effect_without_journal_receipt_stays_unknown_after_worker_loss ... 
+running 1 test
+
+running 1 test
+test recovering_worker_b ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 47 filtered out; finished in 29.94s
+
+ok
+test osdeploy_support::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test osdeploy_support::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test osdeploy_support::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test osdeploy_support::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test osdeploy_support::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test osdeploy_support::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test osdeploy_support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test osdeploy_support::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test osdeploy_support::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test osdeploy_support::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test osdeploy_support::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test osdeploy_support::local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+test osdeploy_support::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test osdeploy_support::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test osdeploy_support::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test osdeploy_support::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test osdeploy_support::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test osdeploy_support::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test osdeploy_support::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test osdeploy_support::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test osdeploy_support::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+test worker_loss_preserves_original_attempt_and_exact_receipt ... 
+running 1 test
+
+running 1 test
+test recovering_worker_b ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 47 filtered out; finished in 30.17s
+
+ok
+
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 85.89s
+
+
+running 69 tests
+test authority_flip_and_expiry_before_dispatch_prevent_send ... ok
+test authority_flip_in_last_check_send_window_preserves_receipt_for_current_reconciler ... ok
+test blocked_database_does_not_make_run_once_unbounded ... ok
+test cancellation_before_start_sends_no_new_step ... ok
+test cancelled_clone_is_observed_but_run_never_advances ... ok
+test changed_owned_identity_disk_or_missing_marker_never_configures_foreign_vm ... ok
+test clone_response_loss_stays_unknown_and_never_advances ... ok
+test committed_dispatch_continuation_rechecks_cancel_authority_and_expiry ... ok
+test competing_workers_never_double_send ... ok
+test complete_identity_coverage_is_bounded_and_fails_closed ... ok
+test configure_response_loss_requires_fresh_reconciliation_without_replay ... ok
+test crash_after_dispatch_before_submission_is_unknown_without_replay ... ok
+test crash_after_receipt_reloads_original_acceptance_and_never_replays ... ok
+test delayed_completion_retains_grant_but_restart_cannot_adopt ... ok
+test delayed_start_after_deadline_reconciles_without_new_attempt ... ok
+test full_slice_duplicate_intake_has_three_exact_sends ... ok
+test late_success_evidence_is_retained_after_conflicting_decision ... ok
+test lock_or_digest_change_in_send_window_is_observed_without_resend ... ok
+test mutation_errors_are_journaled_as_fixed_classifications ... ok
+test occupied_foreign_vmid_is_preserved_without_send ... ok
+test recovered_clone_continues_configure_and_start_with_aged_infrastructure ... ok
+test stale_then_fresh_config_retries_before_single_dispatch ... ok
+test support::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test support::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test support::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test support::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test support::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test support::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test support::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test support::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test support::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test support::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ok
+test support::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test support::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test support::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test support::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test support::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test support::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test support::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test support::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test support::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test support::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test support::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test support::local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+test support::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test support::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test support::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test support::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test support::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test support::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test support::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test support::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test support::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test support::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test support::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test support::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+test three_stale_config_reads_exhaust_bound_without_fourth_read_or_send ... ok
+test unauthorized_and_malformed_preflight_never_send ... ok
+test unknown_clone_with_running_task_retains_facts_without_active_waiting ... ok
+
+test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 66.37s
+
+
+running 74 tests
+test authority_change_after_dispatch_commit_prevents_send ... ok
+test authority_change_during_entered_send_still_captures_original_response ... ok
+test cancellation_after_dispatch_commit_cannot_send ... ok
+test cancellation_during_collection_cannot_relabel_old_evidence ... ok
+test close_at_dispatch_commit_cancels_queued_unsent_work ... ok
+test closed_start_cannot_activate_or_send ... ok
+test current_thread_cancellation_drops_owned_send_future ... ok
+test delayed_original_response_capture_keeps_original_whole_endpoint ... ok
+test delayed_unknown_context_returns_zero_and_expired_due_cannot_read ... ok
+test delayed_unknown_reconstruction_samples_db_after_the_wait ... ok
+test due_unknown_reconciles_without_new_lease_or_send ... ok
+test failed_drain_stays_closed_while_original_send_finishes ... ok
+test identity_overflow_is_partial_and_never_dispatches ... ok
+test late_physical_success_cannot_reconcile_expired_unknown ... ok
+test lease_status_roundtrip_delay_consumes_original_interval ... ok
+test observation_timeout_preserves_unavailable_evidence_without_send ... ok
+test older_open_cannot_reopen_after_close_lock_timeout ... ok
+test original_whole_endpoint_drops_queued_unsent_permit ... ok
+test osdeploy_support::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test osdeploy_support::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test osdeploy_support::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test osdeploy_support::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test osdeploy_support::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test osdeploy_support::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test osdeploy_support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test osdeploy_support::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test osdeploy_support::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test osdeploy_support::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test osdeploy_support::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test osdeploy_support::local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+test osdeploy_support::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test osdeploy_support::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test osdeploy_support::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test osdeploy_support::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test osdeploy_support::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test osdeploy_support::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test osdeploy_support::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test osdeploy_support::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test osdeploy_support::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+test paused_send_drain_completes_capture_and_capacity_exhaustion_is_idle ... ok
+test queued_old_open_is_invalidated_but_fresh_explicit_open_can_succeed ... ok
+test receipt_storage_failure_stops_after_three_attempts_without_resend ... ok
+test receipt_storage_retries_twice_then_captures_only_original_response ... ok
+test reconstructed_controller_executes_growth_chain ... ok
+test reconstructed_controller_executes_no_growth_chain ... ok
+test response_loss_never_resends ... ok
+test unavailable_preflight_is_durable_unknown_and_never_sends ... ok
+test unknown_budget_loader_rejects_invalid_original_history_without_writes ... ok
+test unknown_observation_has_db_budget_without_a_lease_or_writes ... ok
+test unpolled_controller_future_has_no_activity_or_durable_effect ... ok
+test waiting_resumes_original_task_in_new_controller ... ok
+
+test result: ok. 74 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 122.44s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test both_stages_refuse_even_matching_claims_and_repeated_reads ... ok
+test substitutions_and_invalid_evidence_fail_closed ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 3 tests
+test identity_uses_operation_as_stable_step_and_zero_retry ... ok
+test non_guest_stage_and_nil_identities_fail_closed ... ok
+test only_the_five_guest_stages_admit_identity ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test fresh_heartbeat_claims_never_authenticate_and_stale_or_replayed_claims_refuse ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 12 tests
+test disk_capacity_checks_binary_gib_overflow_before_comparing_template ... ok
+test disk_capacity_is_grow_only_and_preserves_exact_template_bytes ... ok
+test disk_capacity_rejects_subminimum_requests_and_empty_templates ... ok
+test equivalent_normalized_names_share_agent_id_without_claiming_uniqueness ... ok
+test every_phase_duration_independently_enforces_inclusive_bounds ... ok
+test freshness_is_positive_at_most_300_and_no_larger_than_mutation_budget ... ok
+test legacy_normalization_uses_literal_ascii_golden_examples ... ok
+test names_preserve_requested_and_independent_pve_identity_and_derive_agent_id ... ok
+test names_reject_invalid_original_utf8_byte_length_and_controls ... ok
+test native_names_reject_unsupported_normalized_outputs ... ok
+test policy_retains_short_phase_budgets_independently_of_freshness ... ok
+test production_defaults_pin_all_budgets_and_preserve_force_stop_choice ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test package_and_predecessor_claims_cannot_authorize_agent_installation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test host_claims_never_authenticate_agent_or_authorize_installation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test aggregate_claims_never_establish_operational_acceptance ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 2 tests
+test complete_looking_report_cannot_replace_authenticated_registration_predecessor ... ok
+test malformed_and_incomplete_reports_are_refused ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test verifier_authority_checks_exact_fence_and_result_revision_without_authentication_success ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test callback_witness_stays_unavailable_and_replay_conflicts_keep_original_deadline ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test microsecond_anchor_preserves_original_deadline_and_refuses_lossy_v1_conversion ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 2 tests
+test malformed_scope_is_not_constructible ... ok
+test stopped_claim_and_expiry_never_grant_shutdown_or_force_stop ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test artifact_apply_index_fits_signed_guest_consumer_and_retains_source_provenance ... ok
+test both_media_fields_admit_only_narrow_native_iso_references ... ok
+test both_serials_require_bounded_ascii_tokens_with_alphanumeric_endpoints ... ok
+test canonical_fingerprint_matches_independently_hashed_literal_snapshot_on_reconstruction ... ok
+test complete_snapshot_pins_all_inputs_fixed_native_fields_and_nested_claims ... ok
+test equivalent_hash_case_normalizes_before_complete_fingerprinting ... ok
+test fingerprint_binds_every_artifact_input_and_output_index_provenance ... ok
+test fingerprint_binds_every_media_payload_serial_os_and_profile_reference ... ok
+test fingerprint_binds_every_vm_identity_resource_and_free_storage_field ... ok
+test fingerprint_binds_names_capacity_every_phase_and_force_stop_policy ... ok
+test os_labels_and_language_are_bounded_declarations_without_commands_or_paths ... ok
+test payload_and_template_hashes_reject_length_nonhex_unicode_and_controls ... ok
+test payload_hash_presence_controls_only_declared_or_unverified_claim ... ok
+test profile_references_are_required_non_nil_opaque_ids ... ok
+test vm_admission_requires_four_gib_and_consistent_independent_pve_name ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 3 tests
+test derives_every_pve_field_and_retains_effective_capacity ... ok
+test non_pve_inputs_change_workflow_digest_without_changing_pve_subset ... ok
+test serial_20_succeeds_and_21_fails_without_narrowing_declarations ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 14 tests
+test broad_serial_declaration_restores_but_does_not_grant_dispatch_compatibility ... ok
+test constructors_revalidate_identities_resources_and_input_limits ... ok
+test equivalent_json_layout_roundtrips_but_wrong_or_noncanonical_hashes_do_not ... ok
+test every_object_rejects_unknown_fields_scalars_null_and_positional_arrays ... ok
+test every_string_field_rejects_enum_objects_numbers_booleans_and_null ... ok
+test every_top_level_and_nested_field_is_required_unique_and_typed ... ok
+test fixed_fields_cannot_be_changed_even_with_a_matching_forged_digest ... ok
+test input_limit_counts_utf8_bytes_and_accepts_exactly_65536 ... ok
+test nonintegral_retained_capacity_and_phase_policy_boundaries_roundtrip ... ok
+test normalized_and_derived_claims_cannot_be_forged ... ok
+test rejects_duplicate_fields_before_value_normalization ... ok
+test rejects_malformed_trailing_and_deep_json_with_payload_free_errors ... ok
+test restores_complete_admitted_plan ... ok
+test valid_source_fallback_and_all_required_null_payloads_roundtrip ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test fixed_manifest_preserves_all_sixteen_operation_identities_in_order ... ok
+test only_ensure_stopped_has_the_guarded_escalation_dependency ... ok
+test serialization_pins_every_stage_kind_and_dependency_encoding ... ok
+test stage_kinds_preserve_mutation_callback_observation_and_guest_boundaries ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test arming_preserves_original_deadline_and_never_invents_authenticated_witness ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test reports_cannot_forge_host_authentication_or_replace_receipt_binding ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test watchdog_claims_cannot_replace_authenticated_predecessor_or_agent ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 59 tests
+test osdeploy::execution::wire::tests::all_emitted_evaluator_and_control_reasons_have_closed_pairings ... ok
+test osdeploy::execution::wire::tests::closed_decision_accepts_required_nulls_and_rejects_missing_and_unknown_fields ... ok
+test osdeploy::execution::wire::tests::decision_and_evidence_limits_count_exact_input_octets ... ok
+test osdeploy::execution::wire::tests::every_initial_action_is_closed_and_pairs_its_resolution_and_reason ... ok
+test osdeploy::execution::wire::tests::receipt_requires_null_and_exact_closed_original_identity_fields ... ok
+test osdeploy::execution::wire::tests::reconciliation_advice_never_reopens_waiting_and_nullable_schedule_is_exact ... ok
+test scheduler::osdeploy::decision::tests::exact_scope_equality_selects_expiry_branch ... ok
+test scheduler::osdeploy::transition::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test scheduler::osdeploy::transition::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test scheduler::osdeploy::transition::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test scheduler::osdeploy::transition::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test scheduler::osdeploy::transition::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test scheduler::osdeploy::transition::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test scheduler::osdeploy::transition::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test scheduler::osdeploy::transition::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test scheduler::osdeploy::transition::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test scheduler::osdeploy::transition::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test scheduler::osdeploy::transition::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test scheduler::osdeploy::transition::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test scheduler::osdeploy::transition::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test scheduler::osdeploy::transition::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test scheduler::osdeploy::transition::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test scheduler::osdeploy::transition::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+test scheduler::osdeploy::transition::tests::cancellation_scope_keeps_opened_inherited_deadline_without_an_attempt ... ok
+test scheduler::osdeploy::transition::tests::cancellation_scope_selection_preserves_unopened_bound_and_expired_cases ... ok
+test scheduler::osdeploy::transition::tests::private_clock_predicate_rejects_exact_lease_and_deadline_equality ... ok
+test scheduler::osdeploy::transition::tests::private_expiry_requires_original_scope_and_current_locked_cas ... ok
+test scheduler::osdeploy::transition::tests::private_fixture_database_family_preserves_macos_and_admits_linux ... ok
+test scheduler::osdeploy::transition::tests::private_reclaim_and_repark_require_expired_exact_epoch_and_original_budget ... ok
+test scheduler::osdeploy::transition::tests::private_stale_token_cas_and_all_disabled_lifecycle_entries_write_nothing ... ok
+test start_pe_session::tests::original_anchor_precision_is_never_silently_truncated ... ok
+
+test result: ok. 59 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 49.93s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 74 tests
+test cancellation_before_claim_is_durable_and_idempotent ... ok
+test cancelled_or_stale_grant_cannot_dispatch ... ok
+test clone_without_persisted_receipt_cannot_satisfy_with_coherent_task_claims ... ok
+test command_helper_preserves_validation_before_database_access ... ok
+test concurrent_cancel_and_dispatch_never_allow_downstream_send ... ok
+test concurrent_identity_reservation_has_one_winner ... ok
+test configure_response_loss_only_reconciles_after_unknown ... ok
+test crash_after_dispatch_never_grants_second_send ... ok
+test dispatch_is_single_use ... ok
+test dispatch_rechecks_expiry_after_a_blocked_durable_write ... ok
+test every_populated_native_table_rejects_update_delete_and_truncate ... ok
+test foundation_database_upgrade_preserves_four_previous_workflows ... ok
+test generic_scheduler_cannot_execute_native ... ok
+test historical_ownership_uses_decision_evidence_after_later_typed_facts ... ok
+test intake_changed_digest_conflicts ... ok
+test intake_same_digest_is_idempotent ... ok
+test late_success_preserves_newer_conflict ... ok
+test migration_upgrade_and_all_native_tables_are_immutable ... ok
+test native_decision_checks_revision_and_generation ... ok
+test native_reaper_waits_for_run_before_locking_operation ... ok
+test native_source_and_command_binding_reject_substitution ... ok
+test old_generation_cannot_record_an_active_native_decision ... ok
+test owned_configure_and_running_start_satisfy_without_dispatch ... ok
+test public_append_remains_evidence_only ... ok
+test receipt_is_exact_durable_and_idempotent_after_expiry ... ok
+test snapshot_retains_latest_typed_evidence_after_generic_observations ... ok
+test support::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test support::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test support::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test support::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test support::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test support::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test support::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test support::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test support::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test support::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ok
+test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ok
+test support::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test support::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test support::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test support::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test support::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test support::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test support::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test support::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test support::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test support::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test support::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test support::local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+test support::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test support::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test support::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test support::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test support::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test support::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test support::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test support::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test support::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test support::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test support::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test support::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+test typed_configure_and_start_dispatches_use_owned_requests_and_receipts ... ok
+test typed_digest_and_evidence_anchor_are_independently_fenced ... ok
+test unknown_reconciliation_uses_current_generation_original_dispatch_and_receipt ... ok
+test waiting_keeps_attempt_and_lease_then_satisfies_from_fresh_proof ... ok
+
+test result: ok. 74 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 39.14s
+
+
+running 137 tests
+test activation_creates_one_attempt_with_policy_deadline ... ok
+test cancellation_fences_all_sixteen_without_manufactured_attempts ... ok
+test cancelled_migration_rolls_back_and_reuses_clean_connection ... ok
+test committed_but_unpolled_send_never_yields_a_second_permit ... ok
+test consuming_send_errors_and_response_loss_never_restore_a_permit ... ok
+test declaration_and_bound_activation_reload_are_observations_without_writes ... ok
+test dispatch_final_clock_rejects_evidence_that_aged_during_writes ... ok
+test dispatch_final_clock_rejects_scope_expiry_during_writes ... ok
+test dispatch_independent_pools_commit_only_one_permit ... ok
+test dispatch_keeps_original_preflight_fence_separate_from_current_cas ... ok
+test dispatch_rejects_changed_request_owner_event_and_revision_without_writes ... ok
+test dispatch_rolls_back_every_write_and_deferred_commit_failure ... ok
+test evidence_restore_rejects_source_fence_hash_shape_missing_nulls_and_duplicates ... ok
+test first_start_reload_rejects_interleaved_history ... ok
+test first_start_reload_rejects_timestamp_only_corruption_and_restores ... ok
+test immutable_tables_reject_update_delete_and_truncate_and_repair_each_trigger ... ok
+test lifecycle_activation_rolls_back_at_every_write_and_commit_boundary ... ok
+test lifecycle_fences_workers_hashes_generation_and_disabled_stages_without_writes ... ok
+test lifecycle_final_clock_check_rolls_back_expired_activation_and_start ... ok
+test lifecycle_heartbeat_extends_only_the_existing_short_lease ... ok
+test lifecycle_heartbeat_refreshes_epoch_without_extending_scope ... ok
+test lifecycle_historical_generic_osdeploy_cannot_be_adopted ... ok
+test lifecycle_last_cap_race_counts_old_generation_leases ... ok
+test lifecycle_same_operation_race_and_start_replay_are_atomic ... ok
+test migration_failure_rolls_back_and_reuses_clean_connection ... ok
+test migration_is_additive_and_registration_stays_declaration_only ... ok
+test ordinary_lease_reload_park_resume_and_later_start ... ok
+test ordinary_lease_reload_preserves_exact_terminal_residual_lease ... ok
+test original_clone_receipt_is_immutable_and_preserves_preflight_replay ... ok
+test original_receipt_survives_cancellation_control_while_continuation_is_fenced ... ok
+test osdeploy_support::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test osdeploy_support::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test osdeploy_support::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test osdeploy_support::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test osdeploy_support::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test osdeploy_support::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test osdeploy_support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test osdeploy_support::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test osdeploy_support::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test osdeploy_support::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test osdeploy_support::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test osdeploy_support::local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+test osdeploy_support::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test osdeploy_support::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test osdeploy_support::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test osdeploy_support::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test osdeploy_support::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test osdeploy_support::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test osdeploy_support::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test osdeploy_support::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test osdeploy_support::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+test paused_send_future_cancellation_keeps_dispatch_and_cannot_resend ... ok
+test physical_advice_rejects_template_mismatch_and_reload_hash_corruption ... ok
+test physical_clone_advice_uses_indexed_before_state_without_dispatch_authority ... ok
+test physical_reload_rejects_rehashed_request_marker_and_before_state_substitution ... ok
+test real_no_growth_baseline_enables_configure_without_capacity_dispatch ... ok
+test receipt_can_arrive_after_original_generation_lease_and_scope_expire ... ok
+test receipt_rejects_mismatched_task_and_conflicting_admitted_response ... ok
+test receipt_reload_keeps_original_evidence_fence_and_rejects_foreign_dispatch ... ok
+test receipt_storage_retry_rolls_back_every_write_and_preserves_first_db_time ... ok
+test recovery_dispatched_expired_observer_becomes_unknown_without_resend ... ok
+test recovery_reclaims_twice_without_replacing_original_attempt_or_budget ... ok
+test recovery_reparks_actual_read_only_running_and_resumed_waiting ... ok
+test reload_rejects_acquisition_without_its_atomic_state_event ... ok
+test reload_rejects_changed_binding_scope_epoch_and_aggregate_times ... ok
+test reload_rejects_dispatch_at_the_original_lease_expiry ... ok
+test reload_rejects_extra_attempt_and_changed_original_attempt_times ... ok
+test reload_rejects_wrong_decision_kind_revision_hash_and_missing_index ... ok
+test schema_closes_actions_resolutions_and_attempt_nullability ... ok
+test schema_rejects_foreign_operation_references_and_duplicate_bindings_and_dispatches ... ok
+test schema_rejects_invalid_scope_hash_counter_time_and_payload_rows ... ok
+test selected_terminal_decision_survives_later_cancellation_control ... ok
+test task6_accepted_task_failure_is_selected_failed ... ok
+test task6_config_and_identity_changes_select_conflicted ... ok
+test task6_current_cas_serializes_preflight_selection_against_dispatch ... ok
+test task6_decision_and_park_rollback_each_write_and_deferred_commit ... ok
+test task6_decision_rechecks_final_freshness_and_current_authority ... ok
+test task6_due_resume_at_original_deadline_never_renews_attempt_budget ... ok
+test task6_expired_scope_wins_over_unauthorized_observation ... ok
+test task6_growth_history_survives_old_deadline_and_all_later_stages_stay_closed ... ok
+test task6_original_scope_deadline_rejects_late_apparent_success ... ok
+test task6_paused_original_send_may_capture_after_unknown_without_resend ... ok
+test task6_resume_requires_real_basis_cap_original_attempt_and_cancellation_fence ... ok
+test task6_resume_rollback_each_write_and_deferred_commit ... ok
+test task6_scope_crossing_during_decision_rolls_back_then_retries_original_expiry ... ok
+test task6_synchronous_configure_response_loss_keeps_original_dispatch_unknown ... ok
+test task6_unavailable_preflight_is_unknown_without_dispatch_or_recovery ... ok
+test task6_waiting_due_resume_preserves_original_attempt_and_replays_decision ... ok
+test task7_already_elapsed_scope_wins_inside_atomic_cancellation ... ok
+test task7_cancel_terminal_unknown_clears_schedule_and_matching_future_lease ... ok
+test task7_cancellation_races_actual_dispatch_parking_receipt_and_collection ... ok
+test task7_expiry_cursor_crosses_poison_pages_and_wraps_without_starvation ... ok
+test task7_expiry_cursor_finds_late_visible_original_scope_after_wrap ... ok
+test task7_expiry_without_projection_records_once_at_original_deadline ... ok
+test task7_foreign_residual_attempt_rejects_reaping_and_atomic_cancellation ... ok
+test task7_late_unknown_success_cannot_pass_deadline_and_expiry_has_no_second_state_event ... ok
+test task7_missing_receipt_repair_only_enables_original_bounded_observation ... ok
+test task7_new_mutations_rollback_every_actual_row_write_and_deferred_commit ... task7_atomic_writes kind=cancel verified=185 plus deferred_commit
+task7_atomic_writes kind=expire verified=13 plus deferred_commit
+task7_atomic_writes kind=repair verified=1 plus deferred_commit
+task7_atomic_writes kind=reap verified=7 plus deferred_commit
+task7_atomic_writes kind=reconcile verified=12 plus deferred_commit
+ok
+test task7_original_unknown_reconciles_actual_success_and_failure_without_new_lease ... ok
+test task7_projection_repair_does_not_repair_poisoned_immutable_epoch ... ok
+test task7_projection_repair_pages_real_reparked_history_and_bounds_combined_due ... ok
+test task7_reclaimed_pending_expires_with_original_attempt ... ok
+test task7_reconciliation_preserves_synchronous_loss_and_actual_conflict ... ok
+test task7_reconciliation_rechecks_original_fences_and_final_scope_before_commit ... ok
+test task7_repair_and_due_restore_genuine_waiting_without_creating_authority ... ok
+test task7_terminal_residual_reaper_preserves_selected_outcome_and_original_attempt ... ok
+test task7_unauthorized_unknown_reconciliation_is_validation_without_writes ... ok
+test task7_unavailable_reconciliation_backoff_is_bounded_and_usable_read_resets_it ... ok
+test typed_capture_is_atomic_at_each_table_and_duplicate_collectors_share_one_event ... ok
+test typed_capture_rejects_foreign_binding_source_and_original_fence_without_writes ... ok
+test typed_decision_constraints_are_deferred_but_journal_targets_are_immediate ... ok
+test typed_evidence_keeps_original_event_fence ... ok
+test typed_evidence_semantic_replay_conflicts_and_generic_spoof_is_never_advice ... ok
+test unactivated_reload_rejects_an_unbound_attempt ... ok
+
+test result: ok. 137 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 530.90s
+
+
+running 1 test
+test concrete_and_sealed_object_callers_typecheck ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 60 tests
+test changed_full_plan_and_both_native_family_directions_conflict ... ok
+test concurrent_duplicate_registration_returns_one_manifest ... ok
+test every_stage_binds_non_pve_inputs_but_preserves_the_pve_subset ... ok
+test generic_and_typed_same_run_race_is_exclusive_in_both_lock_orders ... ok
+test historical_osdeploy_grants_cannot_use_any_generic_execution_path ... ok
+test late_command_collision_rolls_back_the_entire_manifest ... ok
+test migration_preserves_history_and_repairs_each_missing_immutability_guard ... ok
+test osdeploy_claim_guard_precedes_database_access ... ok
+test osdeploy_support::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test osdeploy_support::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test osdeploy_support::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test osdeploy_support::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test osdeploy_support::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test osdeploy_support::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test osdeploy_support::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ok
+test osdeploy_support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test osdeploy_support::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test osdeploy_support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test osdeploy_support::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test osdeploy_support::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test osdeploy_support::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test osdeploy_support::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test osdeploy_support::local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+test osdeploy_support::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test osdeploy_support::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test osdeploy_support::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test osdeploy_support::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test osdeploy_support::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test osdeploy_support::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test osdeploy_support::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test osdeploy_support::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test osdeploy_support::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test osdeploy_support::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+test raw_osdeploy_intake_is_rejected_without_writes ... ok
+test registration_and_reload_are_atomic_and_idempotent ... ok
+test reload_rejects_corrupted_complete_manifest_and_reservations ... ok
+test reload_rejects_extra_operations_and_accepts_later_admitted_state ... ok
+test schema_rejects_invalid_stage_local_shapes_even_without_mutation_trigger ... ok
+test serial_admission_and_fixed_errors_precede_any_database_writes ... ok
+test stage_mapping_and_exact_hash_object ... ok
+test vm_identity_and_global_normalized_agent_reservations_are_exclusive ... ok
+
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 37.64s
+
+
+running 1 test
+test result_contract_refuses_without_connection_or_partial_commit ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 1 test
+test nil_result_session_is_rejected_without_database_io ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.02s
+
+
+running 65 tests
+test acknowledge_outbox_requires_the_current_unexpired_claim_token ... ok
+test append_command_never_recreates_a_missing_progressed_projection_as_pending ... ok
+test append_command_returns_existing_for_same_digest_and_conflict_for_different_digest ... ok
+test append_event_classifies_same_digest_duplicate_and_changed_digest_conflict ... ok
+test dequeue_outbox_claims_with_database_time_and_rejects_invalid_limits ... ok
+test expired_outbox_claim_is_reclaimed_by_a_second_connection_after_consumer_crash ... ok
+test invalid_execution_state_jump_is_rejected_before_any_journal_write ... ok
+test local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ok
+test local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+test local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+test migration_creates_constrained_foundation_tables ... ok
+test migration_creates_partial_outbox_claim_index_aligned_with_dequeue ... ok
+test outbox_claim_persists_database_clock_expiry ... ok
+test outbox_insert_failure_rolls_back_event_projection_and_revision ... ok
+test rebuild_projection_from_empty_store_matches_transactional_projection ... ok
+test release_outbox_requires_the_current_claim_and_makes_the_row_available_again ... ok
+test scheduler_migration_preserves_legacy_token_and_enforces_new_rows_and_updates ... ok
+test schema_enforces_journal_outbox_projection_authority_and_lease_invariants ... ok
+test schema_enforces_operation_identity_state_and_revision_invariants ... ok
+test terminal_execution_state_cannot_regress_and_emits_no_followup_event ... ok
+test two_connections_allow_one_append_winner_and_report_revision_conflict_for_loser ... ok
+test two_connections_classify_same_and_different_command_digests_without_extra_rows ... ok
+test two_connections_classify_same_and_different_event_digests_without_extra_rows ... ok
+test worker_lease_requires_attempt_owned_by_the_same_operation ... ok
+
+test result: ok. 65 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 27.99s
+
+
+running 1 test
+test unavailable_witness_refuses_before_connection_or_transaction ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 71 tests
+test ambiguous_legacy_bindings_fail_closed_without_rewriting_history ... ok
+test authority_cannot_be_deleted_and_rebootstrapped_to_reauthorize_an_old_grant ... ok
+test authority_generation_cannot_aba_back_to_an_old_grant ... ok
+test bound_claim_skips_unrelated_fingerprints_and_contract_versions ... ok
+test cancellation_fences_start_heartbeat_continuation_and_terminal_result ... ok
+test cancellation_revision_overflow_is_a_controlled_error ... ok
+test claim_heartbeat_and_finalize_keep_database_timing_and_durable_state_atomic ... ok
+test claim_skips_a_locked_oldest_operation ... ok
+test concurrent_authority_transitions_serialize_with_one_domain_stale_loser ... ok
+test concurrent_reapers_serialize_without_double_transition_or_error ... ok
+test expired_running_work_becomes_unknown ... ok
+test expired_unstarted_lease_returns_to_pending_and_can_be_reacquired ... ok
+test generic_append_cannot_start_or_finalize_after_authority_loss ... ok
+test health_snapshot_reads_counts_and_authority_without_write_privilege ... ok
+test leased_work_cannot_finalize_before_atomic_start ... ok
+test local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+test local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+test local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+test local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+test local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+test local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+test local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+test local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+test local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+test local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ok
+test local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ok
+test local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+test local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+test local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+test local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+test local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+test local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+test local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+test local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+test local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+test local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+test local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+test local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+test local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+test local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+test local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+test local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+test local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+test local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+test local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+test local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+test local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+test local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+test local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+test local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+test local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+test missing_authority_fails_closed_before_claim ... ok
+test missing_authority_fences_every_existing_lease_operation ... ok
+test mutation_start_evidence_blocks_pending_reset_even_if_state_still_says_leased ... ok
+test one_reaper_sweep_is_bounded ... ok
+test per_kind_cap_is_enforced_without_blocking_another_kind ... ok
+test running_cancellation_becomes_cancelling_atomically ... ok
+test semantic_plan_cannot_be_substituted_after_claim_or_by_concurrent_intake ... ok
+test stale_generation_cannot_heartbeat_or_finalize_after_immediate_authority_flip ... ok
+test start_atomically_records_mutation_boundary_before_execution ... ok
+test ten_concurrent_claimers_respect_cap_and_one_row_ownership ... ok
+test waiting_attempt_can_continue_only_with_its_live_capability ... ok
+test worker_mismatch_and_stale_token_cannot_continue_a_lease ... ok
+
+test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 31.21s
+
+
+running 1 test
+test crates/operation-controller/src/osdeploy.rs - osdeploy::OsDeployController::new_fixture (line 93) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test crates/operation-controller/src/osdeploy.rs - osdeploy::OsDeployController::new_fixture (line 105) - compile fail ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+all doctests ran in 1.61s; merged doctests compilation took 1.33s
+
+running 6 tests
+test crates/osdeploy-adapter/src/input_values.rs - input_values::DiskCapacity (line 9) - compile fail ... ok
+test crates/osdeploy-adapter/src/input_values.rs - input_values::PhasePolicy (line 124) - compile fail ... ok
+test crates/osdeploy-adapter/src/plan.rs - plan::OsDeployPlanV1 (line 87) - compile fail ... ok
+test crates/osdeploy-adapter/src/plan.rs - plan::OsDeployPlanV1 (line 94) - compile fail ... ok
+test crates/osdeploy-adapter/src/plan.rs - plan::PayloadDeclaration (line 17) - compile fail ... ok
+test crates/osdeploy-adapter/src/plan.rs - plan::PayloadDeclaration (line 24) - compile fail ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.44s
+
+
+running 22 tests
+test crates/postgres-store/src/lib.rs - (line 5) - compile fail ... ok
+test crates/postgres-store/src/osdeploy.rs - osdeploy (line 10) - compile fail ... ok
+test crates/postgres-store/src/osdeploy.rs - osdeploy (line 4) - compile fail ... ok
+test crates/postgres-store/src/osdeploy.rs - osdeploy (line 7) - compile fail ... ok
+test crates/postgres-store/src/osdeploy/execution.rs - osdeploy::execution::OsDeployOperationSnapshot (line 104) - compile fail ... ok
+test crates/postgres-store/src/osdeploy/execution.rs - osdeploy::execution::OsDeployPveObservation (line 32) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy.rs - scheduler::osdeploy::OsDeployLeaseStatus (line 41) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployDispatchPermit (line 11) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployDispatchPermit (line 18) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployDispatchPermit (line 25) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployDispatchPermit (line 30) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployDispatchPermit (line 33) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployDispatchPermit (line 37) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployDispatchPermit (line 40) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployDispatchPermit (line 43) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployDispatchPermit (line 46) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployResponseCapture (line 58) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployResponseCapture (line 61) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployResponseCapture (line 65) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployResponseCapture (line 68) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployResponseCapture (line 71) - compile fail ... ok
+test crates/postgres-store/src/scheduler/osdeploy/receipt.rs - scheduler::osdeploy::receipt::OsDeployResponseCapture (line 74) - compile fail ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.28s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+{"invocation_only": {"exit": 101, "failure": null}, "qualification": "INCOMPLETE"}

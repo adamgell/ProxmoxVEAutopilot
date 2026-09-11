@@ -64,6 +64,19 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   qualification nor production readiness, but preserves the exact failure
   boundary for the next workload/cleanup investigation.
 
+- The corrected owned-v1 full rerun used launcher commit `a0e36390` and the
+  same exact-source image. The runner reached a real terminal state with exit
+  `1` and no OOM/restart indication. The two DSN-only tests were correctly
+  excluded, and all repeated native cleanup/reap helper tests passed, but the
+  operation-controller recovery group still failed: fixture worker setup
+  reported `Storage`, a recovery case hit `Elapsed`, and the initial worker
+  observed `BrokenPipe`. The recovered Docker log is retained in
+  `requalification-a0e36390-full-1/runner-docker.log`; the host launcher had
+  already been detached, so its final state writer was unavailable. This is a
+  narrower controller-fixture recovery failure, not evidence that the
+  compile-fail doctests or DSN-only tests are broken, and Linux qualification
+  remains incomplete.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)
