@@ -50,6 +50,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Commit `f415b70a` adds microsecond PE-registration anchors with exact original-event/deadline binding, checked arithmetic, and lossless-only v1 conversion. The PostgreSQL probe still needs v2 integration; authenticated session persistence, dispatch, satisfaction, and production paths remain closed.
 - Commit `0f9e1180` integrates v2 anchors into the opt-in PostgreSQL diagnostic probe with exact microsecond comparisons and lossless v1 upgrade. Boundary, lossy, and invalid-context refusals pass; the schema/durable-row runtime test remains ignored and no capability opens.
 - Commit `d5602ab4` defines a fail-closed PeRegister witness contract binding session/context, request and result IDs/digests/revision, and the original microsecond deadline/event. Unavailable, expired, duplicate, and conflicting results refuse; authenticated verification, atomic persistence, API policy, and crash/controller progression remain open.
+- Commit `47d13f24` adds a pure verifier-authority descriptor checking numeric generation, worker identity, lease epoch, operation/result revisions, session/request/deadline binding, and duplicate/conflict identity. It grants no authentication or authorization; store-derived fencing, credential/session implementation, API policy, and crash progression remain open.
 
 ### Final owned Linux full-run result (2026-09-10)
 

@@ -45,6 +45,7 @@ Production and `192.168.2.4`: read-only throughout
 - Commit `f415b70a` adds exact microsecond PE-registration anchor representation and rejects lossy v1 downgrade. It is not yet integrated into PostgreSQL session persistence and does not establish dispatch, satisfaction, or production readiness.
 - Commit `0f9e1180` integrates exact v2 anchor comparison into the opt-in diagnostic probe while retaining witness-unavailable/expired refusal. The durable-row/schema runtime test is still ignored; no session, dispatch, satisfaction, or production readiness is claimed.
 - Commit `d5602ab4` defines typed fail-closed PeRegister witness binding and refusal semantics. It does not provide an authenticated verifier, HTTP policy, persistence, dispatch, crash proof, or production readiness.
+- Commit `47d13f24` adds pure authority/fence descriptor checks with refusal-only outcomes. It does not provide authenticated witness handling, store-derived fencing, persistence, API routes, dispatch, crash proof, or production readiness.
 
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
 - Commit `7f556bfd` records a newer exact-source Linux/amd64 image for `6f582095` with all Dockerfile runtime gates and 254 verified source blobs. The owned fixture run did not start because image inspection timed out and Docker later stalled; no fixture runtime qualification is claimed.
