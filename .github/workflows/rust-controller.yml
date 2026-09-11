@@ -10,10 +10,13 @@ permissions:
 env:
   # Match the owned Linux proof runner's stack budget for async integration tests.
   RUST_MIN_STACK: "16777216"
+  # Each integration test owns PostgreSQL; serialize fixtures, while tests keep
+  # their explicit concurrent claimers and supervised worker processes.
+  RUST_TEST_THREADS: "1"
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Rust and native test dependencies
@@ -45,7 +48,7 @@ jobs:
           git diff --check
   macos-arm64:
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: ARM64 Rust, native Ansible and local PostgreSQL runtime
