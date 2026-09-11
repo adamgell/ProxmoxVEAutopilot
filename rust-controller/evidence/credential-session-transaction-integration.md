@@ -3,9 +3,28 @@
 Source inspected: `a2cdff22`. This is an implementation boundary assessment;
 no session association or runtime persistence is implemented by this artifact.
 
+## Closed credential metadata prerequisite
+
+The issuer and verifier now return `RunBearerMetadata` through read-only
+accessors. The metadata preserves the original text/integer claim type, absolute
+expiry and SHA-256 of the exact signed credential bytes. It is constructed only
+while issuing a credential or after signature, expiry and endpoint run validation.
+The existing string endpoint matching remains compatible; association code can
+now distinguish integer `42` from text `"42"` without reparsing unsigned claims.
+Metadata Debug is redacted and the type cannot be deserialized from callback JSON.
+
+This closes the issuance-metadata prerequisite in item 3 below. It does not
+implement the trusted legacy-to-Rust mapping, alias persistence, renewal or any
+callback admission. Those still require the integrated locked transaction below.
+Local validation: 26 api-compat unit tests, 4 callback contract tests and 7
+compile-fail doctests passed; all-target api-compat Clippy passed with warnings
+denied. The added test covers issuer/verifier parity, exact bytes, typed identity
+separation, deterministic reissue, expiry renewal, signing-key change and Debug
+redaction.
+
 ## Existing authority and the necessary integration
 
-`IssuedRunBearer` is closed, but currently retains only credential bytes. Its
+`IssuedRunBearer` is closed and retains credential bytes plus closed metadata. Its
 constructor accepts a server-selected legacy identity and expiry; it does not
 bind those values to a registered Rust run. `MaterializedPePackageSemanticsV1`
 binds the registered run and StartPe operation, but carries no attempt.

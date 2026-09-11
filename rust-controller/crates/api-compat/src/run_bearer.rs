@@ -4,10 +4,11 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 
 /// Preserve the legacy JSON claim type. Numeric identities must not be silently
 /// converted to text because that changes the deterministic credential bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunBearerIdentity<'a> {
     Text(&'a str),
     Integer(i64),
@@ -24,6 +25,45 @@ pub enum RunBearerIdentity<'a> {
 /// ```
 pub struct IssuedRunBearer {
     token: String,
+    metadata: RunBearerMetadata,
+}
+
+/// Closed metadata derived during signing or successful verification. It is a
+/// credential association input, never scheduler or session authority.
+///
+/// ```compile_fail
+/// let _: api_compat::run_bearer::RunBearerMetadata = serde_json::from_str("{}").unwrap();
+/// ```
+#[derive(Eq, PartialEq)]
+pub struct RunBearerMetadata {
+    identity: RunClaim,
+    expires_at: i64,
+    alias_sha256: [u8; 32],
+}
+
+impl std::fmt::Debug for RunBearerMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RunBearerMetadata([REDACTED])")
+    }
+}
+
+impl RunBearerMetadata {
+    pub fn identity(&self) -> RunBearerIdentity<'_> {
+        match &self.identity {
+            RunClaim::Text(value) => RunBearerIdentity::Text(value),
+            RunClaim::Integer(value) => RunBearerIdentity::Integer(*value),
+        }
+    }
+
+    pub fn expires_at(&self) -> i64 {
+        self.expires_at
+    }
+
+    /// Digest of the exact signed token bytes, excluding the Authorization
+    /// scheme and surrounding whitespace. Persist privately; do not log it.
+    pub fn alias_sha256(&self) -> &[u8; 32] {
+        &self.alias_sha256
+    }
 }
 
 impl std::fmt::Debug for IssuedRunBearer {
@@ -33,6 +73,9 @@ impl std::fmt::Debug for IssuedRunBearer {
 }
 
 impl IssuedRunBearer {
+    pub fn metadata(&self) -> &RunBearerMetadata {
+        &self.metadata
+    }
     pub fn expose_for_delivery(&self) -> &str {
         &self.token
     }
@@ -76,14 +119,24 @@ pub fn issue_run_bearer(
         }
         _ => return Err(BearerError::Invalid),
     };
+    let claim = match identity {
+        RunBearerIdentity::Text(value) => RunClaim::Text(value.to_owned()),
+        RunBearerIdentity::Integer(value) => RunClaim::Integer(value),
+    };
     let head = URL_SAFE_NO_PAD.encode(format!("{{\"exp\":{expires_at},\"run_id\":{run}}}"));
     let mut mac = Hmac::<Sha256>::new_from_slice(secret).map_err(|_| BearerError::Invalid)?;
     mac.update(head.as_bytes());
+    let token = format!(
+        "{head}.{}",
+        URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+    );
     Ok(IssuedRunBearer {
-        token: format!(
-            "{head}.{}",
-            URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
-        ),
+        metadata: RunBearerMetadata {
+            identity: claim,
+            expires_at,
+            alias_sha256: Sha256::digest(token.as_bytes()).into(),
+        },
+        token,
     })
 }
 
@@ -103,9 +156,13 @@ pub fn issue_run_bearer(
 pub struct VerifiedRunBearer {
     run_id: String,
     expires_at: i64,
+    metadata: RunBearerMetadata,
 }
 
 impl VerifiedRunBearer {
+    pub fn metadata(&self) -> &RunBearerMetadata {
+        &self.metadata
+    }
     pub fn run_id(&self) -> &str {
         &self.run_id
     }
@@ -128,7 +185,7 @@ pub enum BearerError {
     SecretUnavailable,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Eq, PartialEq)]
 #[serde(untagged)]
 enum RunClaim {
     Text(String),
@@ -178,8 +235,8 @@ pub fn verify_run_bearer(
     if claims.exp < now {
         return Err(BearerError::Expired);
     }
-    let run_id = match claims.run_id {
-        RunClaim::Text(v) => v,
+    let run_id = match &claims.run_id {
+        RunClaim::Text(v) => v.clone(),
         RunClaim::Integer(v) => v.to_string(),
     };
     if run_id != expected_run {
@@ -188,6 +245,11 @@ pub fn verify_run_bearer(
     Ok(VerifiedRunBearer {
         run_id,
         expires_at: claims.exp,
+        metadata: RunBearerMetadata {
+            identity: claims.run_id,
+            expires_at: claims.exp,
+            alias_sha256: Sha256::digest(token.as_bytes()).into(),
+        },
     })
 }
 
@@ -197,6 +259,48 @@ mod tests {
     // Independently generated with Python stdlib hmac/base64, synthetic secret.
     const TOKEN: &str = "Bearer eyJleHAiOjEwMDAsInJ1bl9pZCI6InJ1bi1maXh0dXJlIn0.TXZ1Og7YaNK55xMZq8Bl1tBozdZC-qau6PYS_hc_Rjk";
     const SECRET: &[u8] = b"synthetic-test-secret";
+
+    #[test]
+    fn closed_metadata_preserves_identity_and_exact_credential_ownership() {
+        let integer = issue_run_bearer(RunBearerIdentity::Integer(42), 1000, SECRET).unwrap();
+        let text = issue_run_bearer(RunBearerIdentity::Text("42"), 1000, SECRET).unwrap();
+        for issued in [&integer, &text] {
+            let header = format!("Bearer {}  ", issued.expose_for_delivery());
+            let verified = verify_run_bearer(Some(&header), SECRET, "42", 1000).unwrap();
+            assert_eq!(issued.metadata(), verified.metadata());
+            assert_eq!(issued.metadata().expires_at(), 1000);
+            assert_eq!(
+                format!("{:?}", issued.metadata()),
+                "RunBearerMetadata([REDACTED])"
+            );
+            assert_eq!(
+                issued.metadata().alias_sha256().as_slice(),
+                Sha256::digest(issued.expose_for_delivery().as_bytes()).as_slice()
+            );
+        }
+        assert_eq!(
+            integer.metadata().identity(),
+            RunBearerIdentity::Integer(42)
+        );
+        assert_eq!(text.metadata().identity(), RunBearerIdentity::Text("42"));
+        assert_ne!(
+            integer.metadata().alias_sha256(),
+            text.metadata().alias_sha256()
+        );
+        let repeated = issue_run_bearer(RunBearerIdentity::Integer(42), 1000, SECRET).unwrap();
+        assert_eq!(integer.metadata(), repeated.metadata());
+        let renewed = issue_run_bearer(RunBearerIdentity::Integer(42), 1001, SECRET).unwrap();
+        assert_ne!(
+            integer.metadata().alias_sha256(),
+            renewed.metadata().alias_sha256()
+        );
+        let rotated =
+            issue_run_bearer(RunBearerIdentity::Integer(42), 1000, b"different-secret").unwrap();
+        assert_ne!(
+            integer.metadata().alias_sha256(),
+            rotated.metadata().alias_sha256()
+        );
+    }
 
     #[test]
     fn issuer_matches_python_vectors_and_deterministic_reissue() {
