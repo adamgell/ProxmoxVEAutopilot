@@ -21,7 +21,70 @@ pub struct RegisteredPePackageSemanticsV1 {
     semantic_sha256: String,
 }
 
+/// Canonical semantic package bytes materialized from a registered plan.
+/// This is an internal semantic envelope, not the legacy delivery wire format.
+/// It contains profile references, never resolved credentials or delivery URLs.
+/// It grants no session, issuance, callback or dispatch authority.
+///
+/// ```compile_fail,E0277
+/// let _: postgres_store::MaterializedPePackageSemanticsV1 = serde_json::from_str("{}").unwrap();
+/// ```
+/// ```compile_fail,E0451
+/// use postgres_store::MaterializedPePackageSemanticsV1;
+/// fn forge(existing: MaterializedPePackageSemanticsV1) -> MaterializedPePackageSemanticsV1 {
+///     MaterializedPePackageSemanticsV1 { canonical_bytes: vec![], ..existing }
+/// }
+/// ```
+#[derive(Clone, Eq, PartialEq)]
+pub struct MaterializedPePackageSemanticsV1 {
+    identity: RegisteredPePackageSemanticsV1,
+    canonical_bytes: Vec<u8>,
+    envelope_sha256: String,
+}
+
+impl std::fmt::Debug for MaterializedPePackageSemanticsV1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MaterializedPePackageSemanticsV1")
+            .field("identity", &self.identity)
+            .field("envelope_sha256", &self.envelope_sha256)
+            .finish_non_exhaustive()
+    }
+}
+
+impl MaterializedPePackageSemanticsV1 {
+    pub fn identity(&self) -> &RegisteredPePackageSemanticsV1 {
+        &self.identity
+    }
+    pub fn canonical_bytes(&self) -> &[u8] {
+        &self.canonical_bytes
+    }
+    pub fn envelope_sha256(&self) -> &str {
+        &self.envelope_sha256
+    }
+}
+
 impl OsDeployRegistrationV1 {
+    /// Materializes immutable semantic bytes without accepting replacement fields.
+    /// The complete admitted plan preserves VM, role, artifact and profile provenance.
+    pub fn materialize_pe_package_semantics(
+        &self,
+    ) -> Result<MaterializedPePackageSemanticsV1, OsDeployStoreError> {
+        let identity = self.pe_package_semantics()?;
+        let envelope = serde_json::json!({
+            "schema": "materialized_pe_package_semantics_v1",
+            "identity": identity,
+            "plan": self.plan,
+        });
+        let canonical_bytes = event_journal::canonical_json_bytes(&envelope)
+            .map_err(|_| OsDeployStoreError::Validation)?;
+        let envelope_sha256 =
+            event_journal::payload_digest(&envelope).map_err(|_| OsDeployStoreError::Validation)?;
+        Ok(MaterializedPePackageSemanticsV1 {
+            identity,
+            canonical_bytes,
+            envelope_sha256,
+        })
+    }
     /// Binds the entire admitted non-secret plan through its canonical fingerprint.
     /// No caller-supplied replacement run, role, artifact or VM can enter here.
     pub fn pe_package_semantics(
@@ -90,6 +153,7 @@ mod tests {
     fn semantic_identity_binds_run_operation_and_complete_plan() {
         let original = registration();
         let expected = original.pe_package_semantics().unwrap();
+        let materialized = original.materialize_pe_package_semantics().unwrap();
         assert_eq!(expected, original.clone().pe_package_semantics().unwrap());
         let mut changed = original.clone();
         changed.ids.run_id = RunId::new();
@@ -120,10 +184,21 @@ mod tests {
                 changed.pe_package_semantics(),
                 Err(OsDeployStoreError::Validation)
             );
+            assert_eq!(
+                changed.materialize_pe_package_semantics(),
+                Err(OsDeployStoreError::Validation)
+            );
             changed.ids.workflow_sha256 = digest;
             assert_ne!(
                 expected.semantic_sha256(),
                 changed.pe_package_semantics().unwrap().semantic_sha256()
+            );
+            assert_ne!(
+                materialized.envelope_sha256(),
+                changed
+                    .materialize_pe_package_semantics()
+                    .unwrap()
+                    .envelope_sha256()
             );
         }
     }
@@ -155,5 +230,64 @@ mod tests {
             ]
         );
         assert_eq!(identity.semantic_sha256().len(), 64);
+    }
+
+    #[test]
+    fn materialization_preserves_registered_plan_and_canonical_bytes() {
+        let registered = registration();
+        let package = registered.materialize_pe_package_semantics().unwrap();
+        assert_eq!(
+            package,
+            registered
+                .clone()
+                .materialize_pe_package_semantics()
+                .unwrap()
+        );
+        let envelope: serde_json::Value =
+            serde_json::from_slice(package.canonical_bytes()).unwrap();
+        assert_eq!(envelope["schema"], "materialized_pe_package_semantics_v1");
+        assert_eq!(
+            envelope["plan"],
+            serde_json::to_value(registered.plan()).unwrap()
+        );
+        assert_eq!(
+            envelope["identity"],
+            serde_json::to_value(package.identity()).unwrap()
+        );
+        assert_eq!(
+            event_journal::canonical_json_bytes(&envelope).unwrap(),
+            package.canonical_bytes()
+        );
+        assert_eq!(
+            event_journal::payload_digest(&envelope).unwrap(),
+            package.envelope_sha256()
+        );
+        let debug = format!("{package:?}");
+        assert!(!debug.contains("system_serial"));
+        assert!(!debug.contains("secret_profile_id"));
+        assert!(!debug.contains("canonical_bytes"));
+        for field in [
+            "bearer_token",
+            "local_admin",
+            "bootstrap_token",
+            "server_base_url",
+        ] {
+            assert!(envelope["plan"].get(field).is_none());
+        }
+        let mut substituted = registered.clone();
+        substituted.ids.workflow_sha256 = "0".repeat(64);
+        assert_eq!(
+            substituted.materialize_pe_package_semantics(),
+            Err(OsDeployStoreError::Validation)
+        );
+        substituted = registered;
+        substituted.ids.run_id = RunId::new();
+        assert_ne!(
+            package.envelope_sha256(),
+            substituted
+                .materialize_pe_package_semantics()
+                .unwrap()
+                .envelope_sha256()
+        );
     }
 }

@@ -33,8 +33,8 @@ pub use osdeploy::execution::{
     OsDeployOperationSnapshot, OsDeployProgress, OsDeployPveObservation, OsDeployRepairCursor,
 };
 pub use osdeploy::{
-    OsDeployOperationPlanV1, OsDeployRegistrationV1, OsDeployStoreError, OsDeployWorkflowIds,
-    RegisteredPePackageSemanticsV1,
+    MaterializedPePackageSemanticsV1, OsDeployOperationPlanV1, OsDeployRegistrationV1,
+    OsDeployStoreError, OsDeployWorkflowIds, RegisteredPePackageSemanticsV1,
 };
 #[cfg(feature = "fixture-ipc")]
 pub use start_pe_session::START_PE_SESSION_SCHEMA_V1;

@@ -18,7 +18,7 @@ pub(crate) mod execution;
 mod package_semantics;
 mod records;
 mod registration;
-pub use package_semantics::RegisteredPePackageSemanticsV1;
+pub use package_semantics::{MaterializedPePackageSemanticsV1, RegisteredPePackageSemanticsV1};
 mod stage;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
