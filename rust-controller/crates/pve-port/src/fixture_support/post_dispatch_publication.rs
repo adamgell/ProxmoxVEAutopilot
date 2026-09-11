@@ -22,6 +22,56 @@ mod power_refresh_tests {
     use super::*;
 
     #[test]
+    fn current_power_consumer_refuses_without_independent_source() {
+        let directory = std::env::temp_dir().join(format!("power-consumer-{}", Uuid::now_v7()));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("fixture.log");
+        let mut log = FixtureLog::create(&path).unwrap();
+        let original = fs::read(&path).unwrap();
+        let identity = super::super::FixtureStageIdentity {
+            operation: Uuid::now_v7(),
+            stage: super::super::FixtureLedgerStage::StartPe,
+            attempt: Uuid::now_v7(),
+            generation: Uuid::now_v7(),
+            owner: Uuid::now_v7(),
+            request_sha256: "a".repeat(64),
+        };
+        let mut publications = Publications::new();
+        for supervisor in [false, true, true] {
+            let reply = publications.handle(
+                Command::ConsumeStopCurrentPower {
+                    identity: identity.clone(),
+                },
+                supervisor,
+                &mut log,
+                &directory,
+            );
+            if supervisor {
+                let reply: serde_json::Value = serde_json::from_slice(&reply.unwrap()).unwrap();
+                assert_eq!(reply["ok"], false);
+                assert_eq!(reply["reason"], "current_power_source_unavailable");
+                assert_eq!(reply["identity"], serde_json::to_value(&identity).unwrap());
+            } else {
+                assert_eq!(reply.unwrap_err().kind(), io::ErrorKind::InvalidData);
+            }
+            assert_eq!(original, fs::read(&path).unwrap());
+            assert!(log.records().is_empty());
+            assert!(log.effects().is_empty());
+            assert!(publications.accepted.is_empty());
+            assert!(publications.published.is_empty());
+            assert!(publications.synchronous.is_empty());
+        }
+        // A caller cannot smuggle a cached or asserted observation into the probe.
+        let mut wire =
+            serde_json::json!({"command":"consume_stop_current_power", "identity":identity});
+        wire["power"] = serde_json::json!({"power":"running", "locked":false});
+        assert!(serde_json::from_value::<Command>(wire).is_err());
+        drop(log);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
     fn worker_cannot_publish_running_power() {
         let directory = std::env::temp_dir().join(format!("power-publisher-{}", Uuid::now_v7()));
         fs::create_dir(&directory).unwrap();
@@ -89,6 +139,11 @@ pub struct FixtureSynchronousPublication {
 #[allow(clippy::enum_variant_names)] // Wire command names share their protocol namespace.
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Command {
+    /// Probe the supervisor-owned live read path. Cached completion publications
+    /// and worker-supplied power are deliberately not accepted as a source.
+    ConsumeStopCurrentPower {
+        identity: super::FixtureStageIdentity,
+    },
     /// This is an explicit supervisor observation, never a refreshed cache read.
     PublishStartPeRunningPower {
         identity: super::FixtureStageIdentity,
@@ -201,6 +256,22 @@ impl Publications {
         directory: &Path,
     ) -> io::Result<Vec<u8>> {
         let (value, observation, stage) = match command {
+            Command::ConsumeStopCurrentPower { identity } if supervisor => {
+                identity.validate()?;
+                if identity.stage != super::FixtureLedgerStage::StartPe {
+                    return Err(invalid());
+                }
+                // There is no independent current-power reader in this daemon.
+                // In particular, neither accepted task receipts nor World can
+                // establish power after shutdown grace. Do not refresh their
+                // timestamp or enter the publication/admission paths.
+                return Ok(serde_json::to_vec(&serde_json::json!({
+                    "ok": false,
+                    "reason": "current_power_source_unavailable",
+                    "daemon_generation": self.generation,
+                    "identity": identity,
+                }))?);
+            }
             Command::PublishStartPeRunningPower {
                 identity,
                 request,

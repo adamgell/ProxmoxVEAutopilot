@@ -38,3 +38,15 @@ fields remain assertions supplied by the supervisor. The command creates no
 dispatch release, stop attempt, effect, stop receipt, or Stopped observation.
 Stop submission, stopped-power publication, reconciliation and production
 acceptance remain open.
+
+The supervisor command `consume_stop_current_power` now exposes that missing
+reader explicitly. It takes a valid StartPe identity and returns `ok: false` with
+`reason: current_power_source_unavailable`. Worker calls and additional asserted
+power fields are rejected. The command does not invoke the publication path,
+refresh a cached timestamp, query or substitute PostgreSQL authority, admit a
+stop, or release a barrier. The consumer unit proof exercises supervisor replay,
+worker refusal and extra-field rejection; it verifies unchanged journal bytes,
+zero attempts/effects and unchanged publication maps. This is an observable
+refusal boundary, not an end-to-end stop consumer. The next implementation needs
+an independently owned fresh read source before joining database authority to
+power publication and admission.
