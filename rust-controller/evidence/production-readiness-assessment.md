@@ -4,6 +4,14 @@ Assessment date: 2026-09-10
 Assessment source: isolated worktree `codex/rust-controller-design`  
 Production and `192.168.2.4`: read-only throughout
 
+Exact-source Linux evidence at `35400bd0`: the frozen amd64 archive build
+passed in 826.80 seconds (image
+`sha256:d615e6c8b3270ae13dc9ca95cf49aea549192b6775c1d0f1aa711457f5927f94`).
+The subsequent owned full lane reached PostgreSQL admission but timed out
+during bounded runner creation before controller tests began. It is retained
+as an infrastructure admission failure, not a Linux qualification pass; the
+launcher pin and receipts are in `requalification-35400bd0-full-1/`.
+
 Latest source milestone: commit `029555f1` adds safe operation-scoped fixture
 port resolution. An immutable per-operation binding is retained across the
 complete invocation, and the capacity-two interleaving proof verifies isolated

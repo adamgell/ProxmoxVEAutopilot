@@ -39,6 +39,17 @@ session, attempt, scheduler authority, or StartPe dispatch permission.
 
 ### Current-head diagnostic checkpoint (2026-09-10)
 
+### Exact-source Linux qualification at `35400bd0`
+
+The frozen archive build completed successfully in `requalification-35400bd0-full-1`:
+amd64 image `sha256:d615e6c8b3270ae13dc9ca95cf49aea549192b6775c1d0f1aa711457f5927f94`,
+826.80 seconds, exit 0, with all Dockerfile focused test layers passing. The
+owned full lane then hit its bounded runner-create deadline (60 seconds, exit
+-9) before any controller test executed; PostgreSQL was admitted under cgroup2
+with zero OOM events. This is build evidence plus an infrastructure admission
+failure, not a full Linux qualification pass. Launcher pin `8ac7856f` and the
+retained receipts preserve the exact source/image relationship.
+
 - Commit `08471af3` records the terminal exact-current-source Linux reaping
   diagnostic attempt. The image built, but Docker returned no test output before
   the retained session ended; no PID/reap result or Linux pass claim is made.
