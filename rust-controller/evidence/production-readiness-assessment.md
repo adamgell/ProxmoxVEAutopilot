@@ -12,7 +12,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `d236dedb`: this branch and PR #65 contain an accumulated
+Current scope at `da680bb8`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -45,7 +45,11 @@ synchronous filesystem writes/fsync inside the owned future and needs bounded
 ownership before production use. Broader process-death qualification across
 all required stages, authenticated callbacks, PeRegister, production
 legacy-run import, later stages, service wiring, operator handoff/rollback,
-and current-source Linux runtime qualification remain open.
+and current-source Linux runtime qualification remain open. The callback
+boundary assessment in `callback-after-delivery-assessment.md` confirms that
+the existing refusal-only callback/probe cannot be presented as authenticated
+PeRegister compatibility; the required separate callback fence, identity
+binding, replay, rollback and process-loss tests remain an explicit gate.
 Authenticated callbacks, PeRegister, and production legacy-run import remain
 unimplemented. GitHub checks observed for `72a3ec61` on 2026-09-11 had Linux in
 progress and macOS queued; this is not completed CI evidence. No exact-source
