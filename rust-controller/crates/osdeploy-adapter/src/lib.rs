@@ -1,6 +1,8 @@
 //! Pure OSDeploy stage and validated input contract.
 
 mod guest_action;
+mod pe_shutdown_boundary;
+pub use pe_shutdown_boundary::{PeShutdownObservationV1, PeShutdownRefusal, PeShutdownScopeV1};
 mod pe_complete_boundary;
 pub use pe_complete_boundary::{
     PeCompleteRefusal, PeCompleteReportV1, PeCompleteScopeV1, PeCompleteStepStateV1,
