@@ -99,6 +99,12 @@ response value for exact observation and restart proofs; restored adapters
 cannot manufacture it. PostgreSQL atomic capture and Setup integration remain
 open.
 
+At `d0297079`, a feature-gated `FixtureStartPeCaptureInput` composition API
+validates run/operation/attempt, request/workflow/plan digests, and predecessor
+binding before deriving a semantic receipt from captured bytes. It performs no
+SQL write or authority conversion; atomic persistence and trusted fixture-route
+integration remain open.
+
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
 identity/digests and classifies transport loss as ambiguous; it does not connect
