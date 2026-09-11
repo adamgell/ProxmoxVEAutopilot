@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `132562c0`: this branch and PR #65 contain an accumulated
+Current scope at `d69e014a`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -195,6 +195,13 @@ semantic/response rows are absent, and the fixture journal plus four effects
 are preserved. This proves process death during persistence, not replacement
 controller recovery: the accepted effect survives while its original capture
 is lost, so reconciliation remains a fail-closed gate.
+
+At `d69e014a`, a separate recovery process proves lease expiry and reaping move
+Running to terminal `Decided(Unknown)`, refuse a new claim, preserve the
+original attempt/dispatch and fixture effect, and create no receipt or response
+row. Two replacement-controller invocations remain uncertain. The scheduler
+allowlist excludes StartPe from due reconciliation, so successful observation-
+only recovery still requires an explicit authority-preserving contract.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
