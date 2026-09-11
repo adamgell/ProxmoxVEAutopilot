@@ -196,6 +196,112 @@ mod power_tests {
         forged.authority.grace_due_unix_ms = 99;
         std::fs::write(&torn, [before, frame(&forged).unwrap()].concat()).unwrap();
         assert!(FixtureLog::recover(&torn).is_err());
+        // Refresh power after elapsed grace without rewriting StartPe success.
+        let original_start = log.start_observations[0].clone();
+        let late_authority = FixtureStopAuthorityV1 {
+            grace_due_unix_ms: 40,
+            decision_unix_ms: 41,
+            lease_checked_unix_ms: 42,
+            ..log.stop_admissions[0].authority.clone()
+        };
+        let next_stop = Uuid::now_v7();
+        assert!(
+            log.admit_stop(
+                next_stop,
+                digest.clone(),
+                stop,
+                late_authority.clone(),
+                start_operation,
+                &digest,
+                start,
+                receipt,
+                generation,
+                44
+            )
+            .is_err()
+        );
+        let before_refresh = std::fs::read(&path).unwrap();
+        assert!(
+            log.record_start_observation(
+                start_operation,
+                &digest,
+                start,
+                generation,
+                12,
+                43,
+                "fixture-start-task".into(),
+                43,
+                43
+            )
+            .is_err()
+        );
+        assert_eq!(before_refresh, std::fs::read(&path).unwrap());
+        for (accepted, observed) in [(13, 43), (12, 15)] {
+            assert!(
+                log.record_power_observation(
+                    start_operation,
+                    &digest,
+                    start,
+                    receipt,
+                    PowerStateV1::Running,
+                    generation,
+                    accepted,
+                    observed
+                )
+                .is_err()
+            );
+            assert_eq!(before_refresh, std::fs::read(&path).unwrap());
+        }
+        log.record_power_observation(
+            start_operation,
+            &digest,
+            start,
+            receipt,
+            PowerStateV1::Running,
+            generation,
+            12,
+            43,
+        )
+        .unwrap();
+        log.admit_stop(
+            next_stop,
+            digest.clone(),
+            stop,
+            late_authority.clone(),
+            start_operation,
+            &digest,
+            start,
+            receipt,
+            generation,
+            44,
+        )
+        .unwrap();
+        assert_eq!(log.start_observations[0], original_start);
+        assert_eq!(log.effects().len(), 2);
+        assert_eq!(log.records().len(), 2);
+        assert_eq!(
+            log.power_records().last().unwrap().state,
+            PowerStateV1::Running
+        );
+        drop(log);
+        let mut log = FixtureLog::recover(&path).unwrap();
+        assert_eq!(log.start_observations[0], original_start);
+        assert_eq!(log.stop_admissions.len(), 2);
+        let durable = std::fs::read(&path).unwrap();
+        log.admit_stop(
+            next_stop,
+            digest.clone(),
+            stop,
+            late_authority,
+            start_operation,
+            &digest,
+            start,
+            receipt,
+            generation,
+            45,
+        )
+        .unwrap();
+        assert_eq!(durable, std::fs::read(&path).unwrap());
         std::fs::remove_file(torn).unwrap();
         std::fs::remove_file(path).unwrap();
     }
@@ -728,6 +834,10 @@ struct StopAdmissionV1 {
     binding: StageBinding,
     authority: FixtureStopAuthorityV1,
     predecessor: StartObservationV1,
+    /// A later observation may refresh power evidence without rewriting the
+    /// immutable task-success observation. Absent in the original v1 frames.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    current_power: Option<PowerObservationV1>,
     admitted_unix_ms: u64,
 }
 
@@ -738,7 +848,8 @@ fn validate_stop_admission(
     starts: &[StartObservationV1],
 ) -> io::Result<()> {
     let a = &admission.authority;
-    let p = &admission.predecessor.power;
+    let start = &admission.predecessor.power;
+    let p = admission.current_power.as_ref().unwrap_or(start);
     let at = admission.admitted_unix_ms;
     if admission.stop_admission_version != 1
         || admission.operation.is_nil()
@@ -757,6 +868,13 @@ fn validate_stop_admission(
         || at >= a.lease_expires_unix_ms
         || at >= a.original_deadline_unix_ms
         || p.state != PowerStateV1::Running
+        || p.effect_sequence != start.effect_sequence
+        || p.operation != start.operation
+        || p.request_sha256 != start.request_sha256
+        || p.binding != start.binding
+        || p.receipt_sha256 != start.receipt_sha256
+        || p.vmid != start.vmid
+        || p.accepted_unix_ms != start.accepted_unix_ms
         || p.observed_unix_ms < a.lease_checked_unix_ms
         || at < admission.predecessor.published_unix_ms
         || at < p.observed_unix_ms
@@ -920,7 +1038,14 @@ impl FixtureLog {
             .start_observation(start_operation, start_digest, start_binding)?
             .ok_or_else(invalid)?
             .clone();
-        if predecessor.power.daemon_generation != daemon_generation {
+        let current_power = self
+            .power
+            .iter()
+            .rev()
+            .find(|power| power.vmid == predecessor.power.vmid)
+            .ok_or_else(invalid)?
+            .clone();
+        if current_power.daemon_generation != daemon_generation {
             return Err(invalid());
         }
         let admission = StopAdmissionV1 {
@@ -929,6 +1054,7 @@ impl FixtureLog {
             request_sha256: digest,
             binding,
             authority,
+            current_power: (current_power != predecessor.power).then_some(current_power),
             predecessor,
             admitted_unix_ms: at,
         };
@@ -1558,14 +1684,23 @@ fn validate_power(
                 Sha256::digest(effect.receipt().ok_or_else(invalid)?)
             )
         || effects.iter().rev().find(|e| e.vmid == p.vmid) != Some(effect)
-        || power
-            .iter()
-            .any(|prior| prior.effect_sequence == p.effect_sequence)
         || p.predecessor != previous.map(|prior| prior.sequence)
     {
         return Err(invalid());
     }
     match (p.binding.stage, p.state, previous) {
+        (FixtureLedgerStage::StartPe, PowerStateV1::Running, Some(prior))
+            if prior.state == PowerStateV1::Running
+                && prior.effect_sequence == p.effect_sequence
+                && prior.operation == p.operation
+                && prior.request_sha256 == p.request_sha256
+                && prior.binding == p.binding
+                && prior.receipt_sha256 == p.receipt_sha256
+                && prior.accepted_unix_ms == p.accepted_unix_ms
+                && prior.observed_unix_ms < p.observed_unix_ms =>
+        {
+            Ok(())
+        }
         (FixtureLedgerStage::ConfigurePe, PowerStateV1::Stopped, None)
             if effect.after.pe_configured =>
         {
@@ -1592,6 +1727,13 @@ fn validate_start_observation(
     effects: &[Effect],
     power: &[PowerObservationV1],
 ) -> io::Result<()> {
+    // Refreshes belong to power evidence only; task completion stays immutable.
+    if power
+        .iter()
+        .any(|prior| prior.effect_sequence == observation.power.effect_sequence)
+    {
+        return Err(invalid());
+    }
     validate_power(&observation.power, effects, power)?;
     let effect = effects
         .iter()
