@@ -4254,6 +4254,28 @@ async fn task6_growth_history_survives_old_deadline_and_all_later_stages_stay_cl
             .await
             .unwrap();
     let ingress_before = s.db.snapshot().await;
+    #[cfg(feature = "fixture-ipc")]
+    {
+        assert!(matches!(
+            s.db.store
+                .probe_osdeploy_start_pe_fixture(start.operation_id(), start.revision(), None)
+                .await,
+            Err(postgres_store::OsDeployExecutionError::CapabilityUnavailable)
+        ));
+        assert!(matches!(
+            s.db.store
+                .probe_osdeploy_start_pe_fixture(start.operation_id(), start.revision() + 1, None)
+                .await,
+            Err(postgres_store::OsDeployExecutionError::FenceLost)
+        ));
+        assert!(matches!(
+            s.db.store
+                .probe_osdeploy_start_pe_fixture(config.operation_id(), config.revision(), None)
+                .await,
+            Err(postgres_store::OsDeployExecutionError::Validation)
+        ));
+        assert_eq!(s.db.snapshot().await, ingress_before);
+    }
     assert!(matches!(
         s.db.store
             .load_osdeploy_pve_context(

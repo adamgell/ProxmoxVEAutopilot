@@ -1,5 +1,30 @@
 # StartPe full publication to PostgreSQL progression
 
+## Read-only fixture diagnostic ingress (2026-09-10)
+
+The default-disabled `postgres-store/fixture-ipc` feature now exposes
+`PgStore::probe_osdeploy_start_pe_fixture`. It restores registration in a
+repeatable-read, read-only transaction, checks StartPe stage/revision, and, when
+an opaque adapter validation outcome is supplied, binds its inventory identity
+and exact request to the registered operation, run, workflow, and PVE plan.
+Missing evidence also grants nothing. Every valid diagnostic probe returns
+`CapabilityUnavailable`; wrong stage/request/identity is validation failure and
+stale revision is fence loss. No attempt, dispatch, evidence, decision, session,
+or lifecycle authority is created. This is not durable StartPe acceptance.
+
+The existing closed-stage PostgreSQL test now includes missing-evidence refusal,
+stale-revision and wrong-stage probes plus a complete database snapshot comparison.
+It compiles, but its fresh runtime invocation failed before assertions at owned
+PostgreSQL setup (`local_database_unavailable: local_process_timeout`,
+`proof_support/mod.rs:338`). The harness reported cleanup unconfirmed for
+`native-proof-01a08e26-98a0-7c61-be2f-2ba950b0dba5`; removal is not claimed.
+Feature-enabled all-target `cargo check`, strict all-target Clippy, formatting,
+and diff checks passed. Runtime DB-unchanged proof remains pending, as does a
+valid full-publication outcome composed with a PostgreSQL harness and negative
+outcome/request rebinding tests. No diagnostic fixture attempt is presented as
+an admitted PostgreSQL attempt. Action/scheduler/lifecycle/session gates remain
+closed and unchanged.
+
 Read-only audit at source checkpoint `0a09b3e1`. Full fixture publication is
 available, but no four-stage PostgreSQL controller proof is established here.
 No production, schema, transport or controller admission changes were made.

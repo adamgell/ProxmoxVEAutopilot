@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+fixture-ipc = ["pve-port/fixture-ipc"]
+
 [[test]]
 name = "postgres"
 path = "tests/postgres.rs"

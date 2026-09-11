@@ -62,6 +62,55 @@ impl Scheduler {
 }
 
 impl PgStore {
+    /// Diagnostic fixture ingress only: validates registration and, when present,
+    /// the adapter's opaque full-publication outcome. Never admits an attempt,
+    /// records evidence, selects an outcome, or grants stage satisfaction.
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn probe_osdeploy_start_pe_fixture(
+        &self,
+        operation: OperationId,
+        expected_revision: i64,
+        evidence: Option<(
+            &pve_port::fixture_ipc::FixtureStageRequest,
+            &pve_port::fixture_support::FixtureStartPeValidationOutcome,
+        )>,
+    ) -> Result<(), Error> {
+        Box::pin(async move {
+            let mut tx = self.pool().begin().await?;
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(&mut *tx)
+                .await?;
+            let snapshot = load::load_execution(&mut tx, operation).await?;
+            wire::require(snapshot.plan().stage() == OsDeployStage::StartPe)?;
+            if snapshot.revision() != expected_revision {
+                return Err(Error::FenceLost);
+            }
+            if let Some((request, outcome)) = evidence {
+                let inventory = &outcome.publication().observation.inventory;
+                inventory
+                    .identity
+                    .validate_request(request)
+                    .map_err(|_| Error::Validation)?;
+                let binding = request.request().binding();
+                wire::require(
+                    inventory.identity.stage
+                        == pve_port::fixture_support::FixtureLedgerStage::StartPe
+                        && inventory.fixture_id == request.fixture_id()
+                        && inventory.identity.operation == operation.as_uuid()
+                        && binding.operation_id() == operation
+                        && binding.run_id() == snapshot.run_id()
+                        && binding.workflow_sha256() == snapshot.plan().workflow_sha256()
+                        && Some(request.request().plan()) == snapshot.plan().pve(),
+                )?;
+            }
+            // Registration is not attempt/dispatch authority. Action, scheduler,
+            // lifecycle, and atomic session arming are intentionally still closed.
+            tx.commit().await?;
+            Err(Error::CapabilityUnavailable)
+        })
+        .await
+    }
+
     pub async fn load_osdeploy_pve_context_with_budget(
         &self,
         operation: OperationId,
