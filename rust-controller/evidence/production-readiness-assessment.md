@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `eda704ac`: this branch and PR #65 contain an accumulated
+Current scope at `42087f5b`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -145,6 +145,13 @@ exact extraction sources, missing adapter dispatch/readback/provenance context,
 Setup integration, credential/callback/grace routing, daemon lifetime/restart
 rules, and the authentic select/consume outcome-matrix helper. This is an
 implementation-ready gate, not a runtime completion claim.
+
+At `42087f5b`, the bound ConfigurePe checkpoint context now exposes sealed
+shared-history provenance to the fixture controller port. The real three-stage
+IPC/PG prefix test passes with three worker subprocesses and rejects substituted
+operation, generation, owner, and channel values. This proves predecessor
+provenance binding only; StartPe dispatch/readback and stop outcome matrix
+remain open.
 
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
