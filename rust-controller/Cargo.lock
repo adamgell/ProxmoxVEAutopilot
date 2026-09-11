@@ -49,6 +49,7 @@ dependencies = [
  "controller-domain",
  "event-journal",
  "hex",
+ "hmac",
  "serde",
  "serde_json",
  "sha2",

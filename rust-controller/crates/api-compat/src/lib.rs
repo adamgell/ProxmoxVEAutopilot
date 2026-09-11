@@ -1,6 +1,7 @@
 pub mod callback_contract;
 mod job;
 mod plan;
+pub mod run_bearer;
 
 pub use job::{JobEnvelope, JobValidationError};
 pub use plan::{
