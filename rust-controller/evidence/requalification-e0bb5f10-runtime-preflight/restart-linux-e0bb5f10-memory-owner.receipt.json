@@ -1,0 +1,2 @@
+{"event": "start", "utc": "2026-09-11T16:29:03.169025+00:00", "argv": ["docker", "--host", "unix:///Users/Adam.Gell/.orbstack/run/docker.sock", "inspect", "2c0a7f5cbcb15f73b583b72b57effa09758cd1dafc62e7968f6dacaca7e75cd9", "--format", "{{.Id}}|{{.State.Running}}|{{json .Config.Labels}}"], "bound": 15}
+{"event": "end", "utc": "2026-09-11T16:29:03.309577+00:00", "exit": 0, "elapsed": 0.14059887500479817, "group_clean": true, "direct_child_reaped": true, "leader_left_with_group": false}
