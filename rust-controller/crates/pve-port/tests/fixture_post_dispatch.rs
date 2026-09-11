@@ -563,6 +563,87 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             let status = reader.status().await.unwrap();
             assert_eq!((status.attempts, status.effects), (3, 3));
         }
+        // A genuine stopped baseline (including replay after restart) must not
+        // turn the incomplete StartPe execution boundary into fake acceptance.
+        let supervisor =
+            FixtureCheckpointClient::new(control.clone(), Duration::from_secs(1)).unwrap();
+        let worker = FixtureCheckpointClient::new(client.clone(), Duration::from_secs(1)).unwrap();
+        let generation = supervisor
+            .stage_request(StageCheckpointRequest::Status)
+            .await
+            .unwrap()
+            .generation;
+        let start =
+            FixtureStageRequest::new(Uuid::from_u128(1), episodes[3].request.clone()).unwrap();
+        let identity = FixtureStageIdentity {
+            operation: start.request().binding().operation_id().as_uuid(),
+            stage: FixtureLedgerStage::StartPe,
+            attempt: start.request().binding().attempt_id().as_uuid(),
+            generation,
+            owner: Uuid::now_v7(),
+            request_sha256: start.request_sha256(),
+        };
+        assert!(
+            supervisor
+                .stage_request(StageCheckpointRequest::Arm {
+                    identity: identity.clone(),
+                    timeout_ms: 5000
+                })
+                .await
+                .unwrap()
+                .ok
+        );
+        assert!(
+            worker
+                .stage_request(StageCheckpointRequest::Enter {
+                    identity: identity.clone()
+                })
+                .await
+                .unwrap()
+                .ok
+        );
+        assert!(
+            supervisor
+                .stage_request(StageCheckpointRequest::AuthorizeRelease {
+                    identity: identity.clone(),
+                    request: start.encode().unwrap(),
+                    committed_request: start.encode().unwrap(),
+                    after: VmState {
+                        disk_bytes: 120 * provisioning_support::GIB,
+                        pe_configured: true
+                    },
+                })
+                .await
+                .unwrap()
+                .ok
+        );
+        let before = fs::read(directory.join("fixture.log")).unwrap();
+        let mutation = FixtureMutationClient::new(client.clone(), Duration::from_secs(1)).unwrap();
+        for _ in 0..2 {
+            assert!(
+                mutation
+                    .stage_late_with_predecessor(
+                        identity.clone(),
+                        &start,
+                        &accepted[2].0,
+                        &accepted[2].1
+                    )
+                    .await
+                    .is_err()
+            );
+            assert!(
+                worker
+                    .stage_request(StageCheckpointRequest::Poll {
+                        identity: identity.clone()
+                    })
+                    .await
+                    .unwrap()
+                    .ok
+            );
+            assert_eq!(before, fs::read(directory.join("fixture.log")).unwrap());
+            let status = reader.status().await.unwrap();
+            assert_eq!((status.attempts, status.effects), (3, 3));
+        }
         wire(&control, json!({"command":"shutdown"})).await.unwrap();
         daemon.join().unwrap();
         let ledger = std::fs::read_to_string(directory.join("fixture.log")).unwrap();
