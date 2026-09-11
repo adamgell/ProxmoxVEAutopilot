@@ -26,6 +26,10 @@ pub use checkpoint::{
 };
 pub use late_authorization::{FixtureReadIdentity, LateCloneAuthorizationV1};
 mod clone_reads;
+mod stage_inventory;
+pub use stage_inventory::{
+    FixtureConfigurationIdentityV2, FixtureInventoryMemberV2, FixtureStageInventoryV2,
+};
 mod provisioning_port;
 mod provisioning_reads;
 pub use clone_reads::{
