@@ -27,6 +27,25 @@ is deserializable; digest/sample consistency cannot prove supervisor provenance.
 The eventual controller must obtain it through the trusted supervisor transport.
 These store APIs do not make arbitrary decoded receipt input authoritative.
 
+The controller now exposes `reserve_fixture_stop_outbox`, which returns the
+typed `SharedHistoryUnavailable` refusal before accessing storage or IPC.
+`ControllerFixturePort` currently exposes checkpoint hooks without attesting
+that its accepted StartPe physical journal is the separately supplied
+`FixtureCheckpointClient` supervisor journal. Matching decoded identities or
+digests cannot establish that provenance. The reservation API accepts no receipt
+or caller assertion that could bypass this missing join. `admit_fixture_stop`
+continues to return historical admission evidence only.
+
+The focused controller test
+`stop_outbox_reservation_refuses_without_database_or_physical_access` passed
+(1 test, 0.00 seconds). It repeats the refusal and reconstructs a controller with
+a replacement owner, while an unreachable lazy PostgreSQL pool stays unopened
+and fixture physical submissions remain empty. All-target/all-feature controller
+Clippy passed with warnings denied. This is refusal evidence; it does not exercise
+outbox transaction rollback, ambiguous commit acknowledgment, cancellation,
+deadline, or database reload. Those positive protocol tests still require the
+sealed shared-history capability and connected implementation.
+
 ## Verification and limitations
 
 - `cargo check -p postgres-store --all-features`: passed.

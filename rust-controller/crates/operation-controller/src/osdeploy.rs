@@ -40,6 +40,9 @@ pub enum OsDeployControllerError {
     FenceLost,
     #[error("osdeploy_capability_unavailable")]
     CapabilityUnavailable,
+    #[cfg(feature = "fixture-ipc")]
+    #[error("osdeploy_fixture_stop_shared_history_unavailable")]
+    SharedHistoryUnavailable,
     #[error("osdeploy_call_timed_out")]
     TimedOut,
     #[error("osdeploy_admission_closed")]
@@ -86,6 +89,17 @@ struct FixtureDeliveryConfig {
     sink: postgres_store::FixtureCredentialSink,
 }
 impl OsDeployController {
+    /// Outbox reservation requires sealed provenance joining the operation's
+    /// accepted StartPe history to its supervisor journal. The current fixture
+    /// port exposes checkpoint hooks but cannot attest that join. Refuse before
+    /// database or IPC access; a caller-supplied receipt or history assertion
+    /// cannot enable this boundary. Historical admission remains available via
+    /// `admit_fixture_stop` and grants no exposure reservation.
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn reserve_fixture_stop_outbox(&self, _operation: OperationId) -> Result<(), Error> {
+        Err(Error::SharedHistoryUnavailable)
+    }
+
     /// Prepare database authority, obtain independent fixture power, then
     /// revalidate ownership/cancellation before supervisor stop admission.
     /// The admitted barrier remains parked; this is never a stop-send permit.
@@ -828,6 +842,35 @@ where
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+    #[cfg(feature = "fixture-ipc")]
+    #[tokio::test]
+    async fn stop_outbox_reservation_refuses_without_database_or_physical_access() {
+        // No PostgreSQL listener exists at this endpoint. A storage access would
+        // fail differently; the pool must remain unopened across repeats and a
+        // reconstructed controller representing another owner.
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .min_connections(0)
+            .connect_lazy("postgresql://fixture:fixture@127.0.0.1:1/unused")
+            .unwrap();
+        let store = PgStore::new(pool.clone());
+        let fake = Arc::new(NativeFakePve::new());
+        let operation = OperationId::new();
+        for owner in ["first-owner", "replacement-owner"] {
+            let scheduler =
+                Scheduler::new(store.clone(), postgres_store::ExecutorKind::Rust, 1, owner)
+                    .unwrap();
+            let controller =
+                OsDeployController::new(store.clone(), scheduler, fake.clone(), 1).unwrap();
+            for _ in 0..2 {
+                assert_eq!(
+                    controller.reserve_fixture_stop_outbox(operation).await,
+                    Err(Error::SharedHistoryUnavailable)
+                );
+                assert_eq!(pool.size(), 0);
+                assert!(fake.recorded_provisioning_submissions().is_empty());
+            }
+        }
+    }
     #[cfg(feature = "fixture-ipc")]
     #[tokio::test]
     async fn checkpoint_failure_and_cancellation_stop_dispatch_continuation() {
