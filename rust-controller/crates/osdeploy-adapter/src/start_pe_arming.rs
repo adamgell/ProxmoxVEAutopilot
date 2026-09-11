@@ -20,7 +20,7 @@ pub struct StartPeArmingContextV1 {
     pub request_sha256: String,
 }
 impl StartPeArmingContextV1 {
-    fn validate(&self) -> Result<(), StartPeArmingError> {
+    pub(crate) fn validate(&self) -> Result<(), StartPeArmingError> {
         if [
             self.run_id,
             self.start_operation,

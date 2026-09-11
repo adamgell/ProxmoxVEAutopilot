@@ -23,6 +23,48 @@ async fn unavailable_witness_refuses_before_connection_or_transaction() {
     let anchor =
         PeRegistrationAnchorV1::new(context.start_operation, Uuid::from_u128(8), 1000, 60).unwrap();
     let proposal = StartPeAtomicArmingProposalV1::new(context, anchor).unwrap();
+    let context = proposal.context();
+    let precise =
+        PeRegistrationAnchorV2::new(context.start_operation, Uuid::from_u128(8), 1_000_123, 60)
+            .unwrap();
+    assert_eq!(precise.assess(context, 1_000_122), Err(StartPeArmingError));
+    assert_eq!(
+        precise.assess(context, 1_000_123),
+        Ok(StartPeArmingRefusal::AuthenticatedWitnessUnavailable)
+    );
+    assert_eq!(
+        precise.assess(context, 61_000_122),
+        Ok(StartPeArmingRefusal::AuthenticatedWitnessUnavailable)
+    );
+    assert_eq!(
+        precise.assess(context, 61_000_123),
+        Ok(StartPeArmingRefusal::OriginalRegistrationDeadlineExpired)
+    );
+    assert_eq!(
+        precise.assess(context, 61_000_124),
+        Ok(StartPeArmingRefusal::OriginalRegistrationDeadlineExpired)
+    );
+    assert!(precise.try_into_v1().is_err());
+    let rounded = PeRegistrationAnchorV2::from_v1(proposal.anchor()).unwrap();
+    assert!(
+        PeRegistrationAnchorV2::decode(&serde_json::to_vec(&rounded).unwrap(), &precise).is_err()
+    );
+    let mut wrong = context.clone();
+    wrong.start_operation = Uuid::from_u128(99);
+    assert!(matches!(
+        store
+            .probe_osdeploy_start_pe_session_transaction_v2(&wrong, &precise)
+            .await,
+        Err(OsDeployExecutionError::Validation)
+    ));
+    let mut wrong = context.clone();
+    wrong.owner = Uuid::nil();
+    assert!(matches!(
+        store
+            .probe_osdeploy_start_pe_session_transaction_v2(&wrong, &precise)
+            .await,
+        Err(OsDeployExecutionError::Validation)
+    ));
     assert!(matches!(
         store
             .arm_osdeploy_start_pe_session(&proposal, AuthenticatedPeWitnessV1::Unavailable)

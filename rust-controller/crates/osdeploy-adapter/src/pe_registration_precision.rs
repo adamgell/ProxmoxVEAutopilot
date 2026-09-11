@@ -13,6 +13,33 @@ pub struct PeRegistrationAnchorV2 {
     deadline_unix_micros: u64,
 }
 impl PeRegistrationAnchorV2 {
+    pub fn start_operation(&self) -> Uuid {
+        self.start_operation
+    }
+    pub fn dispatch_event(&self) -> Uuid {
+        self.dispatch_event
+    }
+    pub fn budget_seconds(&self) -> u32 {
+        self.budget_seconds
+    }
+
+    /// Pure diagnostic assessment, not session or dispatch authority.
+    pub fn assess(
+        &self,
+        context: &crate::StartPeArmingContextV1,
+        checked_unix_micros: u64,
+    ) -> Result<crate::StartPeArmingRefusal, StartPeArmingError> {
+        context.validate()?;
+        if context.start_operation != self.start_operation
+            || checked_unix_micros < self.opened_unix_micros
+        {
+            return Err(StartPeArmingError);
+        }
+        if checked_unix_micros >= self.deadline_unix_micros {
+            return Ok(crate::StartPeArmingRefusal::OriginalRegistrationDeadlineExpired);
+        }
+        Ok(crate::StartPeArmingRefusal::AuthenticatedWitnessUnavailable)
+    }
     pub fn new(
         start_operation: Uuid,
         dispatch_event: Uuid,
