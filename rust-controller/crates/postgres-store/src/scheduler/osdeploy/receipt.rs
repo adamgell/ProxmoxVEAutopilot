@@ -80,6 +80,97 @@ pub struct OsDeployResponseCapture {
     identity: OriginalOsDeployDispatchIdentity,
 }
 
+/// Checked input for a future atomic fixture-response write. Both borrowed
+/// values must come from their original dispatch/IPC paths. This input cannot
+/// write, commit, reissue a request, or reconstruct a dispatch permit.
+/// ```compile_fail
+/// let _: postgres_store::FixtureStartPeCaptureInput<'_> = serde_json::from_str("{}").unwrap();
+/// ```
+/// ```compile_fail
+/// let _ = postgres_store::FixtureStartPeCaptureInput { capture: todo!(), response: todo!(), receipt: todo!() };
+/// ```
+/// ```compile_fail
+/// fn permit(input: postgres_store::FixtureStartPeCaptureInput<'_>) {
+///     let _: postgres_store::OsDeployDispatchPermit = input.into();
+/// }
+/// ```
+#[cfg(feature = "fixture-ipc")]
+pub struct FixtureStartPeCaptureInput<'a> {
+    capture: &'a OsDeployResponseCapture,
+    response: &'a pve_port::fixture_support::FixtureStartPeResponseV1,
+    receipt: MutationReceipt,
+}
+
+#[cfg(feature = "fixture-ipc")]
+impl FixtureStartPeCaptureInput<'_> {
+    pub fn operation_id(&self) -> OperationId {
+        self.capture.identity.operation_id
+    }
+    pub fn original_response(&self) -> &pve_port::fixture_support::FixtureStartPeResponseV1 {
+        self.response
+    }
+    pub fn semantic_receipt(&self) -> &MutationReceipt {
+        &self.receipt
+    }
+}
+
+#[cfg(feature = "fixture-ipc")]
+impl OsDeployResponseCapture {
+    /// Bind captured original IPC data to this committed dispatch's identity.
+    /// The eventual write must still revalidate the database under its existing
+    /// lock order; this composition does not establish current lease authority.
+    pub fn bind_fixture_start_pe_response<'a>(
+        &'a self,
+        response: &'a pve_port::fixture_support::FixtureStartPeResponseV1,
+    ) -> Result<FixtureStartPeCaptureInput<'a>, Error> {
+        let original = &self.identity;
+        let request = response.request().request();
+        let binding = request.binding();
+        response
+            .identity()
+            .validate_request(response.request())
+            .map_err(|_| Error::Validation)?;
+        response
+            .predecessor_identity()
+            .validate_request(response.predecessor())
+            .map_err(|_| Error::Validation)?;
+        let pve_port::ProvisioningMutationRequestV1::Start(start) = request else {
+            return Err(Error::Validation);
+        };
+        wire::require(
+            original.source == NativeEvidenceSource::FakePve
+                && request.plan().action() == pve_port::ProvisioningActionV1::StartPe
+                && binding.run_id() == original.run_id
+                && binding.operation_id() == original.operation_id
+                && binding.attempt_id() == original.attempt_id
+                && binding.workflow_sha256() == original.workflow_sha256
+                && binding.operation_plan_sha256() == original.pve_plan_sha256
+                && request.request_digest().map_err(|_| Error::Validation)?
+                    == original.request_sha256
+                && response.request().fixture_id() == response.predecessor().fixture_id()
+                && response.predecessor_identity().stage
+                    == pve_port::fixture_support::FixtureLedgerStage::ConfigurePe
+                && response
+                    .predecessor()
+                    .request()
+                    .binding()
+                    .same_operation_attempt(start.predecessor_binding())
+                && response.predecessor().request().plan() == start.predecessor_plan(),
+        )?;
+        let receipt = response
+            .request()
+            .decode_receipt(response.original_receipt())
+            .map_err(|_| Error::Validation)?
+            .receipt()
+            .clone();
+        Ok(FixtureStartPeCaptureInput {
+            capture: self,
+            response,
+            receipt,
+        })
+    }
+}
+
 struct OriginalOsDeployDispatchIdentity {
     run_id: RunId,
     operation_id: OperationId,

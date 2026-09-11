@@ -38,6 +38,8 @@ mod lifecycle;
 mod pve;
 mod receipt;
 mod recovery;
+#[cfg(feature = "fixture-ipc")]
+pub use receipt::FixtureStartPeCaptureInput;
 pub use receipt::{OsDeployDispatchPermit, OsDeployResponseCapture};
 mod transaction;
 mod transition;
