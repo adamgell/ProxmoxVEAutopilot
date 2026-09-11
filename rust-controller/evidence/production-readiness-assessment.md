@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `13c8a282`: this branch and PR #65 contain an accumulated
+Current scope at `7de11646`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -109,6 +109,13 @@ The boolean API remains a compatibility wrapper; replay returns no second
 envelope. Focused compile, Clippy, migration, stop-release, and diff checks
 pass. Physical submit and accepted/refused/ambiguous outcome recording remain
 unimplemented.
+
+At `7de11646`, the stop envelope and outbox persist both authority domains:
+the scheduler lease generation (`i64`) and supervisor/checkpoint generation
+(`Uuid`), along with the exact lease token. Selection and replay derive the
+provenance digest from the verified sealed object and require exact equality
+across both domains. Focused compile, Clippy, stop-release, migration, and diff
+checks pass; outcome recording and release authority remain open.
 
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
