@@ -12,6 +12,15 @@ rejection, and missing-binding refusal. StartPe and later stages remain
 fail-closed; exact-source Linux qualification for this revision is still
 required.
 
+The next StartPe transaction is not yet implementable from the tracked Rust
+contract alone. `postgres-store/src/start_pe_session.rs` accepts only the
+`AuthenticatedPeWitnessV1::Unavailable` variant, and its opt-in proposal schema
+is explicitly diagnostic/read-only. The accepted transaction-boundary plan
+references callback/session decision artifacts that are absent from this
+checkout. Astra is mapping the existing local Python endpoint/role/database
+behavior to the Rust durability types before any positive session path is
+added; no synthetic authenticated flag or family bypass is being introduced.
+
 Current-head checkpoint: commit `08471af3` records that the exact-source Linux
 reaping diagnostic image built successfully, but its retained targeted run
 ended without output before producing PID/reap evidence. The attempt is

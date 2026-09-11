@@ -20,6 +20,13 @@ missing bindings fail closed. This is an execution-isolation prerequisite,
 not StartPe or full-port implementation. Exact-source Linux qualification for
 this revision remains outstanding.
 
+The StartPe/session gate remains contract-incomplete: the tracked Rust session
+module exposes only an unavailable authenticated witness and a rollback-only
+diagnostic schema. The accepted transaction-boundary references to callback and
+session decision artifacts are not present in this checkout. Compatibility
+mapping against the local Python endpoint, role, and database behavior is the
+next evidence task; no positive StartPe admission is claimed.
+
 ### Current-head diagnostic checkpoint (2026-09-10)
 
 - Commit `08471af3` records the terminal exact-current-source Linux reaping
