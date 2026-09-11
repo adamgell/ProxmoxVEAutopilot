@@ -267,6 +267,10 @@ mod power_tests {
                 )
                 .is_ok()
             );
+            assert!(
+                log.revalidate_stopped_token(&log.power_records()[0], generation, at)
+                    .is_ok()
+            );
         }
         for at in [10, 5012] {
             assert!(
@@ -280,6 +284,10 @@ mod power_tests {
                 )
                 .is_err()
             );
+            assert!(
+                log.revalidate_stopped_token(&log.power_records()[0], generation, at)
+                    .is_err()
+            );
         }
         assert!(
             log.current_stopped_power(
@@ -291,6 +299,12 @@ mod power_tests {
                 12
             )
             .is_err()
+        );
+        let mut forged_token = log.power_records()[0].clone();
+        forged_token.observed_unix_ms += 1;
+        assert!(
+            log.revalidate_stopped_token(&forged_token, generation, 12)
+                .is_err()
         );
         let before = std::fs::read(&path).unwrap();
         assert!(
@@ -901,6 +915,30 @@ impl FixtureLog {
             return Err(invalid());
         }
         Ok(power.clone())
+    }
+
+    #[allow(dead_code)]
+    pub fn revalidate_stopped_token(
+        &self,
+        token: &PowerObservationV1,
+        daemon_generation: Uuid,
+        now_unix_ms: u64,
+    ) -> io::Result<()> {
+        let effect = self
+            .accepted_stage_effect(token.operation, &token.request_sha256, token.binding)?
+            .ok_or_else(invalid)?;
+        let current = self.current_stopped_power(
+            token.operation,
+            &token.request_sha256,
+            token.binding,
+            effect.receipt().ok_or_else(invalid)?,
+            daemon_generation,
+            now_unix_ms,
+        )?;
+        if &current != token {
+            return Err(invalid());
+        }
+        Ok(())
     }
 
     /// Only the supervisor's validated post-effect observation may call this.

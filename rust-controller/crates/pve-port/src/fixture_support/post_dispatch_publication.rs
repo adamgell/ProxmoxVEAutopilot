@@ -154,6 +154,11 @@ impl Publications {
             _ => return Err(invalid()),
         };
         if let Some(identity) = stage {
+            // Atomic fixture admission alone is not independent running/task
+            // evidence. Keep publication closed until its durable contract exists.
+            if identity.stage == super::FixtureLedgerStage::StartPe {
+                return Err(invalid());
+            }
             let request =
                 crate::fixture_ipc::FixtureStageRequest::decode(&serde_json::to_vec(&value)?)
                     .map_err(|_| invalid())?;

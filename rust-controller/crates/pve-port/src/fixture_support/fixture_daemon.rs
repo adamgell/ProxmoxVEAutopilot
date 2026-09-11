@@ -308,7 +308,36 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                                 && let Ok(after) =
                                     stage_barrier.authorized_after(&binding, &request)
                             {
-                                let result = if let Some((legacy, receipt)) = legacy {
+                                let result = if request.request().plan().action()
+                                    == crate::ProvisioningActionV1::StartPe
+                                {
+                                    stage_barrier
+                                        .authorized_start_power(
+                                            &binding,
+                                            &request,
+                                            &log,
+                                            publications.generation(),
+                                        )
+                                        .and_then(|token| {
+                                            let (prior_identity, prior_request) = prior
+                                                .as_ref()
+                                                .ok_or_else(super::stage_identity::invalid)?;
+                                            super::stage_effect::submit_start(
+                                                &mut log,
+                                                &binding,
+                                                &request,
+                                                (prior_identity, prior_request),
+                                                &token,
+                                                publications.generation(),
+                                                after,
+                                                || {
+                                                    stage_barrier
+                                                        .consume(&binding, &request)
+                                                        .map(|_| ())
+                                                },
+                                            )
+                                        })
+                                } else if let Some((legacy, receipt)) = legacy {
                                     super::stage_effect::submit_after_legacy_clone(
                                         &mut log,
                                         &binding,

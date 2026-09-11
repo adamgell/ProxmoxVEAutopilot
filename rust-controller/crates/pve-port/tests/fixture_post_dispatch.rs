@@ -395,6 +395,7 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
     let episodes = provisioning_support::chain();
     let mut accepted: Vec<(FixtureStageIdentity, FixtureStageRequest, Vec<u8>)> = Vec::new();
     let mut final_publication = None;
+    let mut start_effect = None;
     for restart in [false, true] {
         if restart {
             fs::remove_file(directory.join("client.sock")).unwrap();
@@ -424,7 +425,15 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
                     .await
                     .is_err()
             );
-            assert_eq!(reader.status().await.unwrap().effects, 3);
+            assert_eq!(reader.status().await.unwrap().effects, 4);
+            let (identity, expected) = start_effect.as_ref().unwrap();
+            let recovered = wire(
+                &client,
+                json!({"command":"accepted_stage_effect","identity":identity}),
+            )
+            .await
+            .unwrap();
+            assert_eq!(&recovered["accepted_effect"], expected);
         } else {
             let supervisor =
                 FixtureCheckpointClient::new(control.clone(), Duration::from_secs(1)).unwrap();
@@ -563,8 +572,8 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             let status = reader.status().await.unwrap();
             assert_eq!((status.attempts, status.effects), (3, 3));
         }
-        // A genuine stopped baseline (including replay after restart) must not
-        // turn the incomplete StartPe execution boundary into fake acceptance.
+        // Only fresh power-aware authority can admit the synthetic transition;
+        // replay and generic release cannot, and admission is not observation.
         let supervisor =
             FixtureCheckpointClient::new(control.clone(), Duration::from_secs(1)).unwrap();
         let worker = FixtureCheckpointClient::new(client.clone(), Duration::from_secs(1)).unwrap();
@@ -683,8 +692,80 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
                     .ok
             );
         }
-        let before = fs::read(directory.join("fixture.log")).unwrap();
         let mutation = FixtureMutationClient::new(client.clone(), Duration::from_secs(1)).unwrap();
+        if !restart {
+            let receipt = mutation
+                .stage_late_with_predecessor(
+                    identity.clone(),
+                    &start,
+                    &accepted[2].0,
+                    &accepted[2].1,
+                )
+                .await
+                .unwrap();
+            assert!(
+                matches!(receipt.receipt(), MutationReceipt::Task(upid) if upid.as_str().contains(":qmstart:101:"))
+            );
+            let effect = wire(
+                &client,
+                json!({"command":"accepted_stage_effect","identity":identity}),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                effect["accepted_effect"]["start_transition"]["after"],
+                "running"
+            );
+            start_effect = Some((identity.clone(), effect["accepted_effect"].clone()));
+            let (mut observation, _, _, _) = sample();
+            observation.provisioning.identity.operation = identity.operation;
+            observation.provisioning.identity.request_sha256 = identity.request_sha256.clone();
+            observation.task.identity.operation = identity.operation;
+            observation.task.identity.request_sha256 = identity.request_sha256.clone();
+            let MutationReceipt::Task(upid) = receipt.receipt() else {
+                panic!("StartPe requires a task receipt");
+            };
+            observation.task.identity.upid = upid.as_str().to_owned();
+            let at = chrono::Utc::now().timestamp_millis() as u64;
+            let mut observation = serde_json::to_value(observation).unwrap();
+            observation["provisioning"]["target_power"] = json!({"state":"observed","observed_unix_ms":at,"value":{"power":"running","locked":false}});
+            retime(&mut observation, at);
+            let original: Vec<u8> =
+                serde_json::from_value(effect["accepted_effect"]["receipt"].clone()).unwrap();
+            FixturePostDispatchV1::decode_stage(
+                &serde_json::to_vec(&observation).unwrap(),
+                &start,
+                &original,
+                at,
+                at,
+            )
+            .unwrap();
+            let publication = json!({"command":"publish_stage_post_dispatch","identity":identity,"request":serde_json::from_slice::<Value>(&start.encode().unwrap()).unwrap(),"observation":observation});
+            assert!(
+                wire(&control, publication).await.is_err(),
+                "atomic acceptance cannot publish unproven running/task evidence"
+            );
+            let committed = fs::read(directory.join("fixture.log")).unwrap();
+            assert_eq!(
+                committed[authorization_ledger.len()..]
+                    .iter()
+                    .filter(|byte| **byte == b'\n')
+                    .count(),
+                1
+            );
+            let torn =
+                std::path::PathBuf::from("/tmp").join(format!("start-torn-{}", Uuid::now_v7()));
+            fs::create_dir(&torn).unwrap();
+            fs::set_permissions(&torn, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::write(torn.join("fixture.log"), &committed[..committed.len() - 1]).unwrap();
+            assert!(
+                run(&torn, Duration::from_millis(100)).is_err(),
+                "torn atomic IPC acceptance must fail recovery"
+            );
+            fs::remove_file(torn.join("fixture.log")).unwrap();
+            fs::remove_dir(torn).unwrap();
+        }
+        let before = fs::read(directory.join("fixture.log")).unwrap();
         for _ in 0..2 {
             assert!(
                 mutation
@@ -697,18 +778,19 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
                     .await
                     .is_err()
             );
-            assert!(
+            assert_eq!(
                 worker
                     .stage_request(StageCheckpointRequest::Poll {
                         identity: identity.clone()
                     })
                     .await
                     .unwrap()
-                    .ok
+                    .ok,
+                restart
             );
             assert_eq!(before, fs::read(directory.join("fixture.log")).unwrap());
             let status = reader.status().await.unwrap();
-            assert_eq!((status.attempts, status.effects), (3, 3));
+            assert_eq!((status.attempts, status.effects), (4, 4));
         }
         wire(&control, json!({"command":"shutdown"})).await.unwrap();
         daemon.join().unwrap();
@@ -716,7 +798,12 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
         assert_eq!(
             ledger
                 .lines()
-                .filter(|line| line.contains("\"power_version\":1"))
+                .filter(
+                    |line| serde_json::from_str::<Value>(&line[9..line.len() - 65])
+                        .unwrap()
+                        .get("power_version")
+                        .is_some()
+                )
                 .count(),
             1
         );

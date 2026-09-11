@@ -246,4 +246,25 @@ impl StageBarrier {
         self.persist()?;
         Ok(authorization.after)
     }
+
+    pub(crate) fn authorized_start_power(
+        &self,
+        identity: &FixtureStageIdentity,
+        request: &FixtureStageRequest,
+        log: &super::durable_fixture_log::FixtureLog,
+        daemon_generation: Uuid,
+    ) -> io::Result<super::durable_fixture_log::PowerObservationV1> {
+        self.validate_submission(identity, request)?;
+        let token = self
+            .authorization
+            .as_ref()
+            .and_then(|a| a.start_power.as_ref())
+            .ok_or_else(invalid)?;
+        log.revalidate_stopped_token(
+            token,
+            daemon_generation,
+            super::post_dispatch_publication::now()?,
+        )?;
+        Ok(token.clone())
+    }
 }

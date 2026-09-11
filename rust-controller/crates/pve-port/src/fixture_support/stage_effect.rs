@@ -11,6 +11,78 @@ use std::io;
 #[path = "../../tests/provisioning_support/mod.rs"]
 mod test_support;
 
+/// Explicit synthetic StartPe admission. A receipt is not a task completion or
+/// running observation; those independent publication gates remain closed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn submit_start(
+    log: &mut FixtureLog,
+    identity: &FixtureStageIdentity,
+    request: &FixtureStageRequest,
+    predecessor: (&FixtureStageIdentity, &FixtureStageRequest),
+    token: &super::durable_fixture_log::PowerObservationV1,
+    daemon_generation: uuid::Uuid,
+    after: VmState,
+    consume: impl FnOnce() -> io::Result<()>,
+) -> io::Result<Vec<u8>> {
+    identity.validate_request(request)?;
+    let (prior_identity, prior) = predecessor;
+    prior_identity.validate_request(prior)?;
+    let effect = log
+        .accepted_stage_effect(
+            prior_identity.operation,
+            &prior_identity.request_sha256,
+            prior_identity.ledger_binding(),
+        )?
+        .ok_or_else(invalid)?;
+    let prior_receipt = effect.receipt().ok_or_else(invalid)?;
+    request
+        .validate_start_pe_predecessor(prior, prior_receipt)
+        .map_err(|_| invalid())?;
+    let current = log.current_stopped_power(
+        prior_identity.operation,
+        &prior_identity.request_sha256,
+        prior_identity.ledger_binding(),
+        prior_receipt,
+        daemon_generation,
+        super::post_dispatch_publication::now()?,
+    )?;
+    let vm = request.request().plan().expected().vm();
+    let expected = VmState {
+        disk_bytes: request
+            .request()
+            .plan()
+            .expected()
+            .effective_capacity_bytes(),
+        pe_configured: true,
+    };
+    if &current != token
+        || after != expected
+        || !effect.has_after(vm.target_vmid().get(), &expected)
+    {
+        return Err(invalid());
+    }
+    let sequence = log.records().len() as u64 + 1;
+    let upid = Upid::parse(format!(
+        "UPID:{}:{:08X}:00000001:00000001:qmstart:{}:fake@pve:",
+        vm.node(),
+        sequence,
+        vm.target_vmid()
+    ))
+    .map_err(|_| invalid())?;
+    let receipt = request
+        .encode_receipt(sequence, MutationReceipt::Task(upid))
+        .map_err(|_| invalid())?;
+    log.record_start_transition(
+        identity.operation,
+        &identity.request_sha256,
+        identity.ledger_binding(),
+        token,
+        receipt.clone(),
+        consume,
+    )?;
+    Ok(receipt)
+}
+
 /// A legacy acceptance remains legacy: no owner/generation is inferred for it.
 /// Only the new resize requires and consumes a v2 supervisor capability.
 pub(crate) fn submit_after_legacy_clone(
@@ -247,9 +319,8 @@ pub(crate) fn submit(
             request
                 .validate_start_pe_predecessor(prior, effect.receipt().ok_or_else(invalid)?)
                 .map_err(|_| invalid())?;
-            // A stopped power observation alone cannot authorize qmstart.
-            // Running replay records exist, but atomic StartPe transition admission
-            // and stage-bound task publication are not integrated. Preserve authorization.
+            // Generic disk-only authorization cannot admit a power transition.
+            // The separate submit_start path requires a revalidated power token.
             return Err(invalid());
         }
         _ => return Err(invalid()),
