@@ -80,7 +80,7 @@ pub struct OsDeployResponseCapture {
     identity: OriginalOsDeployDispatchIdentity,
 }
 
-/// Checked input for a future atomic fixture-response write. Both borrowed
+/// Checked input for an atomic fixture-response write. Both borrowed
 /// values must come from their original dispatch/IPC paths. This input cannot
 /// write, commit, reissue a request, or reconstruct a dispatch permit.
 /// ```compile_fail
@@ -222,10 +222,51 @@ impl OsDeployDispatchPermit {
 }
 
 impl Scheduler {
+    /// Persist the closed original IPC response with its semantic receipt in
+    /// the existing original-dispatch transaction. This records evidence only.
+    /// ```compile_fail
+    /// async fn arbitrary(s: &postgres_store::Scheduler, bytes: Vec<u8>) {
+    ///     s.record_fixture_start_pe_receipt(&bytes).await.unwrap();
+    /// }
+    /// ```
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn record_fixture_start_pe_receipt(
+        &self,
+        input: &FixtureStartPeCaptureInput<'_>,
+    ) -> Result<(), Error> {
+        // Recompose at ingress rather than trusting an earlier semantic copy.
+        let checked = input
+            .capture
+            .bind_fixture_start_pe_response(input.response)?;
+        self.record_osdeploy_pve_receipt_inner(
+            checked.capture,
+            &checked.receipt,
+            Some(checked.response),
+        )
+        .await
+    }
+
     pub async fn record_osdeploy_pve_receipt(
         &self,
         capture: &OsDeployResponseCapture,
         receipt: &MutationReceipt,
+    ) -> Result<(), Error> {
+        self.record_osdeploy_pve_receipt_inner(
+            capture,
+            receipt,
+            #[cfg(feature = "fixture-ipc")]
+            None,
+        )
+        .await
+    }
+
+    async fn record_osdeploy_pve_receipt_inner(
+        &self,
+        capture: &OsDeployResponseCapture,
+        receipt: &MutationReceipt,
+        #[cfg(feature = "fixture-ipc")] fixture_response: Option<
+            &pve_port::fixture_support::FixtureStartPeResponseV1,
+        >,
     ) -> Result<(), Error> {
         Box::pin(async move {
             let original = &capture.identity;
@@ -258,6 +299,10 @@ impl Scheduler {
                 // not replace the first server time on equivalent storage retry.
                 ProvisioningReceiptV1::new(dispatch.clone(), first.accepted_at(), receipt.clone()).map_err(|_| Error::Validation)?;
                 if first.receipt() != receipt { return Err(Error::Conflict); }
+                #[cfg(feature = "fixture-ipc")]
+                if let Some(response) = fixture_response {
+                    retain_fixture_response(&mut tx, original.operation_id, response, false).await?;
+                }
                 tx.commit().await?;
                 return Ok(());
             }
@@ -288,6 +333,10 @@ impl Scheduler {
                 .bind(event.as_uuid()).bind(original.operation_id.as_uuid()).bind(serde_json::to_value(&journal)?).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO rust_controller.osdeploy_pve_receipts(operation_id,receipt_event_id,receipt_kind,upid,accepted_at,recorded_at) VALUES($1,$2,$3,$4,$5,$5)")
                 .bind(original.operation_id.as_uuid()).bind(event.as_uuid()).bind(kind).bind(upid).bind(at).execute(&mut *tx).await?;
+            #[cfg(feature = "fixture-ipc")]
+            if let Some(response) = fixture_response {
+                retain_fixture_response(&mut tx, original.operation_id, response, true).await?;
+            }
             let changed = sqlx::query("UPDATE rust_controller.operations SET revision=$2,updated_at=clock_timestamp() WHERE operation_id=$1 AND revision=$3")
                 .bind(original.operation_id.as_uuid()).bind(revision).bind(snapshot.revision()).execute(&mut *tx).await?.rows_affected();
             if changed != 1 { return Err(Error::FenceLost); }
@@ -298,4 +347,30 @@ impl Scheduler {
             Ok(())
         }).await
     }
+}
+
+#[cfg(feature = "fixture-ipc")]
+async fn retain_fixture_response(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    operation: OperationId,
+    response: &pve_port::fixture_support::FixtureStartPeResponseV1,
+    inserting: bool,
+) -> Result<(), Error> {
+    let identity = wire::canonical(response.identity())?;
+    let predecessor_identity = wire::canonical(response.predecessor_identity())?;
+    let request = response.request().encode().map_err(|_| Error::Validation)?;
+    let predecessor = response
+        .predecessor()
+        .encode()
+        .map_err(|_| Error::Validation)?;
+    if inserting {
+        sqlx::query("INSERT INTO rust_controller.fixture_start_pe_responses(operation_id,identity_canonical_json,request_envelope,predecessor_identity_canonical_json,predecessor_request_envelope,response_envelope) VALUES($1,$2,$3,$4,$5,$6)")
+            .bind(operation.as_uuid()).bind(&identity).bind(&request).bind(&predecessor_identity).bind(&predecessor).bind(response.original_receipt()).execute(&mut **tx).await?;
+    }
+    let exact: Option<bool> = sqlx::query_scalar("SELECT identity_canonical_json=$2 AND request_envelope=$3 AND predecessor_identity_canonical_json=$4 AND predecessor_request_envelope=$5 AND response_envelope=$6 FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1")
+        .bind(operation.as_uuid()).bind(identity).bind(request).bind(predecessor_identity).bind(predecessor).bind(response.original_receipt()).fetch_optional(&mut **tx).await?;
+    if exact != Some(true) {
+        return Err(Error::Conflict);
+    }
+    Ok(())
 }
