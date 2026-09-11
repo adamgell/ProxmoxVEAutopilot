@@ -12,7 +12,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `20e54b54`: this branch and PR #65 contain an accumulated
+Current scope at `617f5b0b`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -54,8 +54,11 @@ boundary assessment in `callback-after-delivery-assessment.md` confirms that
 the existing refusal-only callback/probe cannot be presented as authenticated
 PeRegister compatibility; the required separate callback fence, identity
 binding, replay, rollback and process-loss tests remain an explicit gate.
-Accepting callback result/action surfaces and production legacy-run import
-remain unimplemented. GitHub checks observed for `72a3ec61` on 2026-09-11 had Linux in
+Accepting callback action/result surfaces and production legacy-run import
+remain unimplemented. The controller now exposes the fixture PeRegister
+transaction through its explicit delivery configuration; this remains
+fixture-only and is not full legacy callback compatibility. GitHub checks
+observed for `72a3ec61` on 2026-09-11 had Linux in
 progress and macOS queued; this is not completed CI evidence. No exact-source
 Linux runtime qualification is recorded for this current source. Historical
 sections below retain the limits at their named revisions.
