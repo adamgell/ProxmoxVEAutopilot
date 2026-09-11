@@ -21,11 +21,15 @@ pub(super) struct ExceptionalTransition {
 pub(super) enum OsDeployTransitionProof {
     InitialLease(LifecycleTransition),
     ReclaimedLease(LifecycleTransition),
+    #[cfg_attr(not(feature = "fixture-ipc"), allow(dead_code))]
+    ReclaimedCredentialLease(LifecycleTransition),
     FirstStart(LifecycleTransition),
     ResumedStart(LifecycleTransition),
     UnactivatedScopeExpired(ExceptionalTransition),
     ActivatedScopeExpired(ExceptionalTransition),
     ExpiredUnstartedSameAttempt(ExceptionalTransition),
+    #[cfg_attr(not(feature = "fixture-ipc"), allow(dead_code))]
+    ExpiredUnacknowledgedCredential(ExceptionalTransition),
     ExpiredReadOnlyEvaluation(ExceptionalTransition),
     ExpiredDispatched(ExceptionalTransition),
     CancelledUnexposed(ExceptionalTransition),
@@ -310,6 +314,64 @@ impl OsDeployTransitionProof {
         }))
     }
 
+    #[cfg(feature = "fixture-ipc")]
+    pub(super) async fn reclaimed_credential_lease(
+        tx: &mut Transaction<'_, Postgres>,
+        event: EventId,
+    ) -> Result<Self, Error> {
+        let (proof, value) = lifecycle_facts(tx, event, true).await?;
+        let wire::Detail::LeaseAcquired(acquisition) = value.detail else {
+            return Err(Error::Validation);
+        };
+        let last: String = sqlx::query_scalar("SELECT d.action FROM rust_controller.journal_events j JOIN rust_controller.osdeploy_decisions d ON d.event_id=(j.payload->>'decision_event_id')::uuid WHERE j.operation_id=$1 AND j.event_kind='execution_state_changed' ORDER BY j.aggregate_revision DESC LIMIT 1")
+            .bind(proof.operation.as_uuid()).fetch_one(&mut **tx).await?;
+        if proof.current != ExecutionState::Pending
+            || acquisition.purpose != wire::Purpose::ReclaimedCredentialDelivery
+            || last != "credential_delivery_reclaimed"
+            || !fixture_delivery::unacknowledged(tx, proof.operation).await?
+        {
+            return Err(Error::Validation);
+        }
+        Ok(Self::ReclaimedCredentialLease(LifecycleTransition {
+            target: ExecutionState::Running,
+            ..proof
+        }))
+    }
+
+    #[cfg(feature = "fixture-ipc")]
+    pub(super) async fn expired_unacknowledged_credential(
+        s: &Scheduler,
+        tx: &mut Transaction<'_, Postgres>,
+        op: OperationId,
+        revision: i64,
+    ) -> Result<Self, Error> {
+        let f = ExceptionalFacts::locked(s, tx, op, revision).await?;
+        if !s.fixture_credential_delivery
+            || f.snapshot.cancelled()
+            || f.snapshot.state() != ExecutionState::Running
+            || !requires_delivery(tx, &f.snapshot).await?
+            || f.snapshot.dispatch().is_none()
+            || !fixture_delivery::unacknowledged(tx, op).await?
+        {
+            return Err(Error::FenceLost);
+        }
+        let (scope, _, _, deadline) = f.scope(tx).await?;
+        if f.at >= deadline {
+            return Err(Error::FenceLost);
+        }
+        let (epoch, _) = f.expired_epoch(tx).await?;
+        Ok(Self::ExpiredUnacknowledgedCredential(f.decision(
+            wire::Detail::CredentialDeliveryReclaimed(wire::Reclaimed {
+                lease_acquisition_event_id: epoch,
+                scope_key: scope,
+                deadline_at: deadline,
+                reason: wire::Reason::LeaseExpiredBeforeCredentialAck,
+            }),
+            None,
+            format!("osdeploy:credential-reclaim:{}", epoch.as_uuid()),
+        )?))
+    }
+
     pub(super) async fn unactivated_scope_expired(
         s: &Scheduler,
         tx: &mut Transaction<'_, Postgres>,
@@ -505,14 +567,21 @@ impl OsDeployTransitionProof {
     ) -> Result<Self, Error> {
         let f = ExceptionalFacts::locked(s, tx, op, revision).await?;
         let cancellation = f.cancellation(tx).await?;
+        #[cfg(feature = "fixture-ipc")]
+        let reclaimed_delivery = f.snapshot.state() == ExecutionState::Pending
+            && requires_delivery(tx, &f.snapshot).await?
+            && fixture_delivery::unacknowledged(tx, op).await?;
+        #[cfg(not(feature = "fixture-ipc"))]
+        let reclaimed_delivery = false;
         if f.snapshot.dispatch().is_none()
-            || !matches!(
-                f.snapshot.state(),
-                ExecutionState::Leased
-                    | ExecutionState::Running
-                    | ExecutionState::Waiting
-                    | ExecutionState::Cancelling
-            )
+            || !(reclaimed_delivery
+                || matches!(
+                    f.snapshot.state(),
+                    ExecutionState::Leased
+                        | ExecutionState::Running
+                        | ExecutionState::Waiting
+                        | ExecutionState::Cancelling
+                ))
         {
             return Err(Error::Validation);
         }
@@ -702,14 +771,21 @@ pub(super) async fn append_osdeploy_transition(
     tx: &mut Transaction<'_, Postgres>,
     proof: OsDeployTransitionProof,
 ) -> Result<i64, Error> {
+    let policy = if matches!(&proof, OsDeployTransitionProof::ReclaimedCredentialLease(_)) {
+        TransitionPolicy::CredentialDeliveryResume
+    } else {
+        TransitionPolicy::Domain
+    };
     let p = match proof {
         OsDeployTransitionProof::InitialLease(p)
         | OsDeployTransitionProof::ReclaimedLease(p)
+        | OsDeployTransitionProof::ReclaimedCredentialLease(p)
         | OsDeployTransitionProof::FirstStart(p)
         | OsDeployTransitionProof::ResumedStart(p) => p,
         OsDeployTransitionProof::UnactivatedScopeExpired(p)
         | OsDeployTransitionProof::ActivatedScopeExpired(p)
         | OsDeployTransitionProof::ExpiredUnstartedSameAttempt(p)
+        | OsDeployTransitionProof::ExpiredUnacknowledgedCredential(p)
         | OsDeployTransitionProof::ExpiredReadOnlyEvaluation(p)
         | OsDeployTransitionProof::ExpiredDispatched(p)
         | OsDeployTransitionProof::CancelledUnexposed(p)
@@ -738,7 +814,7 @@ pub(super) async fn append_osdeploy_transition(
             semantic_key: format!("osdeploy:state:{}", p.decision.as_uuid()),
             payload: json!({"state":p.target,"decision_event_id":p.decision}),
             observed_at: p.at,
-            policy: TransitionPolicy::Domain,
+            policy,
         },
     )
     .await
@@ -754,7 +830,8 @@ async fn append_exception(
         | wire::Detail::ActivatedScopeExpired(_)
         | wire::Detail::LeaseExpiredUncertain(_)
         | wire::Detail::StageCancelledExposed(_) => ExecutionState::Unknown,
-        wire::Detail::LeaseReclaimedSameAttempt(_) => ExecutionState::Pending,
+        wire::Detail::LeaseReclaimedSameAttempt(_)
+        | wire::Detail::CredentialDeliveryReclaimed(_) => ExecutionState::Pending,
         wire::Detail::EvaluationReparked(_) => ExecutionState::Waiting,
         wire::Detail::StageCancelledUnexposed(_) => ExecutionState::Blocked,
         wire::Detail::PveEvaluated(ref value) if value.mode == wire::Mode::Reconciliation => {
@@ -783,7 +860,11 @@ async fn append_exception(
             semantic_key: format!("osdeploy:state:{}", p.event.as_uuid()),
             payload: json!({"state":target,"decision_event_id":p.event}),
             observed_at: p.value.evaluated_at,
-            policy: TransitionPolicy::Domain,
+            policy: if matches!(p.value.detail, wire::Detail::CredentialDeliveryReclaimed(_)) {
+                TransitionPolicy::CredentialDeliveryReclaim
+            } else {
+                TransitionPolicy::Domain
+            },
         },
     )
     .await

@@ -197,6 +197,19 @@ pub(super) async fn load_records(
         .find(|d| matches!(d.value.detail, Detail::RunCancelled(_)))
         .map(|d| d.value.evaluated_at);
     let receipt_revision = receipt.as_ref().map(|r| r.revision);
+    let credential_history = own.iter().any(|d| {
+        matches!(
+            d.value.detail,
+            Detail::CredentialDeliveryReclaimed(_)
+                | Detail::LeaseAcquired(Acquisition {
+                    purpose: Purpose::ReclaimedCredentialDelivery,
+                    ..
+                })
+        )
+    });
+    require(!credential_history || plan.stage() == OsDeployStage::StartPe)?;
+    #[cfg(not(feature = "fixture-ipc"))]
+    require(!credential_history)?;
     #[cfg(feature = "fixture-ipc")]
     if plan.stage() == OsDeployStage::StartPe {
         let session = sqlx::query("SELECT s.*,e.payload_canonical_json AS epoch_json,EXISTS(SELECT 1 FROM rust_controller.osdeploy_pve_dispatches d WHERE d.operation_id=s.operation_id AND d.dispatch_event_id=s.dispatch_event_id AND d.lease_acquisition_event_id=s.lease_acquisition_event_id AND d.original_generation=s.original_generation) AS dispatch_matches FROM rust_controller.fixture_pe_boot_sessions s JOIN rust_controller.osdeploy_decisions e ON e.event_id=s.lease_acquisition_event_id AND e.operation_id=s.operation_id WHERE s.operation_id=$1")
@@ -207,6 +220,7 @@ pub(super) async fn load_records(
         let delivery = sqlx::query("SELECT d.*,a.acknowledged_at,x.exposed_at,x.generation AS exposure_generation,x.worker_id AS exposure_worker,e.operation_id AS exposure_operation,e.generation AS epoch_generation,e.worker_id AS epoch_worker,e.acquired_at,e.initial_expires_at FROM rust_controller.fixture_pe_deliveries d LEFT JOIN rust_controller.fixture_pe_delivery_acks a USING(operation_id) LEFT JOIN rust_controller.fixture_pe_delivery_exposures x USING(operation_id) LEFT JOIN rust_controller.osdeploy_lease_epochs e ON e.acquisition_event_id=x.lease_acquisition_event_id WHERE d.operation_id=$1")
             .bind(operation.as_uuid()).fetch_optional(&mut **tx).await?;
         require(delivery.is_some() == (sink.is_some() && dispatch.is_some()))?;
+        require(!credential_history || delivery.is_some())?;
         if let Some(delivery) = delivery {
             let d = dispatch.as_ref().ok_or(Error::Validation)?;
             let package = registration
@@ -228,6 +242,14 @@ pub(super) async fn load_records(
                     && delivery.try_get::<Vec<u8>, _>("alias_sha256")?.len() == 32,
             )?;
             let ack: Option<DateTime<Utc>> = delivery.try_get("acknowledged_at")?;
+            // Reclaims preserve the original dispatch/session. Later delivery
+            // is legal, but acceptance must not predate any reclaim decision.
+            for reclaim in own
+                .iter()
+                .filter(|d| matches!(d.value.detail, Detail::CredentialDeliveryReclaimed(_)))
+            {
+                require(ack.is_none_or(|at| at >= reclaim.value.evaluated_at))?;
+            }
             if let Some(at) = ack {
                 require(at >= d.value.dispatched_at() && at < deadline)?;
             }
@@ -1019,6 +1041,17 @@ fn validate_decision_links(
         match &d.value.detail {
             Detail::StageActivated(_) | Detail::RunCancelled(_) => {}
             Detail::LeaseAcquired(a) => {
+                if a.purpose == Purpose::ReclaimedCredentialDelivery {
+                    let prior = own
+                        .iter()
+                        .filter(|p| p.revision < d.revision)
+                        .max_by_key(|p| p.revision)
+                        .ok_or(Error::Validation)?;
+                    require(
+                        matches!(prior.value.detail, Detail::CredentialDeliveryReclaimed(_))
+                            && prior.value.evaluated_at <= d.value.evaluated_at,
+                    )?;
+                }
                 if let Some(prior) = a.prior_schedule_event_id {
                     let p = decision(ds, prior.as_uuid(), op)?;
                     require(
@@ -1102,6 +1135,28 @@ fn validate_decision_links(
             Detail::LeaseReclaimedSameAttempt(a) => {
                 epoch(a.lease_acquisition_event_id, d)?;
                 scope(a.scope_key, a.deadline_at)?;
+            }
+            Detail::CredentialDeliveryReclaimed(a) => {
+                let e = epoch(a.lease_acquisition_event_id, d)?;
+                scope(a.scope_key, a.deadline_at)?;
+                let expiry = own
+                    .iter()
+                    .filter_map(|prior| {
+                        if prior.revision < d.revision
+                            && let Detail::LeaseRenewed(r) = &prior.value.detail
+                            && r.lease_acquisition_event_id == e.event
+                        {
+                            return Some(r.expires_at);
+                        }
+                        None
+                    })
+                    .max()
+                    .unwrap_or(e.value.expires_at);
+                require(
+                    dispatch.is_some_and(|x| x.value.dispatch_revision() < d.revision as u64)
+                        && d.value.evaluated_at >= expiry
+                        && d.value.evaluated_at < a.deadline_at,
+                )?;
             }
             Detail::EvaluationReparked(a) => {
                 epoch(a.lease_acquisition_event_id, d)?;
@@ -1195,11 +1250,16 @@ fn state_for(d: &Decision) -> Result<ExecutionState, Error> {
         return decode_name(name(resolution)?);
     }
     match d.value.detail {
+        Detail::LeaseAcquired(ref a) if a.purpose == Purpose::ReclaimedCredentialDelivery => {
+            Ok(ExecutionState::Running)
+        }
         Detail::LeaseAcquired(ref a) if a.purpose != Purpose::ResumeEvaluation => {
             Ok(ExecutionState::Leased)
         }
         Detail::EvaluationStarted(_) => Ok(ExecutionState::Running),
-        Detail::LeaseReclaimedSameAttempt(_) => Ok(ExecutionState::Pending),
+        Detail::LeaseReclaimedSameAttempt(_) | Detail::CredentialDeliveryReclaimed(_) => {
+            Ok(ExecutionState::Pending)
+        }
         _ => Err(Error::Validation),
     }
 }
@@ -1207,15 +1267,24 @@ fn legal_state_edge(from: ExecutionState, to: ExecutionState, d: &Decision) -> b
     use ExecutionState::*;
     match &d.value.detail {
         Detail::LeaseAcquired(a) => {
-            from == Pending && to == Leased && a.purpose != Purpose::ResumeEvaluation
+            from == Pending
+                && if a.purpose == Purpose::ReclaimedCredentialDelivery {
+                    to == Running
+                } else {
+                    to == Leased && a.purpose != Purpose::ResumeEvaluation
+                }
         }
         Detail::EvaluationStarted(_) => matches!(from, Leased | Waiting) && to == Running,
         Detail::LeaseReclaimedSameAttempt(_) => from == Leased && to == Pending,
+        Detail::CredentialDeliveryReclaimed(_) => from == Running && to == Pending,
         Detail::EvaluationReparked(_) => from == Running && to == Waiting,
         Detail::ScopeExpiredBeforeActivation(_) => from == Pending && to == Unknown,
         Detail::ActivatedScopeExpired(_) => !from.is_terminal() && to == Unknown,
         Detail::StageCancelledUnexposed(_) => !from.is_terminal() && to == Blocked,
-        Detail::StageCancelledExposed(_) | Detail::LeaseExpiredUncertain(_) => {
+        Detail::StageCancelledExposed(_) => {
+            matches!(from, Pending | Leased | Running | Waiting | Cancelling) && to == Unknown
+        }
+        Detail::LeaseExpiredUncertain(_) => {
             matches!(from, Leased | Running | Waiting | Cancelling) && to == Unknown
         }
         Detail::PveEvaluated(a) => {
@@ -1254,12 +1323,16 @@ fn admits_decision_in(state: ExecutionState, detail: &Detail) -> bool {
             }
         }
         Detail::LeaseReclaimedSameAttempt(_) => state == Leased,
+        Detail::CredentialDeliveryReclaimed(_) => state == Running,
         Detail::EvaluationReparked(_) => matches!(state, Running | Waiting),
         Detail::ScopeExpiredBeforeActivation(_) => state == Pending,
         Detail::ActivatedScopeExpired(_) => !state.is_terminal() || state == Unknown,
         Detail::RunCancelled(_) => true,
         Detail::StageCancelledUnexposed(_) => !state.is_terminal(),
-        Detail::StageCancelledExposed(_) | Detail::LeaseExpiredUncertain(_) => {
+        Detail::StageCancelledExposed(_) => {
+            matches!(state, Pending | Leased | Running | Waiting | Cancelling)
+        }
+        Detail::LeaseExpiredUncertain(_) => {
             matches!(state, Leased | Running | Waiting | Cancelling)
         }
         Detail::ResidualLeaseRevoked(_) => state.is_terminal(),
@@ -1438,6 +1511,7 @@ async fn validate_live_lease(
                     Detail::LeaseAcquired(_)
                         | Detail::ResidualLeaseRevoked(_)
                         | Detail::LeaseReclaimedSameAttempt(_)
+                        | Detail::CredentialDeliveryReclaimed(_)
                         | Detail::EvaluationReparked(_)
                 ) || matches!(&d.value.detail, Detail::PveEvaluated(v)
                     if d.value.resolution == Some(NativeDecision::Waiting)

@@ -178,6 +178,16 @@ impl PgStore {
         ))
         .execute(&self.pool)
         .await?;
+        #[cfg(feature = "fixture-ipc")]
+        {
+            let mut tx = self.pool.begin().await?;
+            sqlx::raw_sql(include_str!(
+                "../migrations/0011_fixture_delivery_reclaim.sql"
+            ))
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+        }
         Ok(())
     }
 

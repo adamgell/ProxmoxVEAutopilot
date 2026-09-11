@@ -918,6 +918,8 @@ struct StateAppend {
 #[derive(Clone, Copy)]
 enum TransitionPolicy {
     Domain,
+    CredentialDeliveryReclaim,
+    CredentialDeliveryResume,
     Cancellation,
     CancellationUnknown,
     ExpiredUnstarted,
@@ -1149,6 +1151,12 @@ fn validate_transition(
     policy: TransitionPolicy,
 ) -> Result<(), SchedulerError> {
     let valid = match policy {
+        TransitionPolicy::CredentialDeliveryReclaim => {
+            current == ExecutionState::Running && target == ExecutionState::Pending
+        }
+        TransitionPolicy::CredentialDeliveryResume => {
+            current == ExecutionState::Pending && target == ExecutionState::Running
+        }
         TransitionPolicy::NativeReconciliation => {
             current == ExecutionState::Unknown
                 && matches!(

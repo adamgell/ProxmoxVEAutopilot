@@ -47,6 +47,7 @@ pub(crate) enum Purpose {
     InitialEvaluation,
     ResumeEvaluation,
     ReclaimedEvaluation,
+    ReclaimedCredentialDelivery,
 }
 closed_enum!(Activity {
     PreflightRead,
@@ -63,6 +64,7 @@ closed_enum!(ScheduleMode {
 });
 closed_enum!(Reason {
     LeaseExpiredBeforeStart,
+    LeaseExpiredBeforeCredentialAck,
     ReadOnlyEvaluatorLeaseExpired,
     InheritedScopeDeadlineExpired,
     PhaseDeadlineExpired,
@@ -157,6 +159,7 @@ pub(crate) enum Detail {
     PveDispatchCommitted(Dispatch),
     PveEvaluated(Evaluated),
     LeaseReclaimedSameAttempt(Reclaimed),
+    CredentialDeliveryReclaimed(Reclaimed),
     EvaluationReparked(Reparked),
     ScopeExpiredBeforeActivation(UnactivatedExpiry),
     ActivatedScopeExpired(ActivatedExpiry),
@@ -242,6 +245,7 @@ impl DecisionEnvelope {
             Detail::PveDispatchCommitted(_) => "pve_dispatch_committed",
             Detail::PveEvaluated(_) => "pve_evaluated",
             Detail::LeaseReclaimedSameAttempt(_) => "lease_reclaimed_same_attempt",
+            Detail::CredentialDeliveryReclaimed(_) => "credential_delivery_reclaimed",
             Detail::EvaluationReparked(_) => "evaluation_reparked",
             Detail::ScopeExpiredBeforeActivation(_) => "scope_expired_before_activation",
             Detail::ActivatedScopeExpired(_) => "activated_scope_expired",
@@ -337,6 +341,13 @@ impl DecisionEnvelope {
                 }
                 LeaseReclaimedSameAttempt(d) => {
                     require(d.reason == Reason::LeaseExpiredBeforeStart)?;
+                    None
+                }
+                CredentialDeliveryReclaimed(d) => {
+                    require(
+                        d.reason == Reason::LeaseExpiredBeforeCredentialAck
+                            && d.scope_key == Scope::MutationStartPe,
+                    )?;
                     None
                 }
                 EvaluationReparked(d) => {

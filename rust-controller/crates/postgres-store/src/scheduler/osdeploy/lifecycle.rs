@@ -417,9 +417,22 @@ async fn reclaim_lease(
     let operation = snapshot.operation_id();
     let attempt = snapshot.attempt_id().ok_or(Error::Validation)?;
     let deadline = snapshot.deadline_at().ok_or(Error::Validation)?;
+    #[cfg(feature = "fixture-ipc")]
+    let credential = s.fixture_credential_delivery
+        && requires_delivery(tx, snapshot).await?
+        && snapshot.dispatch().is_some()
+        && fixture_delivery::unacknowledged(tx, operation).await?;
+    #[cfg(not(feature = "fixture-ipc"))]
+    let credential = false;
     let reclaimed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND action='lease_reclaimed_same_attempt') AND NOT EXISTS(SELECT 1 FROM rust_controller.worker_leases WHERE operation_id=$1) AND NOT EXISTS(SELECT 1 FROM rust_controller.journal_events WHERE operation_id=$1 AND event_kind='attempt_started')")
         .bind(operation.as_uuid()).fetch_one(&mut **tx).await?;
-    if !reclaimed || snapshot.dispatch().is_some() {
+    let credential_reclaimed: bool = if credential {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND action='credential_delivery_reclaimed') AND NOT EXISTS(SELECT 1 FROM rust_controller.worker_leases WHERE operation_id=$1)")
+            .bind(operation.as_uuid()).fetch_one(&mut **tx).await?
+    } else {
+        false
+    };
+    if !credential_reclaimed && (!reclaimed || snapshot.dispatch().is_some()) {
         return Err(Error::Validation);
     }
     let at = now(tx).await?;
@@ -449,7 +462,11 @@ async fn reclaim_lease(
         snapshot.revision(),
         at,
         wire::Detail::LeaseAcquired(wire::Acquisition {
-            purpose: wire::Purpose::ReclaimedEvaluation,
+            purpose: if credential {
+                wire::Purpose::ReclaimedCredentialDelivery
+            } else {
+                wire::Purpose::ReclaimedEvaluation
+            },
             acquisition_event_id: event,
             token_sha256: token_hash.clone(),
             worker_id: s.worker_id.clone(),
@@ -466,13 +483,32 @@ async fn reclaim_lease(
         &value,
     )
     .await?;
-    sqlx::query("INSERT INTO rust_controller.osdeploy_lease_epochs(acquisition_event_id,operation_id,run_id,attempt_id,executor_kind,generation,worker_id,lease_token_sha256,acquired_at,initial_expires_at,deadline_at,purpose) VALUES($1,$2,$3,$4,'rust',$5,$6,$7,$8,$9,$10,'reclaimed_evaluation')")
-        .bind(event.as_uuid()).bind(operation.as_uuid()).bind(snapshot.run_id().as_uuid()).bind(attempt.as_uuid()).bind(s.generation).bind(&s.worker_id).bind(token_hash).bind(at).bind(expiry).bind(deadline).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO rust_controller.osdeploy_lease_epochs(acquisition_event_id,operation_id,run_id,attempt_id,executor_kind,generation,worker_id,lease_token_sha256,acquired_at,initial_expires_at,deadline_at,purpose) VALUES($1,$2,$3,$4,'rust',$5,$6,$7,$8,$9,$10,$11)")
+        .bind(event.as_uuid()).bind(operation.as_uuid()).bind(snapshot.run_id().as_uuid()).bind(attempt.as_uuid()).bind(s.generation).bind(&s.worker_id).bind(token_hash).bind(at).bind(expiry).bind(deadline)
+        .bind(if credential { "reclaimed_credential_delivery" } else { "reclaimed_evaluation" }).execute(&mut **tx).await?;
     sqlx::query("INSERT INTO rust_controller.worker_leases(operation_id,attempt_id,executor_kind,generation,worker_id,lease_token,acquired_at,heartbeat_at,lease_expires_at,deadline_at) VALUES($1,$2,'rust',$3,$4,$5,$6,$6,$7,$8)")
         .bind(operation.as_uuid()).bind(attempt.as_uuid()).bind(s.generation).bind(&s.worker_id).bind(token.to_string()).bind(at).bind(expiry).bind(deadline).execute(&mut **tx).await?;
-    let proof = OsDeployTransitionProof::reclaimed_lease(tx, event).await?;
+    let proof = if credential {
+        #[cfg(feature = "fixture-ipc")]
+        {
+            OsDeployTransitionProof::reclaimed_credential_lease(tx, event).await?
+        }
+        #[cfg(not(feature = "fixture-ipc"))]
+        {
+            return Err(Error::CapabilityUnavailable);
+        }
+    } else {
+        OsDeployTransitionProof::reclaimed_lease(tx, event).await?
+    };
     append_osdeploy_transition(tx, proof).await?;
-    sqlx::query("UPDATE rust_controller.attempts SET state='leased' WHERE operation_id=$1 AND attempt_id=$2").bind(operation.as_uuid()).bind(attempt.as_uuid()).execute(&mut **tx).await?;
+    sqlx::query(
+        "UPDATE rust_controller.attempts SET state=$3 WHERE operation_id=$1 AND attempt_id=$2",
+    )
+    .bind(operation.as_uuid())
+    .bind(attempt.as_uuid())
+    .bind(if credential { "running" } else { "leased" })
+    .execute(&mut **tx)
+    .await?;
     let grant = LeaseGrant::new(
         operation,
         attempt,

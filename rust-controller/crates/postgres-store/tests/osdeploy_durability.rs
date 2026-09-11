@@ -8,6 +8,17 @@ mod osdeploy_support;
 #[cfg(all(feature = "fixture-ipc", unix))]
 #[tokio::test]
 async fn fixture_credential_delivery_atomic_recovery_and_single_exposure() {
+    fixture_credential_delivery_reclaim_case(false).await;
+}
+
+#[cfg(all(feature = "fixture-ipc", unix))]
+#[tokio::test]
+async fn fixture_credential_delivery_reclaimed_pending_cancellation() {
+    fixture_credential_delivery_reclaim_case(true).await;
+}
+
+#[cfg(all(feature = "fixture-ipc", unix))]
+async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool) {
     use controller_domain::ExecutionState;
     use osdeploy_adapter::OsDeployStage;
     use postgres_store::{
@@ -126,11 +137,73 @@ async fn fixture_credential_delivery_atomic_recovery_and_single_exposure() {
             .await
             .is_err()
     );
+    // Simulate the worker disappearing with a committed arm and no durable ack.
+    // Advance real DB time instead of rewriting immutable evidence or leases.
+    let old_grant = grant;
+    s.wait_until(*old_grant.lease_expires_at()).await;
+    let replacement = Scheduler::new(
+        s.db.store.clone(),
+        ExecutorKind::Rust,
+        1,
+        "replacement-worker",
+    )
+    .unwrap()
+    .with_fixture_credential_delivery();
+    assert_eq!(
+        replacement.reap_osdeploy_expired().await.unwrap().changed(),
+        1
+    );
+    let reclaimed = s.db.store.load_osdeploy_operation(op).await.unwrap();
+    assert_eq!(reclaimed.state(), ExecutionState::Pending);
+    assert!(reclaimed.dispatch().is_some());
+    assert_eq!(reclaimed.attempt_id(), Some(old_grant.attempt_id()));
+    if cancel_pending {
+        replacement
+            .cancel_osdeploy_run(reclaimed.run_id())
+            .await
+            .unwrap();
+        let cancelled = s.db.store.load_osdeploy_operation(op).await.unwrap();
+        assert!(cancelled.cancelled());
+        assert_eq!(cancelled.state(), ExecutionState::Unknown);
+        assert_eq!(cancelled.attempt_id(), Some(old_grant.attempt_id()));
+        assert!(cancelled.dispatch().is_some());
+        assert!(matches!(
+            replacement
+                .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+                .await,
+            Err(OsDeployExecutionError::FenceLost)
+        ));
+        return;
+    }
+    let (left, right) = tokio::join!(
+        replacement.claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1),
+        replacement.claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+    );
+    let (left, right) = (left.unwrap(), right.unwrap());
+    assert_eq!(
+        usize::from(left.is_some()) + usize::from(right.is_some()),
+        1
+    );
+    let grant = left.or(right).unwrap();
+    assert_eq!(grant.attempt_id(), old_grant.attempt_id());
+    assert_eq!(
+        s.db.store
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .state(),
+        ExecutionState::Running
+    );
+    assert!(matches!(
+        scheduler.recover_fixture_start_pe(&old_grant, secret).await,
+        Err(OsDeployExecutionError::FenceLost)
+    ));
+    let scheduler = replacement;
     let reopened = Scheduler::new(
         PgStore::new(s.db.pool.clone()),
         ExecutorKind::Rust,
         1,
-        "osdeploy-worker",
+        "replacement-worker",
     )
     .unwrap()
     .with_fixture_credential_delivery();
@@ -225,6 +298,24 @@ async fn fixture_credential_delivery_atomic_recovery_and_single_exposure() {
                 .is_err()
         );
     }
+    // Once a permit was exposed, lease loss remains uncertain and cannot
+    // return to the credential-delivery acquisition path.
+    s.wait_until(*grant.lease_expires_at()).await;
+    assert_eq!(reopened.reap_osdeploy_expired().await.unwrap().changed(), 1);
+    let uncertain = s.db.store.load_osdeploy_operation(op).await.unwrap();
+    assert_eq!(uncertain.state(), ExecutionState::Unknown);
+    assert_eq!(uncertain.attempt_id(), Some(old_grant.attempt_id()));
+    assert!(uncertain.dispatch().is_some());
+    assert!(
+        reopened
+            .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let counts: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM rust_controller.osdeploy_pve_dispatches WHERE operation_id=$1), (SELECT count(*) FROM rust_controller.fixture_pe_delivery_exposures WHERE operation_id=$1), (SELECT count(*) FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND action='credential_delivery_reclaimed')")
+        .bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(counts, (1, 1, 1));
     std::fs::remove_file(private_path).unwrap();
     std::fs::remove_dir(root).unwrap();
 }

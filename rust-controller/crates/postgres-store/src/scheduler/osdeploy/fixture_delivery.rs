@@ -167,6 +167,16 @@ async fn binding(
     })
 }
 
+/// Called only while the authority/run/operation locks are held. Absence of
+/// an ack alone is insufficient: the immutable delivery must also exist.
+pub(super) async fn unacknowledged(
+    tx: &mut Transaction<'_, Postgres>,
+    operation: OperationId,
+) -> Result<bool, Error> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.fixture_pe_deliveries d WHERE d.operation_id=$1 AND NOT EXISTS(SELECT 1 FROM rust_controller.fixture_pe_delivery_acks a WHERE a.operation_id=d.operation_id) AND NOT EXISTS(SELECT 1 FROM rust_controller.fixture_pe_delivery_exposures x WHERE x.operation_id=d.operation_id))")
+        .bind(operation.as_uuid()).fetch_one(&mut **tx).await?)
+}
+
 async fn require_live(
     tx: &mut Transaction<'_, Postgres>,
     current: &LeaseGrant,

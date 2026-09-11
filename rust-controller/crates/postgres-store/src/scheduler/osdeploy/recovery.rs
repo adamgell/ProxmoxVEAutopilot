@@ -165,9 +165,31 @@ async fn reap_one(
         tx.commit().await?;
         return Ok(false);
     }
+    #[cfg(feature = "fixture-ipc")]
+    let credential_reclaim = s.fixture_credential_delivery
+        && snapshot.state() == ExecutionState::Running
+        && requires_delivery(&mut tx, &snapshot).await?
+        && fixture_delivery::unacknowledged(&mut tx, op).await?;
+    #[cfg(not(feature = "fixture-ipc"))]
+    let credential_reclaim = false;
     let proof = if at >= snapshot.deadline_at().ok_or(Error::Validation)? {
         OsDeployTransitionProof::activated_scope_expired(s, &mut tx, op, snapshot.revision())
             .await?
+    } else if credential_reclaim {
+        #[cfg(feature = "fixture-ipc")]
+        {
+            OsDeployTransitionProof::expired_unacknowledged_credential(
+                s,
+                &mut tx,
+                op,
+                snapshot.revision(),
+            )
+            .await?
+        }
+        #[cfg(not(feature = "fixture-ipc"))]
+        {
+            return Err(Error::CapabilityUnavailable);
+        }
     } else if snapshot.dispatch().is_some() {
         OsDeployTransitionProof::expired_dispatched(s, &mut tx, op, snapshot.revision()).await?
     } else if snapshot.state() == ExecutionState::Leased {
