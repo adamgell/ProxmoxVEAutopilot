@@ -45,3 +45,15 @@ prove repeated recovery does not replace the original attempt or budget and
 that an expired dispatched observer becomes `Unknown` without resend. These
 are local PostgreSQL/fixture proofs only and do not imply production or Linux
 qualification.
+
+An additional serial controller recovery test passed:
+
+```text
+cargo test --locked -p operation-controller --test postgres_osdeploy \
+  due_unknown_reconciles_without_new_lease_or_send \
+  -- --exact --nocapture --test-threads=1
+```
+
+Result: `1 passed; 0 failed` in 4.40 seconds. This confirms the due-unknown
+reconciliation path does not issue a new lease or resend. It remains local
+fixture evidence and does not close the authentic stop-outcome or Linux gates.
