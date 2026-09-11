@@ -1,6 +1,8 @@
 //! Pure OSDeploy stage and validated input contract.
 
+mod disk_boot_boundary;
 mod guest_action;
+pub use disk_boot_boundary::{DiskBootEvidenceV1, DiskBootRefusal, DiskBootScopeV1};
 mod pe_shutdown_boundary;
 pub use pe_shutdown_boundary::{PeShutdownObservationV1, PeShutdownRefusal, PeShutdownScopeV1};
 mod pe_complete_boundary;
