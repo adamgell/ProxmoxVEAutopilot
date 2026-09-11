@@ -1198,10 +1198,17 @@ async fn full_start_pe_case(process_death: bool) {
                     .with_late_start_receipt(start.request(), respelled)
                     .unwrap();
                 assert!(untrusted.validate_bound_start_pe().await.is_err());
+                assert!(untrusted.task_status(vm.node(), &task_upid).await.is_err());
                 let restored = fresh()
                     .with_late_start_receipt(start.request(), original.clone())
                     .unwrap();
                 assert!(restored.captured_start_pe_response().is_none());
+                let recovered_task = restored.task_status(vm.node(), &task_upid).await.unwrap();
+                assert_eq!(recovered_task.upid(), task.upid());
+                assert_eq!(recovered_task.state(), task.state());
+                assert_eq!(recovered_task.observed_at(), task.observed_at());
+                assert!(restored.task_status(&other_node, &task_upid).await.is_err());
+                assert!(restored.task_status(vm.node(), &wrong_upid).await.is_err());
                 assert_eq!(
                     serde_json::to_value(
                         restored.validate_bound_start_pe().await.unwrap().unwrap()

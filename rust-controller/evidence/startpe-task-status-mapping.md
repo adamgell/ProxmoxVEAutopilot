@@ -29,3 +29,16 @@ Verification:
 
 Untimed infrastructure reads remain closed. This does not establish controller
 decision readiness or broaden any production authorization.
+
+Recovery follow-up: the same subprocess test now calls generic task status on a
+fresh receipt-restored adapter. Original bytes preserve UPID, success and original
+time exactly; whitespace-respelled receipt bytes fail even with an otherwise
+valid query. Wrong node and UPID also fail on the restored adapter. The existing
+unchanged-journal and no-checkpoint/no-resubmit assertions enclose these reads.
+Focused test: 1 passed, 11 filtered, 1.56 seconds; formatting check passed.
+
+Remaining mapping boundary: this durable StartPe observation represents success
+only. It has no authenticated legacy running/failed callback observation to map.
+Adding those states requires a separately validated typed observation contract;
+they must not be inferred from acceptance, a missing publication, or receipt
+restoration. No additional runtime mapping was introduced by the recovery test.
