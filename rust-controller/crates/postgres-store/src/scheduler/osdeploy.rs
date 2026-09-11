@@ -7,6 +7,10 @@ use osdeploy_adapter::OsDeployStage;
 use sqlx::Row;
 
 mod decision;
+#[cfg(feature = "fixture-ipc")]
+mod fixture_response_load;
+#[cfg(feature = "fixture-ipc")]
+pub use fixture_response_load::FixtureStoredStartPeResponseV1;
 mod discovery;
 #[cfg(feature = "fixture-ipc")]
 pub(crate) mod fixture_completion;

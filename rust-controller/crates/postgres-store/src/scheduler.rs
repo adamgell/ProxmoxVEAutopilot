@@ -25,7 +25,7 @@ pub use osdeploy::{
     FixtureDeliveryAck, FixtureDeliveryRecovery, FixturePeCompletionReport,
     FixturePeCompletionResult, FixturePeRegistrationIdentity, FixturePeRegistrationResult,
     FixtureStartPeCaptureInput, FixtureStopOutboxConsumedV1, FixtureStopReleaseOutcomeStateV1,
-    FixtureStopReleaseOutcomeV1,
+    FixtureStopReleaseOutcomeV1, FixtureStoredStartPeResponseV1,
 };
 pub use osdeploy::{
     OsDeployDispatchPermit, OsDeployLeaseStatus, OsDeployMaintenanceSummary,

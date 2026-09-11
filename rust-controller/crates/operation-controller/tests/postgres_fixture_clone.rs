@@ -41,7 +41,12 @@ async fn fixture_start_response_reload_worker() {
         .unwrap();
     let store = postgres_store::PgStore::new(pool.clone());
     let snapshot = store.load_osdeploy_operation(operation).await.unwrap();
-    let bytes: Vec<u8> = sqlx::query_scalar("SELECT response_envelope FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1").bind(operation.as_uuid()).fetch_one(&pool).await.unwrap();
+    let stored = store
+        .load_fixture_start_pe_response(operation)
+        .await
+        .unwrap()
+        .unwrap();
+    let bytes = stored.original_receipt();
     fs::write(output, serde_json::to_vec(&serde_json::json!({"pid":std::process::id(),"revision":snapshot.revision(),"accepted_at":snapshot.receipt().unwrap().accepted_at(),"response":bytes})).unwrap()).unwrap();
 }
 
@@ -1564,6 +1569,32 @@ async fn capture_start_pe_after_genuine_prefix(
     assert_eq!(first.receipt().unwrap().receipt(), &semantic);
     let bytes: Vec<u8> = sqlx::query_scalar("SELECT response_envelope FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1").bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
     assert_eq!(bytes, original.original_receipt());
+    let stored =
+        s.db.other
+            .load_fixture_start_pe_response(op)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(stored.identity(), original.identity());
+    assert_eq!(
+        stored.predecessor_identity(),
+        original.predecessor_identity()
+    );
+    assert_eq!(
+        stored.request().encode().unwrap(),
+        original.request().encode().unwrap()
+    );
+    assert_eq!(
+        stored.predecessor().encode().unwrap(),
+        original.predecessor().encode().unwrap()
+    );
+    assert_eq!(stored.original_receipt(), original.original_receipt());
+    assert!(
+        s.db.other
+            .load_fixture_start_pe_response(predecessor.request().binding().operation_id())
+            .await
+            .is_err()
+    );
     // Fresh store reload preserves the original receipt and its first clock.
     let reopened = postgres_store::PgStore::new(s.db.pool.clone());
     scheduler
