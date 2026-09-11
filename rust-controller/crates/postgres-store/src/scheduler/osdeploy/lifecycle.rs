@@ -145,6 +145,8 @@ impl Scheduler {
             OsDeployStage::DiskCapacity => Some(reg.ids().operation(OsDeployStage::Clone)),
             OsDeployStage::ConfigurePe => Some(reg.ids().operation(OsDeployStage::DiskCapacity)),
             OsDeployStage::StartPe if self.fixture_start_pe => Some(reg.ids().operation(OsDeployStage::ConfigurePe)),
+            #[cfg(feature = "fixture-ipc")]
+            OsDeployStage::PeRegister if self.fixture_credential_delivery => Some(reg.ids().operation(OsDeployStage::StartPe)),
             _ => return Err(Error::CapabilityUnavailable),
         };
         let predecessor_event = if let Some(prior) = predecessor {
@@ -167,10 +169,17 @@ impl Scheduler {
             return Ok(None);
         }
         let at = now(&mut tx).await?;
-        let budget = reg.plan().policy().mutation_seconds();
-        let deadline = at
+        let inherited = if snapshot.plan().stage() == OsDeployStage::PeRegister {
+            #[cfg(feature = "fixture-ipc")]
+            load::require_fixture_registration_origin(&mut tx, &reg, at).await?;
+            Some(sqlx::query("SELECT anchor_operation_id,anchor_event_id,opened_at,budget_seconds,deadline_at FROM rust_controller.osdeploy_deadlines WHERE run_id=$1 AND scope_key='pe_registration'")
+                .bind(snapshot.run_id().as_uuid()).fetch_one(&mut *tx).await?)
+        } else { None };
+        let budget = if let Some(scope) = &inherited { u32::try_from(scope.try_get::<i32,_>("budget_seconds")?).map_err(|_| Error::Validation)? } else { reg.plan().policy().mutation_seconds() };
+        let deadline = if let Some(scope) = &inherited { scope.try_get("deadline_at")? } else { at
             .checked_add_signed(chrono::Duration::seconds(i64::from(budget)))
-            .ok_or(Error::Validation)?;
+            .ok_or(Error::Validation)? };
+        if at >= deadline { return Err(Error::FenceLost); }
         let expiry = (at + chrono::Duration::seconds(30)).min(deadline);
         let attempt = AttemptId::new();
         let activation_event = EventId::new();
@@ -198,9 +207,9 @@ impl Scheduler {
             at,
             wire::Detail::StageActivated(wire::Activation {
                 scope_key: scope,
-                anchor_operation_id: operation,
-                anchor_event_id: activation_event,
-                opened_at: at,
+                anchor_operation_id: if let Some(scope) = &inherited { load::id(scope.try_get("anchor_operation_id")?)? } else { operation },
+                anchor_event_id: if let Some(scope) = &inherited { load::id(scope.try_get("anchor_event_id")?)? } else { activation_event },
+                opened_at: if let Some(scope) = &inherited { scope.try_get("opened_at")? } else { at },
                 budget_seconds: budget,
                 deadline_at: deadline,
                 predecessor_operation_id: predecessor,
@@ -214,8 +223,9 @@ impl Scheduler {
             &activation,
         )
         .await?;
-        sqlx::query("INSERT INTO rust_controller.osdeploy_deadlines(run_id,scope_key,anchor_operation_id,anchor_event_id,opened_at,budget_seconds,deadline_at) VALUES($1,$2,$3,$4,$5,$6,$7)")
+        if inherited.is_none() { sqlx::query("INSERT INTO rust_controller.osdeploy_deadlines(run_id,scope_key,anchor_operation_id,anchor_event_id,opened_at,budget_seconds,deadline_at) VALUES($1,$2,$3,$4,$5,$6,$7)")
             .bind(snapshot.run_id().as_uuid()).bind(&scope_name).bind(operation.as_uuid()).bind(activation_event.as_uuid()).bind(at).bind(i32::try_from(budget).map_err(|_| Error::Validation)?).bind(deadline).execute(&mut *tx).await?;
+        }
         sqlx::query("INSERT INTO rust_controller.osdeploy_attempt_bindings(operation_id,run_id,attempt_id,scope_key,activation_event_id,activated_at,deadline_at,activation_mode) VALUES($1,$2,$3,$4,$5,$6,$7,'leased')")
             .bind(operation.as_uuid()).bind(snapshot.run_id().as_uuid()).bind(attempt.as_uuid()).bind(&scope_name).bind(activation_event.as_uuid()).bind(at).bind(deadline).execute(&mut *tx).await?;
         let acquisition = envelope(

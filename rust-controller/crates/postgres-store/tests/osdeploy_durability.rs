@@ -8,17 +8,29 @@ mod osdeploy_support;
 #[cfg(all(feature = "fixture-ipc", unix))]
 #[tokio::test]
 async fn fixture_credential_delivery_atomic_recovery_and_single_exposure() {
-    fixture_credential_delivery_reclaim_case(false).await;
+    fixture_credential_delivery_reclaim_case(false, 0).await;
 }
 
 #[cfg(all(feature = "fixture-ipc", unix))]
 #[tokio::test]
 async fn fixture_credential_delivery_reclaimed_pending_cancellation() {
-    fixture_credential_delivery_reclaim_case(true).await;
+    fixture_credential_delivery_reclaim_case(true, 0).await;
 }
 
 #[cfg(all(feature = "fixture-ipc", unix))]
-async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool) {
+#[tokio::test]
+async fn fixture_peregister_inherits_exposed_scope_and_recovers_lease() {
+    fixture_credential_delivery_reclaim_case(false, 1).await;
+}
+
+#[cfg(all(feature = "fixture-ipc", unix))]
+#[tokio::test]
+async fn fixture_peregister_original_deadline_expires_after_recovery() {
+    fixture_credential_delivery_reclaim_case(false, 2).await;
+}
+
+#[cfg(all(feature = "fixture-ipc", unix))]
+async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register: u8) {
     use controller_domain::ExecutionState;
     use osdeploy_adapter::OsDeployStage;
     use postgres_store::{
@@ -28,7 +40,11 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool) {
     use pve_port::ProvisioningEvaluationModeV1;
     use std::os::unix::fs::DirBuilderExt;
     let sink_id = uuid::Uuid::now_v7();
-    let s = osdeploy_execution_support::Scenario::fixture_delivery(sink_id).await;
+    let s = if register == 2 {
+        osdeploy_execution_support::Scenario::fixture_delivery_short_registration(sink_id).await
+    } else {
+        osdeploy_execution_support::Scenario::fixture_delivery(sink_id).await
+    };
     for stage in [
         OsDeployStage::Clone,
         OsDeployStage::DiskCapacity,
@@ -280,6 +296,153 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool) {
         .await
         .unwrap();
     s.db.store.load_osdeploy_operation(op).await.unwrap();
+    if register != 0 {
+        let mut start_grant = grant.clone();
+        let mut satisfied = false;
+        for _ in 0..8 {
+            let (event, revision) = s.observation(&start_grant).await;
+            match reopened
+                .decide_osdeploy_pve(&start_grant, revision, event)
+                .await
+                .unwrap()
+            {
+                postgres_store::OsDeployProgress::Decided(state) => {
+                    assert_eq!(state, ExecutionState::Satisfied);
+                    satisfied = true;
+                    break;
+                }
+                postgres_store::OsDeployProgress::Waiting => {
+                    let snap = s.db.store.load_osdeploy_operation(op).await.unwrap();
+                    s.wait_until(snap.next_check_at().unwrap()).await;
+                    start_grant = reopened
+                        .resume_osdeploy_bound(
+                            op,
+                            start_grant.attempt_id(),
+                            snap.revision(),
+                            s.ids.workflow_sha256(),
+                            1,
+                        )
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    reopened
+                        .start_osdeploy_bound(&start_grant, s.ids.workflow_sha256())
+                        .await
+                        .unwrap();
+                }
+                _ => panic!("StartPe evaluator unexpectedly idle"),
+            }
+        }
+        assert!(
+            satisfied,
+            "StartPe remained waiting after eight observations"
+        );
+        let registration = s.ids.operation(OsDeployStage::PeRegister);
+        let deadline: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT deadline_at FROM rust_controller.osdeploy_deadlines WHERE run_id=$1 AND scope_key='pe_registration'").bind(s.ids.run_id().as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+        assert!(
+            ordinary
+                .claim_osdeploy_bound(registration, s.ids.workflow_sha256(), 1)
+                .await
+                .is_err()
+        );
+        let registration_grant = reopened
+            .claim_osdeploy_bound(registration, s.ids.workflow_sha256(), 1)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(registration_grant.attempt_id(), grant.attempt_id());
+        assert_eq!(*registration_grant.deadline_at(), deadline);
+        reopened
+            .start_osdeploy_bound(&registration_grant, s.ids.workflow_sha256())
+            .await
+            .unwrap();
+        let snapshot =
+            s.db.other
+                .load_osdeploy_operation(registration)
+                .await
+                .unwrap();
+        assert_eq!(snapshot.deadline_at(), Some(deadline));
+        assert!(
+            s.db.store
+                .load_osdeploy_pve_context(
+                    registration,
+                    snapshot.revision(),
+                    ProvisioningEvaluationModeV1::Preflight
+                )
+                .await
+                .is_err()
+        );
+        s.wait_until(*registration_grant.lease_expires_at()).await;
+        assert_eq!(reopened.reap_osdeploy_expired().await.unwrap().changed(), 1);
+        let replacement = s.db.other_scheduler().with_fixture_credential_delivery();
+        let parked =
+            s.db.other
+                .load_osdeploy_operation(registration)
+                .await
+                .unwrap();
+        assert_eq!(parked.state(), ExecutionState::Waiting);
+        s.wait_until(parked.next_check_at().unwrap()).await;
+        let next = replacement
+            .resume_osdeploy_bound(
+                registration,
+                registration_grant.attempt_id(),
+                parked.revision(),
+                s.ids.workflow_sha256(),
+                1,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.attempt_id(), registration_grant.attempt_id());
+        assert_eq!(*next.deadline_at(), deadline);
+        assert!(
+            reopened
+                .heartbeat_osdeploy_bound(&registration_grant, s.ids.workflow_sha256())
+                .await
+                .is_err()
+        );
+        if register == 2 {
+            s.wait_until(deadline).await;
+            replacement.reap_osdeploy_expired().await.unwrap();
+            let expired =
+                s.db.other
+                    .load_osdeploy_operation(registration)
+                    .await
+                    .unwrap();
+            assert_eq!(expired.state(), ExecutionState::Unknown);
+            assert_eq!(expired.deadline_at(), Some(deadline));
+            assert_eq!(expired.attempt_id(), Some(registration_grant.attempt_id()));
+            assert!(
+                replacement
+                    .start_osdeploy_bound(&next, s.ids.workflow_sha256())
+                    .await
+                    .is_err()
+            );
+            assert!(
+                replacement
+                    .claim_osdeploy_bound(registration, s.ids.workflow_sha256(), 1)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        } else {
+            replacement
+                .cancel_osdeploy_run(s.ids.run_id())
+                .await
+                .unwrap();
+            assert_eq!(
+                s.db.other
+                    .load_osdeploy_operation(registration)
+                    .await
+                    .unwrap()
+                    .state(),
+                ExecutionState::Blocked
+            );
+        }
+        std::fs::remove_file(private_path).unwrap();
+        std::fs::remove_dir(root).unwrap();
+        return;
+    }
     // Inspect all generic DB payloads, including requests and outbox, using the
     // exact credential accepted by the private sink, not just a dummy marker.
     let token = accepted.lines().last().unwrap();

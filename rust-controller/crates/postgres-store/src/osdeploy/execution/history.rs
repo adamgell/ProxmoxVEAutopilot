@@ -313,6 +313,26 @@ pub(super) async fn validate(
     if records.snapshot.attempt_id().is_none() {
         return Ok(());
     }
+    #[cfg(feature = "fixture-ipc")]
+    if records.snapshot.plan().stage() == OsDeployStage::PeRegister {
+        // Validate every selected physical predecessor, then restore only the
+        // inherited callback authority. Physical context builders stay closed.
+        Box::pin(predecessors(tx, records)).await?;
+        wire::require(
+            records.snapshot.dispatch().is_none()
+                && records.evidence.is_empty()
+                && !records
+                    .decisions
+                    .iter()
+                    .any(|d| matches!(d.value.detail, Detail::PveEvaluated(_))),
+        )?;
+        return load::require_fixture_registration_origin(
+            tx,
+            &records.registration,
+            records.snapshot.activated_at().ok_or(Error::Validation)?,
+        )
+        .await;
+    }
     enabled(records.snapshot.plan().stage())?;
     let history = Box::pin(predecessors(tx, records)).await?;
     validate_physical(records, &history)

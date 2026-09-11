@@ -106,10 +106,15 @@ pub(super) fn admit(
     snapshot: &OsDeployOperationSnapshot,
     hash: &str,
 ) -> Result<(), Error> {
+    #[cfg(feature = "fixture-ipc")]
+    let fixture_registration = scheduler.fixture_credential_delivery;
+    #[cfg(not(feature = "fixture-ipc"))]
+    let fixture_registration = false;
     if !(matches!(
         snapshot.plan().stage(),
         OsDeployStage::Clone | OsDeployStage::DiskCapacity | OsDeployStage::ConfigurePe
-    ) || (scheduler.fixture_start_pe && snapshot.plan().stage() == OsDeployStage::StartPe))
+    ) || (scheduler.fixture_start_pe && snapshot.plan().stage() == OsDeployStage::StartPe)
+        || (fixture_registration && snapshot.plan().stage() == OsDeployStage::PeRegister))
     {
         return Err(Error::CapabilityUnavailable);
     }

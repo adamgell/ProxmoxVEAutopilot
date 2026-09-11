@@ -209,15 +209,19 @@ impl Scenario {
         Self::with_freshness(mutation_seconds, grow, mutation_seconds.min(30)).await
     }
     pub async fn with_freshness(mutation_seconds: u32, grow: bool, freshness_seconds: u32) -> Self {
-        Self::with_origin(mutation_seconds, grow, freshness_seconds, false, None).await
+        Self::with_origin(mutation_seconds, grow, freshness_seconds, false, None, 2400).await
     }
     #[cfg(feature = "fixture-ipc")]
     pub async fn fixture_owned() -> Self {
-        Self::with_origin(300, true, 30, true, None).await
+        Self::with_origin(300, true, 30, true, None, 2400).await
     }
     #[cfg(feature = "fixture-ipc")]
     pub async fn fixture_delivery(sink: sqlx::types::Uuid) -> Self {
-        Self::with_origin(300, true, 30, true, Some(sink)).await
+        Self::with_origin(300, true, 30, true, Some(sink), 2400).await
+    }
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn fixture_delivery_short_registration(sink: sqlx::types::Uuid) -> Self {
+        Self::with_origin(300, true, 30, true, Some(sink), 90).await
     }
     async fn with_origin(
         mutation_seconds: u32,
@@ -225,6 +229,7 @@ impl Scenario {
         freshness_seconds: u32,
         fixture_origin: bool,
         sink: Option<sqlx::types::Uuid>,
+        registration_seconds: u32,
     ) -> Self {
         let db = osdeploy_support::Fixture::new().await;
         let node = NodeName::parse("node-a").unwrap();
@@ -246,6 +251,7 @@ impl Scenario {
         let plan = osdeploy_support::altered(|v| {
             v["template_config_sha256"] = json!(hash);
             v["policy"]["mutation_seconds"] = json!(mutation_seconds);
+            v["policy"]["registration_seconds"] = json!(registration_seconds);
             v["policy"]["evidence_freshness_seconds"] = json!(freshness_seconds);
             v["disk"]["requested_gib"] = json!(if grow { 120 } else { 80 });
             v["disk"]["effective_bytes"] = json!(if grow {

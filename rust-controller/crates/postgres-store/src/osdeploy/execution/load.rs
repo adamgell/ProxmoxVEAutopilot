@@ -426,7 +426,8 @@ async fn load_decisions(
         require(
             v.attempt_id.map(|a| a.as_uuid()) == r.try_get::<Option<Uuid>, _>("bound_attempt")?
                 && (!matches!(v.detail, Detail::StageActivated(_))
-                    || super::history::enabled(stage).is_ok()),
+                    || super::history::enabled(stage).is_ok()
+                    || (cfg!(feature = "fixture-ipc") && stage == OsDeployStage::PeRegister)),
         )?;
         require(
             canonical(&v)? == text
@@ -583,14 +584,24 @@ fn validate_activations(
 ) -> Result<(), Error> {
     for d in own {
         if let Detail::StageActivated(a) = &d.value.detail {
-            require(super::history::enabled(stage).is_ok())?;
+            let inherited = cfg!(feature = "fixture-ipc") && stage == OsDeployStage::PeRegister;
+            require(inherited || super::history::enabled(stage).is_ok())?;
             let scope = scopes.get(&name(a.scope_key)?).ok_or(Error::Validation)?;
             require(
                 scope.anchor == a.anchor_event_id
                     && scope.anchor_op == a.anchor_operation_id
-                    && a.anchor_operation_id == op
-                    && d.event == a.anchor_event_id
-                    && a.opened_at == d.value.evaluated_at
+                    && a.opened_at == scope.opened
+                    && a.budget_seconds == scope.budget
+                    && a.deadline_at == scope.deadline
+                    && if inherited {
+                        a.anchor_operation_id == reg.ids().operation(OsDeployStage::StartPe)
+                            && a.opened_at <= d.value.evaluated_at
+                            && d.value.evaluated_at < a.deadline_at
+                    } else {
+                        a.anchor_operation_id == op
+                            && d.event == a.anchor_event_id
+                            && a.opened_at == d.value.evaluated_at
+                    }
                     && a.scope_key == stage_scope(stage),
             )?;
             if stage == OsDeployStage::Clone {
@@ -601,6 +612,8 @@ fn validate_activations(
             } else {
                 let prior = if stage == OsDeployStage::DiskCapacity {
                     OsDeployStage::Clone
+                } else if stage == OsDeployStage::PeRegister {
+                    OsDeployStage::StartPe
                 } else if stage == OsDeployStage::StartPe {
                     OsDeployStage::ConfigurePe
                 } else {
@@ -629,6 +642,21 @@ fn validate_activations(
     }
     Ok(())
 }
+/// Restore the immutable credential edges before admitting a callback attempt.
+/// This only establishes provenance; it does not authenticate a callback.
+#[cfg(feature = "fixture-ipc")]
+pub(crate) async fn require_fixture_registration_origin(
+    tx: &mut Transaction<'_, Postgres>,
+    reg: &OsDeployRegistrationV1,
+    activated_at: DateTime<Utc>,
+) -> Result<(), Error> {
+    let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.fixture_pe_deliveries d JOIN rust_controller.fixture_pe_delivery_acks a USING(operation_id) JOIN rust_controller.fixture_pe_delivery_exposures x USING(operation_id) JOIN rust_controller.fixture_pe_boot_sessions s USING(operation_id) JOIN rust_controller.fixture_osdeploy_origins o ON o.run_id=d.run_id AND o.credential_sink_id=d.sink_id JOIN rust_controller.fixture_pe_credential_aliases c ON c.alias_sha256=d.alias_sha256 AND c.operation_id=d.operation_id AND c.run_id=d.run_id AND c.attempt_id=d.attempt_id AND c.package_sha256=d.package_sha256 AND c.expires_at=d.expires_at WHERE d.operation_id=$1 AND d.run_id=$2 AND s.dispatch_event_id=d.dispatch_event_id AND s.attempt_id=d.attempt_id AND s.package_sha256=d.package_sha256 AND a.acknowledged_at<=x.exposed_at AND x.exposed_at<=$3 AND $3<s.registration_deadline)")
+        .bind(reg.ids().operation(OsDeployStage::StartPe).as_uuid())
+        .bind(reg.ids().run_id().as_uuid()).bind(activated_at)
+        .fetch_one(&mut **tx).await?;
+    require(valid)
+}
+
 fn selected(d: &Decision) -> bool {
     d.value
         .resolution
