@@ -40,6 +40,7 @@ Production and `192.168.2.4`: read-only throughout
 - Commit `096ba407` adds a read-only adapter validation outcome for complete full StartPe evidence, with missing-evidence preservation and pre-I/O identity/context refusal. It does not integrate the PostgreSQL caller, prove worker-death recovery, or establish production readiness.
 - Commit `f2cc6d38` adds separate-process full-publication worker/daemon recovery with byte-identical replay and duplicate refusal. It does not establish PostgreSQL receipt durability, controller satisfaction, later guest stages, or production readiness.
 - Commit `58a3c3e` adds a default-disabled read-only PostgreSQL diagnostic ingress that cannot create attempts, dispatch, decisions, sessions, or satisfaction. Runtime DB-unchanged assertions are not claimed because owned PostgreSQL startup timed out; this is not production readiness.
+- Commit `09fc0058` defines typed fail-closed session arming with immutable deadline/context binding and unavailable/expired refusal. It is not an atomic PostgreSQL arming transaction, authenticated session verification, crash proof, or production readiness claim.
 
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
 - The final macOS four-package regression at `557bd12` passed 665 tests, with 3 intentionally ignored, under a bounded supervisor.
