@@ -252,15 +252,37 @@ mod power_tests {
             );
             assert_eq!(before_refresh, std::fs::read(&path).unwrap());
         }
-        log.record_power_observation(
+        for (observed_generation, observed, wall) in [
+            (Uuid::now_v7(), 43, 44),
+            (generation, 45, 44),
+            (generation, 43, 5044),
+        ] {
+            assert!(
+                log.refresh_start_power(
+                    start_operation,
+                    &digest,
+                    start,
+                    receipt,
+                    generation,
+                    observed_generation,
+                    original_start.power.vmid,
+                    observed,
+                    wall,
+                )
+                .is_err()
+            );
+            assert_eq!(before_refresh, std::fs::read(&path).unwrap());
+        }
+        log.refresh_start_power(
             start_operation,
             &digest,
             start,
             receipt,
-            PowerStateV1::Running,
             generation,
-            12,
+            generation,
+            original_start.power.vmid,
             43,
+            44,
         )
         .unwrap();
         log.admit_stop(
@@ -288,6 +310,28 @@ mod power_tests {
         assert_eq!(log.start_observations[0], original_start);
         assert_eq!(log.stop_admissions.len(), 2);
         let durable = std::fs::read(&path).unwrap();
+        let restarted_generation = Uuid::now_v7();
+        for (current_generation, sample_generation, observed) in [
+            (generation, generation, 43),
+            (restarted_generation, generation, 45),
+            (restarted_generation, restarted_generation, 45),
+        ] {
+            assert!(
+                log.refresh_start_power(
+                    start_operation,
+                    &digest,
+                    start,
+                    receipt,
+                    current_generation,
+                    sample_generation,
+                    original_start.power.vmid,
+                    observed,
+                    46,
+                )
+                .is_err()
+            );
+            assert_eq!(durable, std::fs::read(&path).unwrap());
+        }
         log.admit_stop(
             next_stop,
             digest.clone(),
@@ -1009,6 +1053,45 @@ fn frame(record: &impl Serialize) -> io::Result<Vec<u8>> {
 }
 
 impl FixtureLog {
+    /// Record a supervisor-observed Running sample without changing the
+    /// immutable StartPe completion or deriving power from task acceptance.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn refresh_start_power(
+        &mut self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+        receipt: &[u8],
+        daemon_generation: Uuid,
+        observed_generation: Uuid,
+        vmid: u32,
+        observed_unix_ms: u64,
+        now_unix_ms: u64,
+    ) -> io::Result<PowerObservationV1> {
+        let original = self
+            .start_observation(operation, digest, binding)?
+            .ok_or_else(invalid)?;
+        if daemon_generation.is_nil()
+            || observed_generation != daemon_generation
+            || original.power.daemon_generation != daemon_generation
+            || original.power.vmid != vmid
+            || observed_unix_ms > now_unix_ms
+            || now_unix_ms - observed_unix_ms > 5000
+        {
+            return Err(invalid());
+        }
+        self.record_power_observation(
+            operation,
+            digest,
+            binding,
+            receipt,
+            PowerStateV1::Running,
+            daemon_generation,
+            original.power.accepted_unix_ms,
+            observed_unix_ms,
+        )?;
+        self.power.last().cloned().ok_or_else(invalid)
+    }
     /// Persist admission without recording an attempt, effect, receipt or stopped
     /// state. Replays retain original clocks and cannot renew release authority.
     #[allow(dead_code, clippy::too_many_arguments)]

@@ -17,6 +17,52 @@ fn invalid() -> io::Error {
     )
 }
 
+#[cfg(test)]
+mod power_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn worker_cannot_publish_running_power() {
+        let directory = std::env::temp_dir().join(format!("power-publisher-{}", Uuid::now_v7()));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("fixture.log");
+        let mut log = FixtureLog::create(&path).unwrap();
+        let original = fs::read(&path).unwrap();
+        let mut publications = Publications::new();
+        let command = Command::PublishStartPeRunningPower {
+            identity: super::super::FixtureStageIdentity {
+                operation: Uuid::now_v7(),
+                stage: super::super::FixtureLedgerStage::StartPe,
+                attempt: Uuid::now_v7(),
+                generation: Uuid::now_v7(),
+                owner: Uuid::now_v7(),
+                request_sha256: "a".repeat(64),
+            },
+            request: serde_json::Value::Null,
+            receipt: Vec::new(),
+            daemon_generation: publications.generation(),
+            observed_unix_ms: now().unwrap(),
+            power: super::super::SeedPower {
+                power: crate::PowerState::Running,
+                locked: false,
+            },
+        };
+        assert_eq!(
+            publications
+                .handle(command, false, &mut log, &directory)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(original, fs::read(&path).unwrap());
+        assert!(log.records().is_empty());
+        assert!(log.effects().is_empty());
+        drop(log);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+}
+
 pub(crate) fn now() -> io::Result<u64> {
     u64::try_from(chrono::Utc::now().timestamp_millis()).map_err(|_| invalid())
 }
@@ -43,6 +89,15 @@ pub struct FixtureSynchronousPublication {
 #[allow(clippy::enum_variant_names)] // Wire command names share their protocol namespace.
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Command {
+    /// This is an explicit supervisor observation, never a refreshed cache read.
+    PublishStartPeRunningPower {
+        identity: super::FixtureStageIdentity,
+        request: serde_json::Value,
+        receipt: Vec<u8>,
+        daemon_generation: Uuid,
+        observed_unix_ms: u64,
+        power: super::SeedPower,
+    },
     PublishStartPeFull {
         identity: super::FixtureStageIdentity,
         request: serde_json::Value,
@@ -146,6 +201,37 @@ impl Publications {
         directory: &Path,
     ) -> io::Result<Vec<u8>> {
         let (value, observation, stage) = match command {
+            Command::PublishStartPeRunningPower {
+                identity,
+                request,
+                receipt,
+                daemon_generation,
+                observed_unix_ms,
+                power,
+            } if supervisor => {
+                let request =
+                    crate::fixture_ipc::FixtureStageRequest::decode(&serde_json::to_vec(&request)?)
+                        .map_err(|_| invalid())?;
+                identity.validate_request(&request)?;
+                request.decode_receipt(&receipt).map_err(|_| invalid())?;
+                if identity.stage != super::FixtureLedgerStage::StartPe
+                    || power.power != crate::PowerState::Running
+                    || power.locked
+                {
+                    return Err(invalid());
+                }
+                return Ok(serde_json::to_vec(&log.refresh_start_power(
+                    identity.operation,
+                    &identity.request_sha256,
+                    identity.ledger_binding(),
+                    &receipt,
+                    self.generation,
+                    daemon_generation,
+                    request.request().plan().expected().vm().target_vmid().get(),
+                    observed_unix_ms,
+                    now()?,
+                )?)?);
+            }
             Command::PublishStartPeFull {
                 identity,
                 request,
