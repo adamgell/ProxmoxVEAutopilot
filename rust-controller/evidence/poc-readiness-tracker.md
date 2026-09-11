@@ -20,12 +20,23 @@ missing bindings fail closed. This is an execution-isolation prerequisite,
 not StartPe or full-port implementation. Exact-source Linux qualification for
 this revision remains outstanding.
 
-The StartPe/session gate remains contract-incomplete: the tracked Rust session
-module exposes only an unavailable authenticated witness and a rollback-only
-diagnostic schema. The accepted transaction-boundary references to callback and
-session decision artifacts are not present in this checkout. Compatibility
-mapping against the local Python endpoint, role, and database behavior is the
-next evidence task; no positive StartPe admission is claimed.
+The authenticated StartPe/session gate remains incomplete: the witness module
+still exposes only an unavailable authenticated witness. Decision artifacts
+are now tracked, and the separate fixture boot-arming path landed in
+`518878d7` as described below. It does not grant callback authentication.
+
+### Fixture StartPe atomic boot arming (commit `518878d7`)
+
+PR #65 publishes the accumulated PoC slice; the full Ansible-to-Rust port and
+production-candidate acceptance remain incomplete. With `fixture-ipc` and
+`Scheduler::with_fixture_start_pe()`, StartPe now atomically persists a fixture
+boot session, package semantic bytes/digest, run/operation/attempt, original
+lease identity, dispatch event, and registration deadline. Default admission
+and PeRegister remain closed. The focused durability test exercises rollback,
+racing admission, database reload, and refusal after session deletion. This
+does not prove StartPe OS-worker death recovery, authenticated callbacks,
+credential alias ownership, guest workflow completion, or current-source Linux
+runtime qualification. Those remain required before readiness acceptance.
 
 ### Legacy run-bearer compatibility (commit `aadf5c83`)
 
@@ -76,11 +87,11 @@ replacement attempt. The pinned integration artifact specifies persistent
 credential-digest ownership, immutable `(run, StartPe operation, attempt)`
 association, same-session renewal without deadline changes, cross-session
 conflicts, retained ownership after cancellation/restart, and atomic
-alias/session/dispatch insertion under the scheduler's existing locks. No
-source or migration change is claimed yet because StartPe admission remains
-closed before the current-grant boundary.
+alias/session/dispatch insertion under the scheduler's existing locks. The
+artifact itself adds no credential migration. The later fixture-only migration
+and arming transaction in `518878d7` do not implement credential associations.
 
-### Current-head diagnostic checkpoint (2026-09-10)
+### Retained diagnostic checkpoints (2026-09-10)
 
 ### Exact-source Linux qualification at `35400bd0`
 

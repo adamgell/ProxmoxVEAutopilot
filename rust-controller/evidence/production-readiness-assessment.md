@@ -1,6 +1,6 @@
 # Rust controller production-readiness assessment
 
-Assessment date: 2026-09-10  
+Assessment date: 2026-09-11
 Assessment source: isolated worktree `codex/rust-controller-design`  
 Production and `192.168.2.4`: read-only throughout
 
@@ -12,29 +12,39 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Latest source milestone: commit `029555f1` adds safe operation-scoped fixture
+Current scope at `518878d7`: this branch and PR #65 contain an accumulated
+Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
+acceptance remain incomplete. The new fixture-only StartPe boot-arming
+transaction persists package semantics, run/operation/attempt, lease identity,
+dispatch linkage, and registration deadline atomically. Admission requires
+the `fixture-ipc` feature and `Scheduler::with_fixture_start_pe()` opt-in;
+default admission and PeRegister remain closed. The durability test covers
+rollback, racing admission, reload, and missing-session refusal. Reload is
+database consistency evidence, not a StartPe OS-worker death proof. Credential
+alias persistence and authenticated callback completion remain unimplemented.
+No exact-source Linux runtime qualification is recorded for `518878d7`.
+
+Commit `029555f1` adds safe operation-scoped fixture
 port resolution. An immutable per-operation binding is retained across the
 complete invocation, and the capacity-two interleaving proof verifies isolated
 effects, receipts, PostgreSQL terminal projections, duplicate-binding
-rejection, and missing-binding refusal. StartPe and later stages remain
-fail-closed; exact-source Linux qualification for this revision is still
-required.
+rejection, and missing-binding refusal. This isolation proof does not establish
+later-stage completion; current-source Linux qualification is still required.
 
-The next StartPe transaction is not yet implementable from the tracked Rust
-contract alone. `postgres-store/src/start_pe_session.rs` accepts only the
+The authenticated session contract remains incomplete.
+`postgres-store/src/start_pe_session.rs` accepts only the
 `AuthenticatedPeWitnessV1::Unavailable` variant, and its opt-in proposal schema
-is explicitly diagnostic/read-only. The accepted transaction-boundary plan
-references callback/session decision artifacts that are absent from this
-checkout. Astra is mapping the existing local Python endpoint/role/database
-behavior to the Rust durability types before any positive session path is
-added; no synthetic authenticated flag or family bypass is being introduced.
+is explicitly diagnostic/read-only. The later decision and credential-session
+integration artifacts are now tracked. The fixture boot session in `518878d7`
+does not implement an authenticated witness or credential ownership; those
+must be integrated before authenticated callback progression can be claimed.
 
 Commit `aadf5c83` adds the first compatibility implementation for the legacy
 run bearer: canonical Python HMAC-SHA256 verification, closed claims, exact
 expiry behavior, wrong-run/tamper refusal, and compile-fail construction
 proofs. It deliberately does not turn the bearer into session or StartPe
-authority; durable session preparation and atomic arming remain subsequent
-gates.
+authority. Fixture preparation/arming subsequently landed in `518878d7`;
+authenticated session integration remains a subsequent gate.
 
 Commit `aa9755f0` adds the first trusted preparation input: a closed
 `RegisteredPePackageSemanticsV1` derived exclusively from the store-validated
@@ -62,11 +72,11 @@ Commit `b9c47ac5` pins the credential/session transaction integration rather
 than adding an unsafe process-local registry. The durable design requires
 unique credential ownership, immutable run/operation/attempt binding, same-
 session renewal, cross-session conflict, restart retention, and atomic
-alias/session/dispatch insertion under current scheduler locks. The source
-still rejects StartPe before that boundary, so this remains a design artifact,
-not a persistence or callback-completion claim.
+alias/session/dispatch insertion under current scheduler locks. This remains
+a credential-association design artifact. The subsequent fixture session
+migration and boot arming do not implement credential aliases or callbacks.
 
-Current-head checkpoint: commit `08471af3` records that the exact-source Linux
+Historical checkpoint: commit `08471af3` records that the exact-source Linux
 reaping diagnostic image built successfully, but its retained targeted run
 ended without output before producing PID/reap evidence. The attempt is
 terminal and observationally inconclusive; it adds no Linux pass claim and the
