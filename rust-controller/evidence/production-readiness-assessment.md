@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `7de11646`: this branch and PR #65 contain an accumulated
+Current scope at `ae515c52`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -116,6 +116,17 @@ the scheduler lease generation (`i64`) and supervisor/checkpoint generation
 provenance digest from the verified sealed object and require exact equality
 across both domains. Focused compile, Clippy, stop-release, migration, and diff
 checks pass; outcome recording and release authority remain open.
+
+At `4fb0289f`, transaction-owned fixture outcome bookkeeping persists
+accepted/refused/ambiguous states with full envelope/proposal validation,
+deterministic identical replay, and conflicting-replay refusal. It remains
+bookkeeping-only; end-to-end restart/recovery qualification is still open.
+
+At `ae515c52`, a recovered PeRegister operation rejects the actual delivered
+credential after original-deadline exhaustion and leaves state, revision,
+attempt, deadline, registration, and completion anchors unchanged. One exact
+integration test passes in 99.41 seconds; this proves terminal non-revival, not
+an isolated refusal cause.
 
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
