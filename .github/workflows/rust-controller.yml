@@ -54,6 +54,19 @@ jobs:
           rustup toolchain install 1.92.0 --profile minimal
           rustup default 1.92.0
           brew install ansible docker colima qemu
+          # Preserve Homebrew's virtual environment while satisfying the
+          # registry's concrete Python 3 shebang contract. Do not point directly
+          # at the framework binary: that would bypass the venv's imports.
+          adapter_entrypoint="$(brew --prefix ansible)/libexec/bin/ansible-playbook"
+          adapter_shebang="$(head -n 1 "$adapter_entrypoint")"
+          case "$adapter_shebang" in
+            \#!/opt/homebrew/*/libexec/bin/python)
+              adapter_python="${adapter_shebang#\#!}"
+              test "$adapter_python" -ef "${adapter_python}3"
+              test -x "${adapter_python}3"
+              sed -i '' '1s|/bin/python$|/bin/python3|' "$adapter_entrypoint"
+              ;;
+          esac
           colima start --vm-type qemu --arch aarch64 --cpu-type max --mount-type 9p --cpu 2 --memory 4
           docker pull postgres:16-alpine
           /opt/homebrew/bin/ansible-playbook --version
