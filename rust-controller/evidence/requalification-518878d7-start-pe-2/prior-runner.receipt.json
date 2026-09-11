@@ -1,0 +1,2 @@
+{"event": "start", "utc": "2026-09-11T08:44:55.798655+00:00", "argv": ["curl", "--unix-socket", "/Users/Adam.Gell/.orbstack/run/docker.sock", "--max-time", "10", "--silent", "--show-error", "http://localhost/containers/task9-039b11b7013e4c5c9662555e7c812fa8-runner/json"], "bound": 15}
+{"event": "end", "utc": "2026-09-11T08:44:55.835605+00:00", "exit": 0, "elapsed": 0.03697100002318621, "group_clean": true, "direct_child_reaped": true, "leader_left_with_group": false}
