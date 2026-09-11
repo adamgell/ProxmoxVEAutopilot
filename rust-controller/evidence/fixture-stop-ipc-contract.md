@@ -29,13 +29,20 @@ On macOS, the changed-source `fixture_stage` target passed all 6 tests in 2.05s.
 Its stop-specific contract test includes modified operation and attempt IDs,
 receipt envelope corruption, wrong task type/node/VM/user, and identity mismatch.
 
-The stop daemon test arms and enters a current-generation stop barrier, proves
-disk-only release and submission refusal, and observes zero attempts/effects.
-It repeats after daemon shutdown and restart. This proves persisted refusal; it
-is not an independent worker-death or successful stop recovery proof.
+The stop daemon test arms a current-generation stop barrier and spawns an
+independent worker process. The child writes its readiness marker only after
+the daemon acknowledges Enter for the exact stage/owner/generation. The parent
+confirms that child is alive, kills it, and reaps its unsuccessful exit before
+attempting release or submission. Disk-only release and stop submission remain
+refused, with zero attempts/effects. The test repeats after daemon shutdown and
+restart, using a fresh owner and generation and explicitly refusing the dead
+worker's old generation. This proves independent worker
+death preserves the stop refusal boundary. It does not prove successful stop
+execution or recovery of an accepted stop.
 
-The `fixture_stage_consumers` target passed all 3 tests with
-`RUST_TEST_THREADS=1` in 2.94s. An earlier parallel run passed the new stop test
+The `fixture_stage_consumers` target with the process-death proof passed all
+3 parent tests with `RUST_TEST_THREADS=1` in 3.07s; its ignored child entry point
+was invoked explicitly by the parent twice. An earlier parallel run passed the stop test
 but hit `ConnectionRefused` in the pre-existing clone/resize/configure test at
 socket startup. The serial rerun matches the configured fixture test policy;
 the parallel startup race remains a separate test-harness issue.

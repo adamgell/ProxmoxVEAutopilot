@@ -26,6 +26,69 @@ async fn checkpoint(socket: &Path, request: StageCheckpointRequest) -> StageChec
     .unwrap()
 }
 
+/// The parent owns and reaps this process. A marker is written only after the
+/// daemon confirms that this particular generation/owner entered the barrier.
+#[tokio::test]
+#[ignore = "spawned by the bounded stop refusal proof"]
+async fn fixture_stop_worker_child() {
+    let directory = std::path::PathBuf::from(std::env::var_os("STOP_WORKER_DIR").unwrap());
+    let identity: FixtureStageIdentity =
+        serde_json::from_str(&std::env::var("STOP_WORKER_IDENTITY").unwrap()).unwrap();
+    let reply = checkpoint(
+        &directory.join("client.sock"),
+        StageCheckpointRequest::Enter { identity },
+    )
+    .await;
+    assert!(reply.ok);
+    std::fs::write(directory.join("worker-entered"), b"entered").unwrap();
+    std::future::pending::<()>().await;
+}
+
+struct StopWorker(std::process::Child);
+impl Drop for StopWorker {
+    fn drop(&mut self) {
+        if self.0.try_wait().ok().flatten().is_none() {
+            let _ = self.0.kill();
+        }
+        let _ = self.0.wait();
+    }
+}
+
+async fn kill_entered_stop_worker(directory: &Path, identity: &FixtureStageIdentity) {
+    let marker = directory.join("worker-entered");
+    if marker.exists() {
+        std::fs::remove_file(&marker).unwrap();
+    }
+    let mut worker = StopWorker(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "fixture_stop_worker_child"])
+            .env("STOP_WORKER_DIR", directory)
+            .env(
+                "STOP_WORKER_IDENTITY",
+                serde_json::to_string(identity).unwrap(),
+            )
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while !marker.exists() {
+        assert!(
+            worker.0.try_wait().unwrap().is_none(),
+            "stop worker exited before Enter acknowledgement"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "stop worker startup exceeded bound"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(worker.0.try_wait().unwrap().is_none());
+    worker.0.kill().unwrap();
+    assert!(!worker.0.wait().unwrap().success());
+}
+
 #[tokio::test]
 async fn stop_identity_cannot_acquire_disk_only_release_or_effect_across_daemon_restart() {
     use std::os::unix::fs::PermissionsExt;
@@ -36,6 +99,7 @@ async fn stop_identity_cannot_acquire_disk_only_release_or_effect_across_daemon_
     let fixture = Uuid::now_v7();
     let stop = FixtureStageRequest::new(fixture, episodes[4].request.clone()).unwrap();
     let start = FixtureStageRequest::new(fixture, episodes[3].request.clone()).unwrap();
+    let mut dead_worker_identity: Option<FixtureStageIdentity> = None;
     for restart in [false, true] {
         if restart {
             std::fs::remove_file(directory.join("client.sock")).unwrap();
@@ -53,6 +117,19 @@ async fn stop_identity_cannot_acquire_disk_only_release_or_effect_across_daemon_
         let generation = checkpoint(&supervisor, StageCheckpointRequest::Status)
             .await
             .generation;
+        if let Some(stale) = &dead_worker_identity {
+            assert_ne!(generation, stale.generation);
+            assert!(
+                !checkpoint(
+                    &client,
+                    StageCheckpointRequest::Enter {
+                        identity: stale.clone()
+                    }
+                )
+                .await
+                .ok
+            );
+        }
         let identity = FixtureStageIdentity {
             operation: stop.request().binding().operation_id().as_uuid(),
             attempt: stop.request().binding().attempt_id().as_uuid(),
@@ -72,16 +149,8 @@ async fn stop_identity_cannot_acquire_disk_only_release_or_effect_across_daemon_
             .await
             .ok
         );
-        assert!(
-            checkpoint(
-                &client,
-                StageCheckpointRequest::Enter {
-                    identity: identity.clone()
-                }
-            )
-            .await
-            .ok
-        );
+        kill_entered_stop_worker(&directory, &identity).await;
+        dead_worker_identity = Some(identity.clone());
         assert!(
             !checkpoint(
                 &supervisor,
