@@ -10,7 +10,7 @@ Production and `192.168.2.4`: read-only throughout
 | --- | --- | --- |
 | macOS Rust controller prefix | Local PostgreSQL and fixture proofs through guarded EnsureStopped; strict checks recorded in the linked evidence | Proven for the bounded fixture/native-fake slice |
 | Fixture-IPC stop path | Typed envelope, supervisor admission frame, PostgreSQL authority snapshot, fresh-power publication boundary, and fail-closed worker/source refusals | Contract/admission/refusal only; successful external stop remains open |
-| Exact-source Linux | Current source `a607861f24cac19cad4565365df2a29b58a33e0b` built as amd64 image `sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9`; latest pinned owned-launcher attempt passed the 12 GiB memory guard but its bounded runner `docker create` supervisor hit the 60-second child deadline (`0024.json`, exit -9), with a retained Created-state runner identity | Exact-source build and image seal proven; Linux runtime qualification open |
+| Exact-source Linux | Current source `a607861f24cac19cad4565365df2a29b58a33e0b` built as amd64 image `sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9`; latest retry was correctly refused at `12,318,252 kB` available, below the 12 GiB guard, while the prior attempt hit the 60-second runner-create deadline | Exact-source build and image seal proven; Linux runtime qualification open |
 | Callback compatibility | Fixture-only PeRegister/PeComplete paths are covered; generic and legacy action/result surfaces are not | Partial fixture proof; full compatibility open |
 | Production readiness | Readiness artifacts and PR are draft; no deployment, cutover, or production mutation | Not ready / acceptance open |
 
