@@ -23,6 +23,13 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   with a checkpoint timeout and worker `Storage` error; focused diagnosis is
   required before treating it as a code regression or environment failure.
 
+- Focused follow-up at `75e3a8f3` ran the named worker-death-after-publication
+  recovery test twice on the current source with the required larger stack; both
+  passed through owned PostgreSQL creation, initial worker, recovery worker, and
+  final ledger recovery. This narrows the earlier failure to a possible
+  broad-suite contention/startup condition, but does not close the full
+  all-features workspace gate.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)

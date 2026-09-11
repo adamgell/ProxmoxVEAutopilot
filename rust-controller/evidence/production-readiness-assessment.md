@@ -19,6 +19,14 @@ the controller checkpoint timed out and the worker reported `Storage`. This is
 under focused reproduction and is not yet classified as either a Rust defect
 or retained Docker/fixture startup failure.
 
+Focused follow-up at `75e3a8f3` reran
+`configure_worker_death_after_publication_preserves_prefix_and_uncertainty`
+twice, serially with `RUST_MIN_STACK=16777216`, and both runs passed. Each run
+created the owned PostgreSQL fixture, completed the initial and recovery worker,
+and recovered the final ledger without timeout or `Storage` failure. This is
+positive focused recovery evidence, but the earlier broad all-features workspace
+run remains unresolved because suite-level fixture contention was not ruled out.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.
