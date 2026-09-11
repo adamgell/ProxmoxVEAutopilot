@@ -753,6 +753,7 @@ async fn full_start_pe_case(process_death: bool) {
             );
             assert!(port.submit_provisioning(start.request()).await.is_err());
             assert!(port.validate_bound_start_pe().await.unwrap().is_none());
+            assert!(port.captured_start_pe_response().is_none());
             let provenance = port.shared_history_provenance().unwrap();
             assert_eq!(provenance.operation(), identity.operation);
             assert_eq!(provenance.generation(), generation);
@@ -1052,6 +1053,19 @@ async fn full_start_pe_case(process_death: bool) {
             full_publication = Some(wire(&control, command.clone()).await.unwrap());
             if let Some(port) = &start_port {
                 let publication = port.validate_bound_start_pe().await.unwrap().unwrap();
+                let captured = port.captured_start_pe_response().unwrap();
+                assert_eq!(captured.identity(), &identity);
+                assert_eq!(
+                    captured.request().encode().unwrap(),
+                    start.encode().unwrap()
+                );
+                assert_eq!(captured.predecessor_identity(), &accepted[2].0);
+                assert_eq!(
+                    captured.predecessor().encode().unwrap(),
+                    accepted[2].1.encode().unwrap()
+                );
+                assert_eq!(captured.original_receipt(), original.as_slice());
+                assert!(!format!("{captured:?}").contains(std::str::from_utf8(&original).unwrap()));
                 for member in &publication.observation.inventory.members {
                     let config = port
                         .provisioning_vm_config(member.config.node(), member.config.vmid())
@@ -1079,9 +1093,30 @@ async fn full_start_pe_case(process_death: bool) {
                         *media
                     );
                 }
+                let cluster = port.cluster_vms().await.unwrap();
+                assert_eq!(
+                    cluster.vms().len(),
+                    publication.observation.inventory.members.len()
+                );
+                assert_eq!(
+                    cluster.observed_at().timestamp_millis() as u64,
+                    publication.observation.inventory.observed_unix_ms
+                );
+                for member in &publication.observation.inventory.members {
+                    let identity = port
+                        .provisioning_identity(member.config.node(), member.config.vmid())
+                        .await
+                        .unwrap();
+                    assert_eq!(identity.uuid(), member.config.uuid());
+                    assert_eq!(identity.mac(), member.config.mac());
+                    assert_eq!(identity.config_digest(), member.config.digest());
+                    assert_eq!(identity.observed_at(), member.config.observed_at());
+                }
                 assert!(
-                    port.cluster_vms().await.is_err(),
-                    "unmapped inventory must remain closed"
+                    port.node_status(start.request().plan().expected().vm().node())
+                        .await
+                        .is_err(),
+                    "untimed infrastructure remains closed"
                 );
                 assert_eq!(
                     serde_json::to_value(publication).unwrap(),
@@ -1124,6 +1159,7 @@ async fn full_start_pe_case(process_death: bool) {
                 let restored = fresh()
                     .with_late_start_receipt(start.request(), original.clone())
                     .unwrap();
+                assert!(restored.captured_start_pe_response().is_none());
                 assert_eq!(
                     serde_json::to_value(
                         restored.validate_bound_start_pe().await.unwrap().unwrap()

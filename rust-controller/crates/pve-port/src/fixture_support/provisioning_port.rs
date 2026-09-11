@@ -6,6 +6,7 @@ use serde_json::json;
 use std::{io, path::PathBuf, time::Duration};
 mod late_configure;
 mod late_start;
+pub use late_start::FixtureStartPeResponseV1;
 mod legacy_resize;
 mod start_validation;
 use late_configure::LateConfigureContext;
@@ -258,7 +259,7 @@ impl FixtureProvisioningPort {
     }
     async fn clone_reads(&self) -> Result<FixtureCloneReads, PveReadError> {
         if self.late_start.is_some() {
-            return Err(PveReadError::TransportUnavailable);
+            return self.start_inventory().await;
         }
         if let Some(configure) = &self.late_configure {
             return Ok(configure.observation(&self.reads).await?.inventory);

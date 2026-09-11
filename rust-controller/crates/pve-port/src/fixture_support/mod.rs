@@ -40,7 +40,9 @@ mod provisioning_reads;
 pub use clone_reads::{
     FixtureCloneReads, SeedBridge, SeedIdentity, SeedNode, SeedRead, SeedReadError, SeedStorage,
 };
-pub use provisioning_port::{FixtureProvisioningPort, FixtureStartPeValidationOutcome};
+pub use provisioning_port::{
+    FixtureProvisioningPort, FixtureStartPeResponseV1, FixtureStartPeValidationOutcome,
+};
 pub use provisioning_reads::{
     FixtureProvisioningIdentity, FixtureProvisioningReads, FixtureProvisioningReadsV2, SeedConfig,
     SeedPower,
