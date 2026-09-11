@@ -121,7 +121,7 @@ impl Publications {
         &mut self,
         command: Command,
         supervisor: bool,
-        log: &FixtureLog,
+        log: &mut FixtureLog,
         directory: &Path,
     ) -> io::Result<Vec<u8>> {
         let (value, observation, stage) = match command {
@@ -250,7 +250,7 @@ impl Publications {
         identity: super::FixtureStageIdentity,
         value: serde_json::Value,
         observation: Option<super::FixtureSynchronousPostDispatchV1>,
-        log: &FixtureLog,
+        log: &mut FixtureLog,
         directory: &Path,
     ) -> io::Result<Vec<u8>> {
         let request = crate::fixture_ipc::FixtureStageRequest::decode(&serde_json::to_vec(&value)?)
@@ -276,6 +276,27 @@ impl Publications {
             if self.synchronous.contains_key(&key) || self.published.contains_key(&key) {
                 return Err(invalid());
             }
+            let super::SeedRead::Observed {
+                observed_unix_ms,
+                value: power,
+            } = &observation.provisioning.target_power
+            else {
+                return Err(invalid());
+            };
+            if power.power != crate::PowerState::Stopped || power.locked {
+                return Err(invalid());
+            }
+            let receipt = effect.receipt().ok_or_else(invalid)?.to_vec();
+            log.record_power_observation(
+                identity.operation,
+                &identity.request_sha256,
+                identity.ledger_binding(),
+                &receipt,
+                super::durable_fixture_log::PowerStateV1::Stopped,
+                self.generation,
+                accepted,
+                *observed_unix_ms,
+            )?;
             let publication = FixtureSynchronousPublication {
                 daemon_generation: self.generation,
                 accepted_unix_ms: accepted,
@@ -283,7 +304,7 @@ impl Publications {
                 observation,
             };
             let bytes = serde_json::to_vec(
-                &serde_json::json!({"identity":identity,"request":value,"receipt":effect.receipt(),"publication":publication}),
+                &serde_json::json!({"identity":identity,"request":value,"receipt":receipt,"publication":publication}),
             )?;
             let destination = directory.join(format!(
                 "synchronous-{}-{}-{}.json",

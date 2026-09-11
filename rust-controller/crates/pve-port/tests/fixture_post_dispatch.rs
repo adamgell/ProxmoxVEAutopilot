@@ -317,6 +317,7 @@ fn synchronous_sample(request: &pve_port::fixture_ipc::FixtureStageRequest, at: 
     sample.provisioning.identity.request_sha256 = request.request_sha256();
     let mut document =
         json!({"version":1,"provisioning":sample.provisioning,"inventory":sample.inventory});
+    document["provisioning"]["target_power"] = json!({"state":"observed","observed_unix_ms":at,"value":{"power":"stopped","locked":false}});
     retime(&mut document, at);
     document
 }
@@ -514,6 +515,20 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
                         synchronous_sample(&request, chrono::Utc::now().timestamp_millis() as u64);
                     let publish = json!({"command":"publish_synchronous_stage","identity":identity,"request":serde_json::from_slice::<Value>(&request.encode().unwrap()).unwrap(),"observation":document});
                     assert!(wire(&client, publish.clone()).await.is_err());
+                    let before = std::fs::read(directory.join("fixture.log")).unwrap();
+                    for field in ["owner", "generation", "attempt", "operation"] {
+                        let mut wrong = publish.clone();
+                        wrong["identity"][field] = json!(Uuid::now_v7());
+                        assert!(wire(&control, wrong).await.is_err());
+                    }
+                    let mut stale = publish.clone();
+                    stale["observation"]["provisioning"]["target_power"]["observed_unix_ms"] =
+                        json!(1);
+                    assert!(wire(&control, stale).await.is_err());
+                    assert_eq!(
+                        before,
+                        std::fs::read(directory.join("fixture.log")).unwrap()
+                    );
                     assert!(
                         wire(&control, publish.clone()).await.unwrap()["daemon_generation"]
                             .is_string()
@@ -550,6 +565,14 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
         }
         wire(&control, json!({"command":"shutdown"})).await.unwrap();
         daemon.join().unwrap();
+        let ledger = std::fs::read_to_string(directory.join("fixture.log")).unwrap();
+        assert_eq!(
+            ledger
+                .lines()
+                .filter(|line| line.contains("\"power_version\":1"))
+                .count(),
+            1
+        );
     }
 }
 

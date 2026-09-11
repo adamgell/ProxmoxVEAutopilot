@@ -247,8 +247,9 @@ pub(crate) fn submit(
             request
                 .validate_start_pe_predecessor(prior, effect.receipt().ok_or_else(invalid)?)
                 .map_err(|_| invalid())?;
-            // Disk/PE flags cannot establish a durable running power transition.
-            // Preserve authorization and the existing world until that contract exists.
+            // A stopped power observation alone cannot authorize qmstart.
+            // Running replay records exist, but atomic StartPe transition admission
+            // and stage-bound task publication are not integrated. Preserve authorization.
             return Err(invalid());
         }
         _ => return Err(invalid()),

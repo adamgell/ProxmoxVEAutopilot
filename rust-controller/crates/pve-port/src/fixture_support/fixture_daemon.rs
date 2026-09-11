@@ -224,7 +224,7 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
             if let Ok(command) =
                 serde_json::from_slice::<super::post_dispatch_publication::Command>(&bytes)
             {
-                match publications.handle(command, supervisor, &log, directory) {
+                match publications.handle(command, supervisor, &mut log, directory) {
                     Ok(payload) => {
                         let _ = stream
                             .write_all(&(payload.len() as u32).to_be_bytes())

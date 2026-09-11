@@ -12,6 +12,172 @@ use uuid::Uuid;
 
 const MAX_LINE: usize = 4096;
 
+#[cfg(test)]
+mod power_tests {
+    use super::*;
+
+    #[test]
+    fn power_replay_requires_exact_effect_and_fresh_observation() {
+        let path = std::env::temp_dir().join(format!("power-ledger-{}", Uuid::now_v7()));
+        let mut log = FixtureLog::create(&path).unwrap();
+        let operation = Uuid::now_v7();
+        let digest = "a".repeat(64);
+        let binding = StageBinding {
+            stage: FixtureLedgerStage::ConfigurePe,
+            attempt: Uuid::now_v7(),
+            generation: Uuid::now_v7(),
+            owner: Uuid::now_v7(),
+        };
+        log.record_stage_attempt(operation, &digest, binding)
+            .unwrap();
+        log.record_effect_receipt(
+            1,
+            101,
+            None,
+            VmState {
+                disk_bytes: 120,
+                pe_configured: true,
+            },
+            Some(b"exact-receipt".to_vec()),
+        )
+        .unwrap();
+        let generation = Uuid::now_v7();
+        assert!(
+            log.record_power_observation(
+                operation,
+                &digest,
+                binding,
+                b"wrong",
+                PowerStateV1::Stopped,
+                generation,
+                10,
+                11
+            )
+            .is_err()
+        );
+        assert!(
+            log.record_power_observation(
+                operation,
+                &digest,
+                binding,
+                b"exact-receipt",
+                PowerStateV1::Stopped,
+                generation,
+                10,
+                9
+            )
+            .is_err()
+        );
+        assert!(log.power_records().is_empty());
+        log.record_power_observation(
+            operation,
+            &digest,
+            binding,
+            b"exact-receipt",
+            PowerStateV1::Stopped,
+            generation,
+            10,
+            11,
+        )
+        .unwrap();
+        drop(log);
+        let mut log = FixtureLog::recover(&path).unwrap();
+        assert_eq!(log.power_records().len(), 1);
+        assert_eq!(log.power_records()[0].state, PowerStateV1::Stopped);
+        let before = std::fs::read(&path).unwrap();
+        assert!(
+            log.record_power_observation(
+                operation,
+                &digest,
+                binding,
+                b"exact-receipt",
+                PowerStateV1::Stopped,
+                generation,
+                10,
+                12
+            )
+            .is_err()
+        );
+        let mut wrong = binding;
+        wrong.owner = Uuid::now_v7();
+        assert!(
+            log.record_power_observation(
+                operation,
+                &digest,
+                wrong,
+                b"exact-receipt",
+                PowerStateV1::Running,
+                generation,
+                10,
+                12
+            )
+            .is_err()
+        );
+        assert_eq!(before, std::fs::read(&path).unwrap());
+        let start_operation = Uuid::now_v7();
+        let start_binding = StageBinding {
+            stage: FixtureLedgerStage::StartPe,
+            ..binding
+        };
+        log.record_stage_attempt(start_operation, &digest, start_binding)
+            .unwrap();
+        let state = log.world()[&101].clone();
+        log.record_effect_receipt(
+            2,
+            101,
+            Some(state.clone()),
+            state,
+            Some(b"start-receipt".to_vec()),
+        )
+        .unwrap();
+        // The ledger test supplies an accepted synthetic effect; the IPC StartPe
+        // execution path remains closed and cannot produce this effect yet.
+        assert!(
+            log.record_power_observation(
+                start_operation,
+                &digest,
+                start_binding,
+                b"start-receipt",
+                PowerStateV1::Running,
+                generation,
+                11,
+                12
+            )
+            .is_err()
+        );
+        log.record_power_observation(
+            start_operation,
+            &digest,
+            start_binding,
+            b"start-receipt",
+            PowerStateV1::Running,
+            generation,
+            12,
+            13,
+        )
+        .unwrap();
+        drop(log);
+        let mut log = FixtureLog::recover(&path).unwrap();
+        assert_eq!(log.power_records().len(), 2);
+        assert_eq!(log.power_records()[1].state, PowerStateV1::Running);
+        assert_eq!(log.power_records()[1].predecessor, Some(1));
+        assert!(
+            log.record_power_observation(
+                start_operation,
+                &digest,
+                start_binding,
+                b"start-receipt",
+                PowerStateV1::Running,
+                Uuid::now_v7(),
+                12,
+                14
+            )
+            .is_err()
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
 /// Version-two fixture identity. Retry protection is per operation and stage;
 /// the remaining fields bind recovery to the original dispatch authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -99,6 +265,33 @@ impl Effect {
 enum Record {
     Attempt(Attempt),
     Effect(Effect),
+    Power(PowerObservationV1),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PowerStateV1 {
+    Stopped,
+    Running,
+}
+
+/// Additive record: legacy VM snapshots never imply a known power state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PowerObservationV1 {
+    power_version: u8,
+    sequence: u64,
+    effect_sequence: u64,
+    predecessor: Option<u64>,
+    operation: Uuid,
+    request_sha256: String,
+    binding: StageBinding,
+    receipt_sha256: String,
+    vmid: u32,
+    pub state: PowerStateV1,
+    daemon_generation: Uuid,
+    accepted_unix_ms: u64,
+    observed_unix_ms: u64,
 }
 
 pub struct FixtureLog {
@@ -107,6 +300,7 @@ pub struct FixtureLog {
     attempted: BTreeSet<(Uuid, Option<FixtureLedgerStage>)>,
     effects: Vec<Effect>,
     world: BTreeMap<u32, VmState>,
+    power: Vec<PowerObservationV1>,
     poisoned: bool,
 }
 
@@ -147,6 +341,7 @@ impl FixtureLog {
             attempted: BTreeSet::new(),
             effects: Vec::new(),
             world: BTreeMap::new(),
+            power: Vec::new(),
             poisoned: false,
         })
     }
@@ -158,6 +353,7 @@ impl FixtureLog {
         let mut attempted = BTreeSet::new();
         let mut effects = Vec::new();
         let mut world = BTreeMap::new();
+        let mut power = Vec::new();
         loop {
             let mut line = Vec::new();
             let n = reader
@@ -202,6 +398,10 @@ impl FixtureLog {
                     world.insert(effect.vmid, effect.after.clone());
                     effects.push(effect);
                 }
+                Record::Power(observation) => {
+                    validate_power(&observation, &effects, &power)?;
+                    power.push(observation);
+                }
             }
         }
         Ok(Self {
@@ -210,6 +410,7 @@ impl FixtureLog {
             attempted,
             effects,
             world,
+            power,
             poisoned: false,
         })
     }
@@ -336,6 +537,64 @@ impl FixtureLog {
         &self.effects
     }
 
+    #[allow(dead_code)]
+    pub fn power_records(&self) -> &[PowerObservationV1] {
+        &self.power
+    }
+
+    /// Only the supervisor's validated post-effect observation may call this.
+    /// This records evidence, never authorizes or performs a power mutation.
+    #[allow(dead_code, clippy::too_many_arguments)]
+    pub fn record_power_observation(
+        &mut self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+        receipt: &[u8],
+        state: PowerStateV1,
+        daemon_generation: Uuid,
+        accepted_unix_ms: u64,
+        observed_unix_ms: u64,
+    ) -> io::Result<()> {
+        let effect = self
+            .accepted_stage_effect(operation, digest, binding)?
+            .ok_or_else(invalid)?;
+        if effect.receipt() != Some(receipt) {
+            return Err(invalid());
+        }
+        let observation = PowerObservationV1 {
+            power_version: 1,
+            sequence: self.power.len() as u64 + 1,
+            effect_sequence: effect.sequence,
+            predecessor: self
+                .power
+                .iter()
+                .rev()
+                .find(|p| p.vmid == effect.vmid)
+                .map(|p| p.sequence),
+            operation,
+            request_sha256: digest.to_owned(),
+            binding,
+            receipt_sha256: format!("{:x}", Sha256::digest(receipt)),
+            vmid: effect.vmid,
+            state,
+            daemon_generation,
+            accepted_unix_ms,
+            observed_unix_ms,
+        };
+        validate_power(&observation, &self.effects, &self.power)?;
+        let bytes = frame(&observation)?;
+        if bytes.len() > MAX_LINE {
+            return Err(invalid());
+        }
+        self.poisoned = true;
+        self.file.write_all(&bytes)?;
+        self.file.sync_data()?;
+        self.power.push(observation);
+        self.poisoned = false;
+        Ok(())
+    }
+
     /// Reads a committed synthetic effect for the exact original request.
     /// An admitted attempt alone never constitutes acceptance. A reused operation
     /// with another digest is a binding error, even before any effect exists.
@@ -380,6 +639,56 @@ impl FixtureLog {
             .effects
             .iter()
             .find(|effect| effect.operation == operation && effect.stage_binding == binding))
+    }
+}
+
+fn validate_power(
+    p: &PowerObservationV1,
+    effects: &[Effect],
+    power: &[PowerObservationV1],
+) -> io::Result<()> {
+    let effect = effects
+        .iter()
+        .find(|e| e.sequence == p.effect_sequence)
+        .ok_or_else(invalid)?;
+    let previous = power.iter().rev().find(|prior| prior.vmid == p.vmid);
+    if p.power_version != 1
+        || p.sequence != power.len() as u64 + 1
+        || p.daemon_generation.is_nil()
+        || p.accepted_unix_ms == 0
+        || p.observed_unix_ms < p.accepted_unix_ms
+        || effect.operation != p.operation
+        || effect.request_sha256 != p.request_sha256
+        || effect.stage_binding != Some(p.binding)
+        || effect.vmid != p.vmid
+        || p.receipt_sha256
+            != format!(
+                "{:x}",
+                Sha256::digest(effect.receipt().ok_or_else(invalid)?)
+            )
+        || effects.iter().rev().find(|e| e.vmid == p.vmid) != Some(effect)
+        || power
+            .iter()
+            .any(|prior| prior.effect_sequence == p.effect_sequence)
+        || p.predecessor != previous.map(|prior| prior.sequence)
+    {
+        return Err(invalid());
+    }
+    match (p.binding.stage, p.state, previous) {
+        (FixtureLedgerStage::ConfigurePe, PowerStateV1::Stopped, None)
+            if effect.after.pe_configured =>
+        {
+            Ok(())
+        }
+        (FixtureLedgerStage::StartPe, PowerStateV1::Running, Some(prior))
+            if prior.state == PowerStateV1::Stopped
+                && prior.binding.stage == FixtureLedgerStage::ConfigurePe
+                && prior.effect_sequence + 1 == effect.sequence
+                && prior.observed_unix_ms < p.accepted_unix_ms =>
+        {
+            Ok(())
+        }
+        _ => Err(invalid()),
     }
 }
 
