@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `487e1801`: this branch and PR #65 contain an accumulated
+Current scope at `d98ba908`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -66,6 +66,14 @@ legitimate object containing both StartPe receipt/provenance and store-issued
 operation, lease, and stop authority. The next helper must join those through
 authenticated progression; synthetic envelopes, proposals, and SQL remain
 disallowed.
+
+At `d98ba908`, the current connected StartPe adapter/recovery evidence still
+does not join the genuine daemon receipt/provenance to a PostgreSQL
+`LeaseGrant`, stop authority, and consumed envelope in one legitimate test
+fixture. The typed stop outcome APIs and immutable outcome schema therefore
+remain compile/schema-verified but lack the authentic accepted/refused/
+ambiguous PostgreSQL matrix. No production readiness or physical-stop claim is
+made.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
