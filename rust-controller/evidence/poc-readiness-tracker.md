@@ -47,6 +47,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Commit `09fc0058` defines a fail-closed StartPe session-arming contract preserving the immutable PE-registration deadline and exact run/operation/attempt/generation/owner/session/request context. Only unavailable/expired refusal is constructible until authenticated witness and atomic PostgreSQL arming exist; session/dispatch crash proofs remain open.
 - Commit `b18b8993` adds an opt-in capability-closed PostgreSQL session seam: unavailable witness refusal precedes connection/transaction, and a rolled-back diagnostic compares dispatch/deadline context while separating UUID proposal generation from bigint authority generation. Live SQL validity, authenticated session creation, atomic persistence, precise fence mapping, and controller progression remain open.
 - Commit `f415b70a` adds microsecond PE-registration anchors with exact original-event/deadline binding, checked arithmetic, and lossless-only v1 conversion. The PostgreSQL probe still needs v2 integration; authenticated session persistence, dispatch, satisfaction, and production paths remain closed.
+- Commit `0f9e1180` integrates v2 anchors into the opt-in PostgreSQL diagnostic probe with exact microsecond comparisons and lossless v1 upgrade. Boundary, lossy, and invalid-context refusals pass; the schema/durable-row runtime test remains ignored and no capability opens.
 
 ### Final owned Linux full-run result (2026-09-10)
 

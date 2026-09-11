@@ -43,6 +43,7 @@ Production and `192.168.2.4`: read-only throughout
 - Commit `09fc0058` defines typed fail-closed session arming with immutable deadline/context binding and unavailable/expired refusal. It is not an atomic PostgreSQL arming transaction, authenticated session verification, crash proof, or production readiness claim.
 - Commit `b18b8993` adds an opt-in capability-closed PostgreSQL session seam with pre-connection unavailable refusal and rolled-back diagnostic context comparison. The SQL runtime check was not executed; authenticated session creation, atomic persistence, fence mapping, and production readiness remain unproven.
 - Commit `f415b70a` adds exact microsecond PE-registration anchor representation and rejects lossy v1 downgrade. It is not yet integrated into PostgreSQL session persistence and does not establish dispatch, satisfaction, or production readiness.
+- Commit `0f9e1180` integrates exact v2 anchor comparison into the opt-in diagnostic probe while retaining witness-unavailable/expired refusal. The durable-row/schema runtime test is still ignored; no session, dispatch, satisfaction, or production readiness is claimed.
 
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
 - The final macOS four-package regression at `557bd12` passed 665 tests, with 3 intentionally ignored, under a bounded supervisor.
