@@ -1,0 +1,2 @@
+{"event": "start", "utc": "2026-09-11T13:47:46.330366+00:00", "argv": ["docker", "--host", "unix:///Users/Adam.Gell/.orbstack/run/docker.sock", "build", "--platform", "linux/amd64", "--build-arg", "CONTROLLER_GIT_SHA=7cde09fbc4f3fb608d9f0ede761cabb347b5c472", "-f", "rust-controller/Dockerfile.test", "-t", "rust-controller-task9:local", "."], "bound": 1800}
+{"event": "end", "utc": "2026-09-11T14:02:31.465826+00:00", "exit": 0, "elapsed": 885.1378943750169, "group_clean": true, "direct_child_reaped": true, "leader_left_with_group": false}

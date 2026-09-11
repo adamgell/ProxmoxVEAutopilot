@@ -1,0 +1,2 @@
+{"event": "start", "utc": "2026-09-11T13:48:00.687621+00:00", "argv": ["git", "ls-tree", "-r", "7cde09fbc4f3fb608d9f0ede761cabb347b5c472", "--", "rust-controller/Cargo.toml", "rust-controller/Cargo.lock", "rust-controller/Dockerfile.test", "rust-controller/crates", "autopilot-proxmox/playbooks/_test_long_sleep.yml"], "bound": 30}
+{"event": "end", "utc": "2026-09-11T13:48:00.720246+00:00", "exit": 0, "elapsed": 0.03264720900915563, "group_clean": true, "direct_child_reaped": true, "leader_left_with_group": false}

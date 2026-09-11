@@ -1,0 +1,2 @@
+{"event": "start", "utc": "2026-09-11T14:02:39.792555+00:00", "argv": ["docker", "--host", "unix:///Users/Adam.Gell/.orbstack/run/docker.sock", "exec", "2c0a7f5cbcb1", "cat", "/proc/meminfo"], "bound": 30}
+{"event": "end", "utc": "2026-09-11T14:02:39.877349+00:00", "exit": 0, "elapsed": 0.08484054205473512, "group_clean": true, "direct_child_reaped": true, "leader_left_with_group": false}
