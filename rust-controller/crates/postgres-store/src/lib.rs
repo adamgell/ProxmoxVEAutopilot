@@ -19,6 +19,8 @@ mod osdeploy;
 #[cfg(feature = "fixture-ipc")]
 mod pe_register_result;
 #[cfg(feature = "fixture-ipc")]
+mod pe_register_result_probe;
+#[cfg(feature = "fixture-ipc")]
 mod start_pe_session;
 #[cfg(feature = "fixture-ipc")]
 pub use pe_register_result::{PeRegisterResultRefusalV1, PeRegisterResultTransactionInputV1};

@@ -49,6 +49,12 @@ pub struct PeRegisterVerifierContractV1 {
     result_revision: u64,
 }
 impl PeRegisterVerifierContractV1 {
+    pub fn context(&self) -> &StartPeArmingContextV1 {
+        &self.context
+    }
+    pub fn expected_fence(&self) -> &PeRegisterAuthorityFenceV1 {
+        &self.fence
+    }
     pub fn new(
         context: StartPeArmingContextV1,
         anchor: PeRegistrationAnchorV2,
