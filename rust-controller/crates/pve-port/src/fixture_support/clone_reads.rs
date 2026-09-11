@@ -257,6 +257,33 @@ mod tests {
         assert!(FixtureCloneReads::decode(&bytes, Uuid::from_u128(2)).is_err());
     }
     #[test]
+    fn legacy_inventory_does_not_relabel_opaque_configuration_digests() {
+        let value = seed();
+        let mut document = serde_json::to_value(&value).unwrap();
+        document["cluster_inventory"]["value"] = serde_json::json!([{
+            "node":"fixture-node","vmid":101,"name":"target","template":false,
+            "config_sha256":"a".repeat(64),"uuid":Uuid::from_u128(2),
+            "mac":"02:00:00:00:01:01","primary_storage":"local-lvm",
+            "primary_volume":"vm-101-disk-0",
+            "coverage":{"state":"observed","observed_unix_ms":126,"value":"complete"},
+            "status":{"state":"observed","observed_unix_ms":126,"value":"running"}
+        }]);
+        assert!(
+            FixtureCloneReads::decode(&serde_json::to_vec(&document).unwrap(), value.fixture_id)
+                .is_ok()
+        );
+        for digest in ["digest-1", "clone-digest", "after-ConfigurePe"] {
+            document["cluster_inventory"]["value"][0]["config_sha256"] = digest.into();
+            assert!(
+                FixtureCloneReads::decode(
+                    &serde_json::to_vec(&document).unwrap(),
+                    value.fixture_id
+                )
+                .is_err()
+            );
+        }
+    }
+    #[test]
     fn rejects_unknown_fields_zero_time_duplicates_and_caps() {
         let value = seed();
         for change in [0, 1, 2, 3] {
