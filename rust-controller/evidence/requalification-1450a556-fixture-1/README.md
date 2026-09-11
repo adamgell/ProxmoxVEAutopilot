@@ -13,11 +13,12 @@ under the retained session marker
 
 Qualification did not proceed because the bounded Docker `create` operation
 for the runner exceeded its 60-second child deadline. Receipt `0024.json`
-records `exit: -9` and `failure: ValueError: child deadline`; no runner
-container was created and `state.json` remains `qualification: INCOMPLETE` with
-`pending: runner`. The PostgreSQL container and all numbered receipts are
-retained for diagnosis. This is an infrastructure admission failure, not a
-Linux runtime qualification pass.
+records `exit: -9` and `failure: ValueError: child deadline`. Read-only Docker
+inspection found the runner identity retained in `Created` state even though
+the launcher did not receive a completed create response; `state.json` remains
+`qualification: INCOMPLETE` with `pending: runner`. The PostgreSQL and runner
+identities and all numbered receipts are retained for diagnosis. This is an
+infrastructure admission failure, not a Linux runtime qualification pass.
 
 This evidence proves neither owned Linux execution nor production readiness.
 No production controller, `192.168.2.4`, real Proxmox state, deployment,

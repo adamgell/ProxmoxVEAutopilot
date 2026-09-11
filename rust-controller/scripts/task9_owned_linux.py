@@ -26,6 +26,12 @@ RECEIPT = "/owned-linux-fixture/receipt.json"
 SCRIPT = "/owned-linux-fixture/launcher.py"
 GIB = 1024**3
 CAPS = {"pg": 6 * GIB, "runner": 4 * GIB}
+# The pinned amd64 runner is a multi-gigabyte emulated image.  Image
+# materialization is admission, not workload execution, so give the Docker
+# create operation a bounded window large enough for a cold OrbStack cache.
+# The child remains supervised by bounded(), and a timeout still retains the
+# receipt/owned resources for explicit recovery.
+RUNNER_CREATE_BOUND = 300
 TMPFS = "rw,nosuid,nodev,size=4g,mode=0700"
 # The runner image is built from this runtime source set. The launcher itself
 # and evidence metadata are host-side qualification controls mounted separately
@@ -379,7 +385,7 @@ def host(args):
         save()
         # Large locally sealed images may take longer to materialize under
         # OrbStack; this is create admission only, not the runner test bound.
-        raw = docker(*profile_args(session, "runner", state["pg"], str(receipt_file), str(script), args.mode), seconds=60)
+        raw = docker(*profile_args(session, "runner", state["pg"], str(receipt_file), str(script), args.mode), seconds=RUNNER_CREATE_BOUND)
         require(re.fullmatch(rb"[0-9a-f]{64}\n", raw) is not None)
         state["runner"] = raw.decode().strip()
         state.pop("pending")

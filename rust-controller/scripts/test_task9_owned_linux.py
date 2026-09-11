@@ -21,6 +21,10 @@ class CapacityTests(unittest.TestCase):
 
 
 class ContractTests(unittest.TestCase):
+    def test_runner_create_bound_is_separate_from_workload_bounds(self):
+        self.assertEqual(gate.RUNNER_CREATE_BOUND, 300)
+        self.assertLess(gate.RUNNER_CREATE_BOUND, gate.workload("fixture")[1])
+
     def test_start_pe_workload_is_feature_gated_exact_and_bounded(self):
         argv, seconds = gate.workload("start-pe")
         self.assertEqual(seconds, 300)
