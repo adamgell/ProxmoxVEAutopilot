@@ -1,0 +1,93 @@
+{
+  "contract_version": 1,
+  "workflow_kind": "os_deploy",
+  "architecture": "amd64",
+  "server_role": "base",
+  "firmware": "seabios",
+  "secure_boot": false,
+  "cpu": "host",
+  "balloon": false,
+  "qga_channel": "virtio",
+  "primary_disk": "scsi0",
+  "pe_iso_slot": "ide2",
+  "driver_iso_slot": "ide3",
+  "pe_boot_order": "ide2;scsi0",
+  "disk_boot_order": "scsi0",
+  "template_device_policy": "reject_extra_devices",
+  "evidence_level": "declared_only",
+  "vm": {
+    "contract_version": 1,
+    "cluster_key": "test-cluster",
+    "node": "node-a",
+    "source_vmid": 900,
+    "target_vmid": 901,
+    "name": "pve-target-01",
+    "storage": "disk-store",
+    "bridge": "vmbr0",
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "mac": "02:00:00:00:00:01",
+    "cores": 4,
+    "memory_mib": 4096,
+    "minimum_storage_bytes": 1073741824
+  },
+  "names": {
+    "requested_name": "  --Lab VM_01--  ",
+    "pve_name": "pve-target-01",
+    "windows_name": "LabVM01",
+    "expected_agent_id": "agent-labvm01"
+  },
+  "artifact": {
+    "contract_version": 1,
+    "artifact_id": "22222222-2222-4222-8222-222222222222",
+    "architecture": "amd64",
+    "build_label": "20260905010203",
+    "iso_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "wim_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "source_image_index": 6,
+    "output_image_index": 1,
+    "apply_image_index": 1,
+    "image_index_source": "output_manifest",
+    "evidence_level": "declared_only"
+  },
+  "disk": {
+    "requested_gib": 120,
+    "template_bytes": 85899345920,
+    "effective_bytes": 128849018880,
+    "growth_required": true
+  },
+  "policy": {
+    "registration_seconds": 2400,
+    "pe_seconds": 7200,
+    "shutdown_grace_seconds": 300,
+    "full_os_seconds": 7200,
+    "mutation_seconds": 300,
+    "evidence_freshness_seconds": 30,
+    "allow_force_stop": false
+  },
+  "template_config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "deployment_iso_volid": "media-store:iso/deploy.iso",
+  "driver_iso_volid": "drivers:iso/virtio.iso",
+  "driver_payload": {
+    "reference_id": "33333333-3333-4333-8333-333333333333",
+    "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "evidence_level": "declared"
+  },
+  "osd_client_payload": {
+    "reference_id": "44444444-4444-4444-8444-444444444444",
+    "sha256": null,
+    "evidence_level": "unverified"
+  },
+  "agent_payload": {
+    "reference_id": "55555555-5555-4555-8555-555555555555",
+    "sha256": null,
+    "evidence_level": "unverified"
+  },
+  "system_serial": "SYS-01",
+  "disk_serial": "DISK_01",
+  "os_version": "Windows 11",
+  "os_edition": "Enterprise",
+  "os_language": "en-US",
+  "image_name": "Windows 11 Enterprise",
+  "secret_profile_id": "66666666-6666-4666-8666-666666666666",
+  "callback_profile_id": "77777777-7777-4777-8777-777777777777"
+}

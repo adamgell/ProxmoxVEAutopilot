@@ -1,0 +1,7 @@
+
+running 1 test
+test scheduler::osdeploy::transition::tests::private_reclaim_and_repark_require_expired_exact_epoch_and_original_budget ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 57 filtered out; finished in 30.84s
+
+{"invocation_only": {"exit": 0, "failure": null}, "qualification": "INCOMPLETE"}

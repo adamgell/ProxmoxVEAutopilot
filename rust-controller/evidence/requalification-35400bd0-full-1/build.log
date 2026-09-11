@@ -1,0 +1,2377 @@
+{"event": "start", "utc": "2026-09-11T07:40:18.837537+00:00", "argv": ["zsh", "-c", "set -o pipefail; git archive 35400bd02b9816b3a0bdff0c7df3cfd20fd6d1ee rust-controller autopilot-proxmox/playbooks/_test_long_sleep.yml | docker --host unix:///Users/Adam.Gell/.orbstack/run/docker.sock build --platform linux/amd64 --build-arg CONTROLLER_GIT_SHA=35400bd02b9816b3a0bdff0c7df3cfd20fd6d1ee -f rust-controller/Dockerfile.test -t rust-controller-task9:35400bd0 -"], "bound": 1800}
+#0 building with "default" instance using docker driver
+
+#1 [internal] load remote build context
+#1 DONE 0.1s
+
+#2 copy /context /
+#2 DONE 0.1s
+
+#3 [internal] load metadata for docker.io/library/rust:1.92-bookworm@sha256:e90e846de4124376164ddfbaab4b0774c7bdeef5e738866295e5a90a34a307a2
+#3 DONE 0.0s
+
+#4 [ 1/12] FROM docker.io/library/rust:1.92-bookworm@sha256:e90e846de4124376164ddfbaab4b0774c7bdeef5e738866295e5a90a34a307a2
+#4 resolve docker.io/library/rust:1.92-bookworm@sha256:e90e846de4124376164ddfbaab4b0774c7bdeef5e738866295e5a90a34a307a2 0.0s done
+#4 DONE 0.0s
+
+#5 [ 2/12] RUN apt-get update -qq && apt-get install -y --no-install-recommends ansible-core=2.14.18-0+deb12u2 python3-psycopg2=2.9.5-1+b1 procps curl && rm -rf /var/lib/apt/lists/*
+#5 CACHED
+
+#6 [ 3/12] WORKDIR /workspace
+#6 CACHED
+
+#7 [ 4/12] COPY rust-controller ./rust-controller
+#7 DONE 0.1s
+
+#8 [ 5/12] COPY autopilot-proxmox/playbooks/_test_long_sleep.yml ./autopilot-proxmox/playbooks/_test_long_sleep.yml
+#8 DONE 0.0s
+
+#9 [ 6/12] RUN cargo build --locked --manifest-path rust-controller/Cargo.toml --workspace --examples --release && cargo build --locked --manifest-path rust-controller/Cargo.toml -p controller-service --release && cargo test --locked --manifest-path rust-controller/Cargo.toml --workspace --all-features --no-run
+#9 0.494     Updating crates.io index
+#9 1.832  Downloading crates ...
+#9 1.925   Downloaded cfg-if v1.0.4
+#9 1.935   Downloaded cfg_aliases v0.2.2
+#9 1.938   Downloaded futures-io v0.3.33
+#9 1.942   Downloaded idna_adapter v1.2.2
+#9 1.944   Downloaded atoi v2.0.0
+#9 1.946   Downloaded hex v0.4.3
+#9 1.947   Downloaded futures-sink v0.3.33
+#9 1.948   Downloaded futures-task v0.3.33
+#9 1.949   Downloaded md-5 v0.10.6
+#9 1.951   Downloaded concurrent-queue v2.5.0
+#9 1.953   Downloaded futures-executor v0.3.32
+#9 1.954   Downloaded either v1.18.0
+#9 1.956   Downloaded form_urlencoded v1.2.2
+#9 1.957   Downloaded crypto-common v0.1.7
+#9 1.958   Downloaded crc-catalog v2.4.0
+#9 1.959   Downloaded lru-slab v0.1.2
+#9 1.960   Downloaded itoa v1.0.18
+#9 1.962   Downloaded httpdate v1.0.3
+#9 1.963   Downloaded http-body v1.1.0
+#9 1.964   Downloaded num-iter v0.1.46
+#9 1.966   Downloaded mime v0.3.17
+#9 1.967   Downloaded webpki-roots v0.26.11
+#9 1.969   Downloaded find-msvc-tools v0.1.11
+#9 1.971   Downloaded hyper-rustls v0.27.9
+#9 1.972   Downloaded subtle v2.6.1
+#9 1.974   Downloaded rand_chacha v0.3.1
+#9 1.975   Downloaded yoke-derive v0.8.2
+#9 1.978   Downloaded lock_api v0.4.14
+#9 1.980   Downloaded version_check v0.9.5
+#9 1.981   Downloaded writeable v0.6.4
+#9 1.983   Downloaded zerofrom v0.1.8
+#9 1.984   Downloaded whoami v1.6.1
+#9 1.987   Downloaded httparse v1.10.1
+#9 1.989   Downloaded anyhow v1.0.104
+#9 1.992   Downloaded untrusted v0.9.0
+#9 1.993   Downloaded matchit v0.8.4
+#9 1.995   Downloaded getrandom v0.2.17
+#9 1.997   Downloaded futures-channel v0.3.33
+#9 1.998   Downloaded event-listener v5.4.1
+#9 2.000   Downloaded litemap v0.8.3
+#9 2.002   Downloaded iana-time-zone v0.1.65
+#9 2.004   Downloaded zerofrom-derive v0.1.7
+#9 2.005   Downloaded serde_urlencoded v0.7.1
+#9 2.006   Downloaded rustc-hash v2.1.3
+#9 2.007   Downloaded hmac v0.12.1
+#9 2.008   Downloaded crossbeam-utils v0.8.22
+#9 2.010   Downloaded byteorder v1.5.0
+#9 2.012   Downloaded dotenvy v0.15.7
+#9 2.013   Downloaded const-oid v0.9.6
+#9 2.015   Downloaded num-integer v0.1.47
+#9 2.016   Downloaded http-body-util v0.1.4
+#9 2.018   Downloaded ipnet v2.12.1
+#9 2.019   Downloaded hashlink v0.10.0
+#9 2.021   Downloaded log v0.4.34
+#9 2.025   Downloaded zmij v1.0.23
+#9 2.027   Downloaded icu_normalizer_data v2.3.0
+#9 2.029   Downloaded memchr v2.8.3
+#9 2.034   Downloaded try-lock v0.2.5
+#9 2.036   Downloaded pkg-config v0.3.34
+#9 2.037   Downloaded parking v2.2.1
+#9 2.038   Downloaded unarray v0.1.4
+#9 2.039   Downloaded webpki-roots v1.0.9
+#9 2.043   Downloaded chrono v0.4.45
+#9 2.048   Downloaded hyper v1.11.0
+#9 2.054   Downloaded hkdf v0.12.4
+#9 2.056   Downloaded sha1 v0.10.7
+#9 2.058   Downloaded utf8_iter v1.0.4
+#9 2.058   Downloaded hashbrown v0.17.1
+#9 2.063   Downloaded wait-timeout v0.2.1
+#9 2.064   Downloaded tokio-macros v2.7.2
+#9 2.065   Downloaded stable_deref_trait v1.2.1
+#9 2.066   Downloaded icu_normalizer v2.3.0
+#9 2.076   Downloaded tower-service v0.3.3
+#9 2.077   Downloaded thiserror-impl v2.0.20
+#9 2.079   Downloaded synstructure v0.13.2
+#9 2.080   Downloaded sqlx-macros-core v0.8.6
+#9 2.082   Downloaded shlex v2.0.1
+#9 2.083   Downloaded thiserror v2.0.20
+#9 2.087   Downloaded sha2 v0.10.9
+#9 2.089   Downloaded libc v0.2.189
+#9 2.118   Downloaded zerocopy v0.8.56
+#9 2.133   Downloaded tinystr v0.8.4
+#9 2.135   Downloaded stringprep v0.1.5
+#9 2.136   Downloaded spki v0.7.3
+#9 2.138   Downloaded slab v0.4.12
+#9 2.139   Downloaded signal-hook-registry v1.4.8
+#9 2.140   Downloaded zerotrie v0.2.5
+#9 2.143   Downloaded tokio-stream v0.1.18
+#9 2.147   Downloaded tokio-rustls v0.26.4
+#9 2.148   Downloaded once_cell v1.21.4
+#9 2.150   Downloaded quote v1.0.47
+#9 2.152   Downloaded pkcs1 v0.7.5
+#9 2.154   Downloaded parking_lot_core v0.9.12
+#9 2.155   Downloaded rand_core v0.9.5
+#9 2.156   Downloaded zerovec v0.11.8
+#9 2.161   Downloaded rustls-pki-types v1.15.1
+#9 2.163   Downloaded rand_chacha v0.9.0
+#9 2.164   Downloaded quinn-udp v0.5.14
+#9 2.165   Downloaded quick-error v1.2.3
+#9 2.166   Downloaded pkcs8 v0.10.2
+#9 2.169   Downloaded serde_derive v1.0.229
+#9 2.171   Downloaded serde_path_to_error v0.1.20
+#9 2.172   Downloaded parking_lot v0.12.5
+#9 2.174   Downloaded rusty-fork v0.3.1
+#9 2.175   Downloaded rand_core v0.6.4
+#9 2.176   Downloaded pem-rfc7468 v0.7.0
+#9 2.178   Downloaded futures-util v0.3.33
+#9 2.187   Downloaded unicode-properties v0.1.4
+#9 2.189   Downloaded ppv-lite86 v0.2.21
+#9 2.190   Downloaded tempfile v3.27.0
+#9 2.192   Downloaded spin v0.9.9
+#9 2.193   Downloaded axum v0.8.9
+#9 2.199   Downloaded uuid v1.26.0
+#9 2.202   Downloaded unicode-ident v1.0.24
+#9 2.204   Downloaded tinyvec v1.12.0
+#9 2.206   Downloaded socket2 v0.6.5
+#9 2.207   Downloaded num-traits v0.2.19
+#9 2.209   Downloaded tracing-attributes v0.1.31
+#9 2.211   Downloaded libm v0.2.16
+#9 2.219   Downloaded idna v1.1.0
+#9 2.222   Downloaded ryu v1.0.23
+#9 2.225   Downloaded proc-macro2 v1.0.107
+#9 2.227   Downloaded icu_properties_data v2.3.0
+#9 2.235   Downloaded unicode-bidi v0.3.18
+#9 2.237   Downloaded pin-project-lite v0.2.17
+#9 2.240   Downloaded tracing-core v0.1.36
+#9 2.243   Downloaded serde_core v1.0.229
+#9 2.245   Downloaded indexmap v2.14.1
+#9 2.248   Downloaded icu_properties v2.3.0
+#9 2.251   Downloaded hashbrown v0.15.5
+#9 2.255   Downloaded rsa v0.9.10
+#9 2.258   Downloaded sqlx-mysql v0.8.6
+#9 2.262   Downloaded smallvec v1.15.2
+#9 2.263   Downloaded tinyvec_macros v0.1.1
+#9 2.264   Downloaded sqlx-macros v0.8.6
+#9 2.265   Downloaded signature v2.2.0
+#9 2.266   Downloaded scopeguard v1.2.0
+#9 2.267   Downloaded num-bigint-dig v0.8.6
+#9 2.270   Downloaded sqlx-sqlite v0.8.6
+#9 2.273   Downloaded rustls-webpki v0.103.14
+#9 2.276   Downloaded serde v1.0.229
+#9 2.279   Downloaded rand v0.9.5
+#9 2.282   Downloaded quinn v0.11.9
+#9 2.284   Downloaded mio v1.2.2
+#9 2.289   Downloaded hyper-util v0.1.20
+#9 2.293   Downloaded rand v0.8.8
+#9 2.296   Downloaded http v1.5.0
+#9 2.299   Downloaded futures-intrusive v0.5.0
+#9 2.302   Downloaded der v0.7.10
+#9 2.306   Downloaded bytes v1.12.1
+#9 2.309   Downloaded url v2.5.8
+#9 2.311   Downloaded tower v0.5.3
+#9 2.318   Downloaded typenum v1.20.1
+#9 2.321   Downloaded sqlx-core v0.8.6
+#9 2.327   Downloaded bitflags v2.13.1
+#9 2.330   Downloaded icu_locale_core v2.3.0
+#9 2.334   Downloaded icu_collections v2.3.0
+#9 2.338   Downloaded getrandom v0.4.3
+#9 2.341   Downloaded flume v0.11.1
+#9 2.344   Downloaded base64 v0.22.1
+#9 2.346   Downloaded zerovec-derive v0.11.6
+#9 2.348   Downloaded zeroize v1.9.0
+#9 2.349   Downloaded unicode-normalization v0.1.25
+#9 2.352   Downloaded yoke v0.8.3
+#9 2.353   Downloaded tower-layer v0.3.3
+#9 2.354   Downloaded sync_wrapper v1.0.2
+#9 2.355   Downloaded rand_xorshift v0.4.0
+#9 2.355   Downloaded potential_utf v0.1.6
+#9 2.356   Downloaded sqlx-postgres v0.8.6
+#9 2.362   Downloaded percent-encoding v2.3.2
+#9 2.362   Downloaded getrandom v0.3.4
+#9 2.365   Downloaded serde_json v1.0.151
+#9 2.370   Downloaded tower-http v0.6.11
+#9 2.377   Downloaded icu_provider v2.3.1
+#9 2.379   Downloaded foldhash v0.1.5
+#9 2.380   Downloaded digest v0.10.7
+#9 2.381   Downloaded base64ct v1.8.3
+#9 2.383   Downloaded want v0.3.1
+#9 2.383   Downloaded heck v0.5.0
+#9 2.384   Downloaded generic-array v0.14.7
+#9 2.385   Downloaded fastrand v2.5.0
+#9 2.386   Downloaded displaydoc v0.2.7
+#9 2.388   Downloaded bit-vec v0.8.0
+#9 2.389   Downloaded autocfg v1.5.1
+#9 2.390   Downloaded linux-raw-sys v0.12.1
+#9 2.446   Downloaded reqwest v0.12.28
+#9 2.450   Downloaded sqlx v0.8.6
+#9 2.459   Downloaded proptest v1.11.0
+#9 2.466   Downloaded vcpkg v0.2.15
+#9 2.498   Downloaded atomic-waker v1.1.2
+#9 2.499   Downloaded quinn-proto v0.11.15
+#9 2.504   Downloaded syn v3.0.4
+#9 2.513   Downloaded syn v2.0.119
+#9 2.520   Downloaded rustls v0.23.43
+#9 2.530   Downloaded regex-syntax v0.8.11
+#9 2.536   Downloaded async-trait v0.1.89
+#9 2.539   Downloaded lazy_static v1.5.0
+#9 2.540   Downloaded futures-core v0.3.33
+#9 2.541   Downloaded rustix v1.1.4
+#9 2.559   Downloaded cpufeatures v0.2.17
+#9 2.560   Downloaded tracing v0.1.44
+#9 2.573   Downloaded home v0.5.12
+#9 2.574   Downloaded crossbeam-queue v0.3.12
+#9 2.575   Downloaded block-buffer v0.10.4
+#9 2.576   Downloaded fnv v1.0.7
+#9 2.576   Downloaded errno v0.3.14
+#9 2.577   Downloaded crc v3.4.0
+#9 2.578   Downloaded equivalent v1.0.2
+#9 2.579   Downloaded bit-set v0.8.0
+#9 2.580   Downloaded allocator-api2 v0.2.21
+#9 2.582   Downloaded cc v1.4.4
+#9 2.584   Downloaded axum-core v0.5.6
+#9 2.587   Downloaded tokio v1.53.1
+#9 2.620   Downloaded ring v0.17.14
+#9 2.653   Downloaded libsqlite3-sys v0.30.1
+#9 2.846    Compiling proc-macro2 v1.0.107
+#9 2.847    Compiling quote v1.0.47
+#9 2.847    Compiling unicode-ident v1.0.24
+#9 3.339    Compiling libc v0.2.189
+#9 3.652    Compiling cfg-if v1.0.4
+#9 3.847    Compiling serde_core v1.0.229
+#9 5.560    Compiling serde v1.0.229
+#9 6.280    Compiling syn v3.0.4
+#9 6.307    Compiling syn v2.0.119
+#9 7.134    Compiling itoa v1.0.18
+#9 8.177    Compiling pin-project-lite v0.2.17
+#9 8.563    Compiling stable_deref_trait v1.2.1
+#9 8.800    Compiling parking_lot_core v0.9.12
+#9 9.426    Compiling serde_derive v1.0.229
+#9 9.439    Compiling synstructure v0.13.2
+#9 9.717    Compiling bytes v1.12.1
+#9 10.52    Compiling zerofrom-derive v0.1.7
+#9 11.53    Compiling yoke-derive v0.8.2
+#9 11.92    Compiling zerofrom v0.1.8
+#9 12.39    Compiling once_cell v1.21.4
+#9 12.87    Compiling yoke v0.8.3
+#9 13.43    Compiling smallvec v1.15.2
+#9 13.48    Compiling futures-core v0.3.33
+#9 13.59    Compiling zerovec-derive v0.11.6
+#9 14.36    Compiling scopeguard v1.2.0
+#9 14.44    Compiling version_check v0.9.5
+#9 14.85    Compiling lock_api v0.4.14
+#9 14.97    Compiling zerovec v0.11.8
+#9 15.28    Compiling generic-array v0.14.7
+#9 15.86    Compiling displaydoc v0.2.7
+#9 16.29    Compiling subtle v2.6.1
+#9 16.88    Compiling parking_lot v0.12.5
+#9 17.01    Compiling errno v0.3.14
+#9 17.03    Compiling memchr v2.8.3
+#9 17.88    Compiling typenum v1.20.1
+#9 18.69    Compiling signal-hook-registry v1.4.8
+#9 19.06    Compiling tokio-macros v2.7.2
+#9 20.06    Compiling mio v1.2.2
+#9 20.20    Compiling socket2 v0.6.5
+#9 20.25    Compiling find-msvc-tools v0.1.11
+#9 21.10    Compiling getrandom v0.4.3
+#9 21.74    Compiling shlex v2.0.1
+#9 21.82    Compiling tokio v1.53.1
+#9 22.12    Compiling tinystr v0.8.4
+#9 22.48    Compiling cc v1.4.4
+#9 23.05    Compiling getrandom v0.2.17
+#9 24.05    Compiling litemap v0.8.3
+#9 24.23    Compiling autocfg v1.5.1
+#9 25.00    Compiling futures-sink v0.3.33
+#9 25.14    Compiling writeable v0.6.4
+#9 25.41    Compiling num-traits v0.2.19
+#9 25.91    Compiling icu_locale_core v2.3.0
+#9 26.29    Compiling ring v0.17.14
+#9 29.55    Compiling block-buffer v0.10.4
+#9 30.35    Compiling crypto-common v0.1.7
+#9 31.05    Compiling zerotrie v0.2.5
+#9 31.50    Compiling potential_utf v0.1.6
+#9 32.59    Compiling tracing-core v0.1.36
+#9 32.82    Compiling tracing-attributes v0.1.31
+#9 33.84    Compiling icu_normalizer_data v2.3.0
+#9 34.47    Compiling zeroize v1.9.0
+#9 34.74    Compiling percent-encoding v2.3.2
+#9 35.20    Compiling zmij v1.0.23
+#9 35.50    Compiling utf8_iter v1.0.4
+#9 36.00    Compiling log v0.4.34
+#9 36.06    Compiling icu_properties_data v2.3.0
+#9 36.44    Compiling icu_collections v2.3.0
+#9 36.71    Compiling tracing v0.1.44
+#9 37.14    Compiling rustls-pki-types v1.15.1
+#9 38.30    Compiling icu_provider v2.3.1
+#9 38.50    Compiling digest v0.10.7
+#9 39.93    Compiling slab v0.4.12
+#9 40.19    Compiling futures-task v0.3.33
+#9 40.77    Compiling futures-io v0.3.33
+#9 41.05    Compiling serde_json v1.0.151
+#9 41.66    Compiling futures-util v0.3.33
+#9 45.03    Compiling http v1.5.0
+#9 45.17    Compiling untrusted v0.9.0
+#9 45.83    Compiling thiserror v2.0.20
+#9 47.03    Compiling http-body v1.1.0
+#9 47.79    Compiling icu_properties v2.3.0
+#9 50.13    Compiling icu_normalizer v2.3.0
+#9 51.53    Compiling form_urlencoded v1.2.2
+#9 52.66    Compiling thiserror-impl v2.0.20
+#9 52.88    Compiling base64 v0.22.1
+#9 54.40    Compiling rustls v0.23.43
+#9 54.50    Compiling bitflags v2.13.1
+#9 55.17    Compiling rustls-webpki v0.103.14
+#9 55.34    Compiling idna_adapter v1.2.2
+#9 55.81    Compiling uuid v1.26.0
+#9 55.84    Compiling futures-channel v0.3.33
+#9 56.79    Compiling iana-time-zone v0.1.65
+#9 57.64    Compiling zerocopy v0.8.56
+#9 58.32    Compiling httparse v1.10.1
+#9 58.59    Compiling cpufeatures v0.2.17
+#9 58.60    Compiling tower-service v0.3.3
+#9 58.82    Compiling sha2 v0.10.9
+#9 59.07    Compiling chrono v0.4.45
+#9 60.82    Compiling idna v1.1.0
+#9 63.28    Compiling webpki-roots v1.0.9
+#9 63.63    Compiling crossbeam-utils v0.8.22
+#9 63.92    Compiling try-lock v0.2.5
+#9 64.40    Compiling want v0.3.1
+#9 64.52    Compiling url v2.5.8
+#9 67.71    Compiling sync_wrapper v1.0.2
+#9 68.16    Compiling httpdate v1.0.3
+#9 69.49    Compiling atomic-waker v1.1.2
+#9 69.58    Compiling tower-layer v0.3.3
+#9 70.31    Compiling hex v0.4.3
+#9 70.33    Compiling hyper v1.11.0
+#9 71.27    Compiling ppv-lite86 v0.2.21
+#9 73.48    Compiling equivalent v1.0.2
+#9 73.68    Compiling ipnet v2.12.1
+#9 73.81    Compiling tower v0.5.3
+#9 74.68    Compiling hyper-util v0.1.20
+#9 75.38    Compiling controller-domain v0.1.0 (/workspace/rust-controller/crates/controller-domain)
+#9 75.87    Compiling http-body-util v0.1.4
+#9 76.79    Compiling tinyvec_macros v0.1.1
+#9 76.88    Compiling ryu v1.0.23
+#9 77.01    Compiling allocator-api2 v0.2.21
+#9 78.03    Compiling foldhash v0.1.5
+#9 78.15    Compiling serde_urlencoded v0.7.1
+#9 78.32    Compiling tinyvec v1.12.0
+#9 79.11    Compiling hashbrown v0.15.5
+#9 79.24    Compiling event-journal v0.1.0 (/workspace/rust-controller/crates/event-journal)
+#9 79.26    Compiling concurrent-queue v2.5.0
+#9 80.22    Compiling tokio-rustls v0.26.4
+#9 80.62    Compiling hmac v0.12.1
+#9 81.03    Compiling rand_core v0.6.4
+#9 81.25    Compiling parking v2.2.1
+#9 81.64    Compiling hashbrown v0.17.1
+#9 82.15    Compiling crc-catalog v2.4.0
+#9 82.19    Compiling event-listener v5.4.1
+#9 82.47    Compiling crc v3.4.0
+#9 83.04    Compiling indexmap v2.14.1
+#9 83.14    Compiling rand_chacha v0.3.1
+#9 83.30    Compiling hyper-rustls v0.27.9
+#9 84.39    Compiling hashlink v0.10.0
+#9 84.59    Compiling unicode-normalization v0.1.25
+#9 84.89    Compiling tower-http v0.6.11
+#9 85.20    Compiling crossbeam-queue v0.3.12
+#9 85.84    Compiling webpki-roots v0.26.11
+#9 85.97    Compiling tokio-stream v0.1.18
+#9 86.05    Compiling futures-intrusive v0.5.0
+#9 86.64    Compiling either v1.18.0
+#9 91.70    Compiling unicode-properties v0.1.4
+#9 91.86    Compiling unicode-bidi v0.3.18
+#9 91.99    Compiling sqlx-core v0.8.6
+#9 92.59    Compiling reqwest v0.12.28
+#9 94.14    Compiling stringprep v0.1.5
+#9 97.04    Compiling rand v0.8.8
+#9 97.09    Compiling hkdf v0.12.4
+#9 97.79    Compiling atoi v2.0.0
+#9 98.36    Compiling md-5 v0.10.6
+#9 98.79    Compiling async-trait v0.1.89
+#9 99.04    Compiling rustix v1.1.4
+#9 99.96    Compiling byteorder v1.5.0
+#9 100.2    Compiling dotenvy v0.15.7
+#9 100.8    Compiling home v0.5.12
+#9 101.6    Compiling whoami v1.6.1
+#9 102.2    Compiling pve-port v0.1.0 (/workspace/rust-controller/crates/pve-port)
+#9 103.1    Compiling sqlx-postgres v0.8.6
+#9 105.2    Compiling artifact-index v0.1.0 (/workspace/rust-controller/crates/artifact-index)
+#9 107.0    Compiling linux-raw-sys v0.12.1
+#9 107.8    Compiling getrandom v0.3.4
+#9 111.7    Compiling sqlx v0.8.6
+#9 111.9    Compiling osdeploy-adapter v0.1.0 (/workspace/rust-controller/crates/osdeploy-adapter)
+#9 117.9    Compiling fastrand v2.5.0
+#9 119.0    Compiling tempfile v3.27.0
+#9 120.1    Compiling postgres-store v0.1.0 (/workspace/rust-controller/crates/postgres-store)
+#9 122.1    Compiling rand_core v0.9.5
+#9 123.2    Compiling mime v0.3.17
+#9 124.2    Compiling scheduler v0.1.0 (/workspace/rust-controller/crates/scheduler)
+#9 124.4    Compiling anyhow v1.0.104
+#9 124.7    Compiling axum-core v0.5.6
+#9 125.6    Compiling api-compat v0.1.0 (/workspace/rust-controller/crates/api-compat)
+#9 127.5    Compiling serde_path_to_error v0.1.20
+#9 128.8    Compiling wait-timeout v0.2.1
+#9 129.9    Compiling quick-error v1.2.3
+#9 130.3    Compiling matchit v0.8.4
+#9 130.4    Compiling fnv v1.0.7
+#9 130.7    Compiling bit-vec v0.8.0
+#9 130.8    Compiling controller-service v0.1.0 (/workspace/rust-controller/crates/controller-service)
+#9 131.5    Compiling bit-set v0.8.0
+#9 131.9    Compiling axum v0.8.9
+#9 132.0    Compiling rusty-fork v0.3.1
+#9 132.3    Compiling ansible-adapter v0.1.0 (/workspace/rust-controller/crates/ansible-adapter)
+#9 135.7    Compiling rand_chacha v0.9.0
+#9 137.0    Compiling rand v0.9.5
+#9 137.7    Compiling rand_xorshift v0.4.0
+#9 138.4    Compiling regex-syntax v0.8.11
+#9 138.5    Compiling unarray v0.1.4
+#9 139.1    Compiling operation-controller v0.1.0 (/workspace/rust-controller/crates/operation-controller)
+#9 141.6    Compiling proptest v1.11.0
+#9 160.7     Finished `release` profile [optimized] target(s) in 2m 37s
+#9 161.1    Compiling tokio v1.53.1
+#9 165.2    Compiling hyper v1.11.0
+#9 165.2    Compiling tower v0.5.3
+#9 166.8    Compiling hyper-util v0.1.20
+#9 169.7    Compiling tokio-rustls v0.26.4
+#9 170.4    Compiling hyper-rustls v0.27.9
+#9 170.5    Compiling tower-http v0.6.11
+#9 171.2    Compiling tokio-stream v0.1.18
+#9 172.1    Compiling reqwest v0.12.28
+#9 172.3    Compiling sqlx-core v0.8.6
+#9 172.6    Compiling axum v0.8.9
+#9 177.0    Compiling sqlx-postgres v0.8.6
+#9 178.2    Compiling pve-port v0.1.0 (/workspace/rust-controller/crates/pve-port)
+#9 183.3    Compiling osdeploy-adapter v0.1.0 (/workspace/rust-controller/crates/osdeploy-adapter)
+#9 189.0    Compiling sqlx v0.8.6
+#9 189.3    Compiling postgres-store v0.1.0 (/workspace/rust-controller/crates/postgres-store)
+#9 195.7    Compiling scheduler v0.1.0 (/workspace/rust-controller/crates/scheduler)
+#9 195.9    Compiling ansible-adapter v0.1.0 (/workspace/rust-controller/crates/ansible-adapter)
+#9 201.4    Compiling controller-service v0.1.0 (/workspace/rust-controller/crates/controller-service)
+#9 209.9     Finished `release` profile [optimized] target(s) in 49.05s
+#9 210.3    Compiling proc-macro2 v1.0.107
+#9 210.3    Compiling quote v1.0.47
+#9 210.3    Compiling unicode-ident v1.0.24
+#9 211.8    Compiling libc v0.2.189
+#9 212.2    Compiling cfg-if v1.0.4
+#9 212.4    Compiling serde_core v1.0.229
+#9 214.5    Compiling serde v1.0.229
+#9 215.1    Compiling syn v3.0.4
+#9 215.5    Compiling itoa v1.0.18
+#9 215.9    Compiling syn v2.0.119
+#9 216.3    Compiling memchr v2.8.3
+#9 217.8    Compiling version_check v0.9.5
+#9 218.8    Compiling generic-array v0.14.7
+#9 219.4    Compiling serde_derive v1.0.229
+#9 219.4    Compiling subtle v2.6.1
+#9 220.0    Compiling getrandom v0.4.3
+#9 220.4    Compiling autocfg v1.5.1
+#9 220.8    Compiling typenum v1.20.1
+#9 221.4    Compiling num-traits v0.2.19
+#9 222.8    Compiling zmij v1.0.23
+#9 223.3    Compiling serde_json v1.0.151
+#9 224.0    Compiling crypto-common v0.1.7
+#9 224.4    Compiling block-buffer v0.10.4
+#9 224.5    Compiling synstructure v0.13.2
+#9 224.5    Compiling once_cell v1.21.4
+#9 225.0    Compiling thiserror v2.0.20
+#9 225.3    Compiling digest v0.10.7
+#9 226.0    Compiling smallvec v1.15.2
+#9 226.2    Compiling thiserror-impl v2.0.20
+#9 226.9    Compiling zerofrom-derive v0.1.7
+#9 227.3    Compiling uuid v1.26.0
+#9 228.2    Compiling yoke-derive v0.8.2
+#9 228.3    Compiling zerofrom v0.1.8
+#9 228.5    Compiling pin-project-lite v0.2.17
+#9 228.8    Compiling stable_deref_trait v1.2.1
+#9 228.9    Compiling futures-core v0.3.33
+#9 229.0    Compiling bytes v1.12.1
+#9 229.5    Compiling yoke v0.8.3
+#9 229.6    Compiling cpufeatures v0.2.17
+#9 229.8    Compiling parking_lot_core v0.9.12
+#9 230.2    Compiling iana-time-zone v0.1.65
+#9 230.2    Compiling sha2 v0.10.9
+#9 230.5    Compiling zerovec-derive v0.11.6
+#9 231.0    Compiling chrono v0.4.45
+#9 231.2    Compiling scopeguard v1.2.0
+#9 231.6    Compiling lock_api v0.4.14
+#9 231.9    Compiling zerovec v0.11.8
+#9 233.0    Compiling displaydoc v0.2.7
+#9 233.0    Compiling hex v0.4.3
+#9 233.2    Compiling parking_lot v0.12.5
+#9 233.9    Compiling controller-domain v0.1.0 (/workspace/rust-controller/crates/controller-domain)
+#9 234.2    Compiling errno v0.3.14
+#9 234.2    Compiling tokio-macros v2.7.2
+#9 234.9    Compiling signal-hook-registry v1.4.8
+#9 235.2    Compiling socket2 v0.6.5
+#9 235.5    Compiling mio v1.2.2
+#9 235.9    Compiling shlex v2.0.1
+#9 236.3    Compiling find-msvc-tools v0.1.11
+#9 236.6    Compiling tokio v1.53.1
+#9 236.6    Compiling tinystr v0.8.4
+#9 237.2    Compiling cc v1.4.4
+#9 237.4    Compiling getrandom v0.2.17
+#9 238.2    Compiling futures-sink v0.3.33
+#9 238.6    Compiling litemap v0.8.3
+#9 238.8    Compiling bitflags v2.13.1
+#9 239.3    Compiling writeable v0.6.4
+#9 239.7    Compiling ring v0.17.14
+#9 240.2    Compiling icu_locale_core v2.3.0
+#9 240.7    Compiling event-journal v0.1.0 (/workspace/rust-controller/crates/event-journal)
+#9 241.6    Compiling zerotrie v0.2.5
+#9 241.9    Compiling potential_utf v0.1.6
+#9 242.2    Compiling tracing-core v0.1.36
+#9 242.6    Compiling tracing-attributes v0.1.31
+#9 242.6    Compiling icu_normalizer_data v2.3.0
+#9 243.2    Compiling icu_properties_data v2.3.0
+#9 243.4    Compiling utf8_iter v1.0.4
+#9 243.7    Compiling base64 v0.22.1
+#9 244.0    Compiling percent-encoding v2.3.2
+#9 244.1    Compiling log v0.4.34
+#9 244.7    Compiling zeroize v1.9.0
+#9 244.8    Compiling tracing v0.1.44
+#9 244.9    Compiling icu_collections v2.3.0
+#9 245.4    Compiling rustls-pki-types v1.15.1
+#9 245.8    Compiling icu_provider v2.3.1
+#9 246.6    Compiling slab v0.4.12
+#9 246.9    Compiling futures-io v0.3.33
+#9 247.3    Compiling futures-task v0.3.33
+#9 247.9    Compiling futures-util v0.3.33
+#9 248.0    Compiling http v1.5.0
+#9 249.5    Compiling untrusted v0.9.0
+#9 250.0    Compiling http-body v1.1.0
+#9 250.2    Compiling icu_properties v2.3.0
+#9 250.7    Compiling icu_normalizer v2.3.0
+#9 251.8    Compiling form_urlencoded v1.2.2
+#9 251.9    Compiling rustls v0.23.43
+#9 252.4    Compiling idna_adapter v1.2.2
+#9 252.6    Compiling futures-channel v0.3.33
+#9 253.0    Compiling httparse v1.10.1
+#9 253.4    Compiling rustls-webpki v0.103.14
+#9 253.8    Compiling tower-service v0.3.3
+#9 254.0    Compiling idna v1.1.0
+#9 254.2    Compiling webpki-roots v1.0.9
+#9 254.9    Compiling try-lock v0.2.5
+#9 255.3    Compiling url v2.5.8
+#9 255.5    Compiling want v0.3.1
+#9 256.8    Compiling sync_wrapper v1.0.2
+#9 257.1    Compiling atomic-waker v1.1.2
+#9 257.2    Compiling tower-layer v0.3.3
+#9 257.7    Compiling httpdate v1.0.3
+#9 257.8    Compiling ipnet v2.12.1
+#9 258.5    Compiling hyper v1.11.0
+#9 258.9    Compiling tower v0.5.3
+#9 258.9    Compiling http-body-util v0.1.4
+#9 259.6    Compiling ryu v1.0.23
+#9 260.0    Compiling hyper-util v0.1.20
+#9 260.3    Compiling serde_urlencoded v0.7.1
+#9 260.4    Compiling tokio-rustls v0.26.4
+#9 261.1    Compiling tower-http v0.6.11
+#9 261.1    Compiling async-trait v0.1.89
+#9 262.0    Compiling hyper-rustls v0.27.9
+#9 262.1    Compiling artifact-index v0.1.0 (/workspace/rust-controller/crates/artifact-index)
+#9 262.4    Compiling zerocopy v0.8.56
+#9 262.9    Compiling reqwest v0.12.28
+#9 263.2    Compiling crossbeam-utils v0.8.22
+#9 264.0    Compiling hmac v0.12.1
+#9 264.5    Compiling pve-port v0.1.0 (/workspace/rust-controller/crates/pve-port)
+#9 266.0    Compiling ppv-lite86 v0.2.21
+#9 266.7    Compiling equivalent v1.0.2
+#9 267.0    Compiling foldhash v0.1.5
+#9 267.1    Compiling tinyvec_macros v0.1.1
+#9 267.3    Compiling allocator-api2 v0.2.21
+#9 267.7    Compiling tinyvec v1.12.0
+#9 268.2    Compiling hashbrown v0.15.5
+#9 268.5    Compiling concurrent-queue v2.5.0
+#9 269.2    Compiling rand_core v0.6.4
+#9 269.3    Compiling crc-catalog v2.4.0
+#9 269.5    Compiling parking v2.2.1
+#9 270.1    Compiling hashbrown v0.17.1
+#9 270.2    Compiling event-listener v5.4.1
+#9 272.2    Compiling rand_chacha v0.3.1
+#9 272.4    Compiling indexmap v2.14.1
+#9 273.4    Compiling osdeploy-adapter v0.1.0 (/workspace/rust-controller/crates/osdeploy-adapter)
+#9 273.8    Compiling crc v3.4.0
+#9 274.5    Compiling hashlink v0.10.0
+#9 275.3    Compiling unicode-normalization v0.1.25
+#9 276.3    Compiling crossbeam-queue v0.3.12
+#9 276.5    Compiling webpki-roots v0.26.11
+#9 276.7    Compiling tokio-stream v0.1.18
+#9 277.0    Compiling futures-intrusive v0.5.0
+#9 278.0    Compiling either v1.18.0
+#9 278.2    Compiling unicode-properties v0.1.4
+#9 279.0    Compiling unicode-bidi v0.3.18
+#9 279.0    Compiling sqlx-core v0.8.6
+#9 280.2    Compiling stringprep v0.1.5
+#9 281.3    Compiling rand v0.8.8
+#9 281.3    Compiling hkdf v0.12.4
+#9 282.0    Compiling md-5 v0.10.6
+#9 282.2    Compiling atoi v2.0.0
+#9 282.6    Compiling whoami v1.6.1
+#9 282.7    Compiling byteorder v1.5.0
+#9 282.8    Compiling home v0.5.12
+#9 283.4    Compiling dotenvy v0.15.7
+#9 283.5    Compiling rustix v1.1.4
+#9 283.6    Compiling linux-raw-sys v0.12.1
+#9 284.4    Compiling sqlx-postgres v0.8.6
+#9 284.6    Compiling fastrand v2.5.0
+#9 285.5    Compiling getrandom v0.3.4
+#9 287.2    Compiling tempfile v3.27.0
+#9 287.3    Compiling rand_core v0.9.5
+#9 288.2    Compiling sqlx v0.8.6
+#9 288.4    Compiling postgres-store v0.1.0 (/workspace/rust-controller/crates/postgres-store)
+#9 288.4    Compiling wait-timeout v0.2.1
+#9 289.4    Compiling bit-vec v0.8.0
+#9 290.3    Compiling fnv v1.0.7
+#9 290.6    Compiling quick-error v1.2.3
+#9 290.9    Compiling bit-set v0.8.0
+#9 291.0    Compiling rusty-fork v0.3.1
+#9 291.5    Compiling rand_xorshift v0.4.0
+#9 292.1    Compiling rand v0.9.5
+#9 292.2    Compiling rand_chacha v0.9.0
+#9 293.0    Compiling scheduler v0.1.0 (/workspace/rust-controller/crates/scheduler)
+#9 293.2    Compiling api-compat v0.1.0 (/workspace/rust-controller/crates/api-compat)
+#9 293.2    Compiling regex-syntax v0.8.11
+#9 294.0    Compiling unarray v0.1.4
+#9 294.5    Compiling ansible-adapter v0.1.0 (/workspace/rust-controller/crates/ansible-adapter)
+#9 295.1    Compiling proptest v1.11.0
+#9 295.9    Compiling operation-controller v0.1.0 (/workspace/rust-controller/crates/operation-controller)
+#9 297.4    Compiling anyhow v1.0.104
+#9 298.1    Compiling mime v0.3.17
+#9 298.6    Compiling serde_path_to_error v0.1.20
+#9 299.0    Compiling axum-core v0.5.6
+#9 299.0    Compiling matchit v0.8.4
+#9 299.5    Compiling controller-service v0.1.0 (/workspace/rust-controller/crates/controller-service)
+#9 300.8    Compiling axum v0.8.9
+#9 388.9     Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 58s
+#9 389.0   Executable unittests src/lib.rs (rust-controller/target/debug/deps/ansible_adapter-bfbf0046130027b0)
+#9 389.0   Executable tests/allowlist.rs (rust-controller/target/debug/deps/allowlist-daa0bfbf119489b2)
+#9 389.0   Executable tests/binding.rs (rust-controller/target/debug/deps/binding-f97109171fde0457)
+#9 389.0   Executable tests/native.rs (rust-controller/target/debug/deps/native-d70f21d47f8c3cce)
+#9 389.0   Executable unittests src/lib.rs (rust-controller/target/debug/deps/api_compat-f7a6cb686d8d2ee4)
+#9 389.0   Executable tests/callback_contract.rs (rust-controller/target/debug/deps/callback_contract-e72bdd543c47f17e)
+#9 389.0   Executable unittests src/lib.rs (rust-controller/target/debug/deps/artifact_index-63818e4721638896)
+#9 389.0   Executable tests/bytes.rs (rust-controller/target/debug/deps/bytes-4d858471b5558cc3)
+#9 389.0   Executable tests/descriptor.rs (rust-controller/target/debug/deps/descriptor-3213f32ddee71c19)
+#9 389.0   Executable tests/export_gate.rs (rust-controller/target/debug/deps/export_gate-1f5a980ce5cb096b)
+#9 389.0   Executable unittests src/lib.rs (rust-controller/target/debug/deps/controller_domain-4a5e0650162472e6)
+#9 389.0   Executable unittests src/main.rs (rust-controller/target/debug/deps/controller_service-51bc10da1d6af82b)
+#9 389.0   Executable tests/service.rs (rust-controller/target/debug/deps/service-730f08988e606785)
+#9 389.0   Executable unittests src/lib.rs (rust-controller/target/debug/deps/event_journal-3faae7ed719e660b)
+#9 389.0   Executable unittests src/lib.rs (rust-controller/target/debug/deps/operation_controller-a56ac3001055507f)
+#9 389.0   Executable tests/decision.rs (rust-controller/target/debug/deps/decision-3d2625aaf780ad6b)
+#9 389.0   Executable tests/postgres_fixture_clone.rs (rust-controller/target/debug/deps/postgres_fixture_clone-bc49dc5348fb8e83)
+#9 389.0   Executable tests/postgres_fixture_workers.rs (rust-controller/target/debug/deps/postgres_fixture_workers-724ff5b2b62c4038)
+#9 389.0   Executable tests/postgres_native.rs (rust-controller/target/debug/deps/postgres_native-2ca5713cfc05285b)
+#9 389.0   Executable tests/postgres_osdeploy.rs (rust-controller/target/debug/deps/postgres_osdeploy-bab755d8cb46ada5)
+#9 389.0   Executable unittests src/lib.rs (rust-controller/target/debug/deps/osdeploy_adapter-9aeb308c34072bab)
+#9 389.0   Executable tests/disk_boot_boundary.rs (rust-controller/target/debug/deps/disk_boot_boundary-2d302eb5d02a9b05)
+#9 389.0   Executable tests/guest_action.rs (rust-controller/target/debug/deps/guest_action-36429deb92ac1622)
+#9 389.0   Executable tests/heartbeat_boundary.rs (rust-controller/target/debug/deps/heartbeat_boundary-b8a8bbbd8510b33a)
+#9 389.0   Executable tests/input_values.rs (rust-controller/target/debug/deps/input_values-f7c1786984b23ac1)
+#9 389.0   Executable tests/install_agent_boundary.rs (rust-controller/target/debug/deps/install_agent_boundary-ee4e2feb1a2b4c06)
+#9 389.0   Executable tests/install_qga_boundary.rs (rust-controller/target/debug/deps/install_qga_boundary-2a07cc1142aa309a)
+#9 389.0   Executable tests/operational_boundary.rs (rust-controller/target/debug/deps/operational_boundary-67bcffdbce45d20a)
+#9 389.0   Executable tests/pe_complete_boundary.rs (rust-controller/target/debug/deps/pe_complete_boundary-c06e65b8e3f5a2c7)
+#9 389.0   Executable tests/pe_register_authority.rs (rust-controller/target/debug/deps/pe_register_authority-35c2df9bfa03f12e)
+#9 389.0   Executable tests/pe_register_callback.rs (rust-controller/target/debug/deps/pe_register_callback-eb873658b4584499)
+#9 389.0   Executable tests/pe_registration_precision.rs (rust-controller/target/debug/deps/pe_registration_precision-1d528b825728d574)
+#9 389.0   Executable tests/pe_shutdown_boundary.rs (rust-controller/target/debug/deps/pe_shutdown_boundary-434ce3e254febe84)
+#9 389.0   Executable tests/plan.rs (rust-controller/target/debug/deps/plan-6f464d857dd9a903)
+#9 389.0   Executable tests/provisioning.rs (rust-controller/target/debug/deps/provisioning-cd8af899984ebfd5)
+#9 389.0   Executable tests/restore.rs (rust-controller/target/debug/deps/restore-e8e96cb56f0a2172)
+#9 389.0   Executable tests/stages.rs (rust-controller/target/debug/deps/stages-abcdde2bc608ae67)
+#9 389.0   Executable tests/start_pe_arming.rs (rust-controller/target/debug/deps/start_pe_arming-78842bef505a4a89)
+#9 389.0   Executable tests/verify_qga_boundary.rs (rust-controller/target/debug/deps/verify_qga_boundary-2775ba81d4c617c2)
+#9 389.0   Executable tests/watchdog_boundary.rs (rust-controller/target/debug/deps/watchdog_boundary-495db04d132a7e21)
+#9 389.0   Executable unittests src/lib.rs (rust-controller/target/debug/deps/postgres_store-dbf5d13d25332c93)
+#9 389.0   Executable tests/docker_fixture_storage.rs (rust-controller/target/debug/deps/docker_fixture_storage-8461ae2adb156a78)
+#9 389.0   Executable tests/native.rs (rust-controller/target/debug/deps/native-ca75a7d774420f51)
+#9 389.0   Executable tests/osdeploy_durability.rs (rust-controller/target/debug/deps/osdeploy_durability-b1f9412be2bec2a3)
+#9 389.0   Executable tests/osdeploy_permit_seam.rs (rust-controller/target/debug/deps/osdeploy_permit_seam-03d7ea817b9c7389)
+#9 389.0   Executable tests/osdeploy_registration.rs (rust-controller/target/debug/deps/osdeploy_registration-5a6ca176f6c6b9c6)
+#9 389.0   Executable tests/pe_register_result_gate.rs (rust-controller/target/debug/deps/pe_register_result_gate-5869a2005040cd55)
+#9 389.0   Executable tests/pe_register_result_transaction.rs (rust-controller/target/debug/deps/pe_register_result_transaction-3ae892a81f024646)
+#9 389.0   Executable tests/postgres.rs (rust-controller/target/debug/deps/postgres-e3b4a38248b7da46)
+#9 389.0   Executable tests/start_pe_arming_gate.rs (rust-controller/target/debug/deps/start_pe_arming_gate-c2d99dc19f7c0e7f)
+#9 389.0   Executable unittests src/lib.rs (rust-controller/target/debug/deps/pve_port-29f3ce4605601174)
+#9 389.0   Executable tests/credentials.rs (rust-controller/target/debug/deps/credentials-4b491f5b0efaddf9)
+#9 389.0   Executable tests/durable_fixture_log.rs (rust-controller/target/debug/deps/durable_fixture_log-b0e28dc796062326)
+#9 389.0   Executable tests/fixture_checkpoint.rs (rust-controller/target/debug/deps/fixture_checkpoint-7254fb5d44ef758a)
+#9 389.0   Executable tests/fixture_clone_contract.rs (rust-controller/target/debug/deps/fixture_clone_contract-ea3f286db3660290)
+#9 389.0   Executable tests/fixture_controller_admission.rs (rust-controller/target/debug/deps/fixture_controller_admission-2b45551172cd07cc)
+#9 389.0   Executable tests/fixture_daemon.rs (rust-controller/target/debug/deps/fixture_daemon-4d9736399065d6d1)
+#9 389.0   Executable tests/fixture_inventory_projection.rs (rust-controller/target/debug/deps/fixture_inventory_projection-2c911ee126afbf30)
+#9 389.0   Executable tests/fixture_inventory_v2.rs (rust-controller/target/debug/deps/fixture_inventory_v2-38ebcd7d9dc5855c)
+#9 389.0   Executable tests/fixture_legacy_resize.rs (rust-controller/target/debug/deps/fixture_legacy_resize-a12806eb420d1da2)
+#9 389.0   Executable tests/fixture_post_dispatch.rs (rust-controller/target/debug/deps/fixture_post_dispatch-5a1601779f1f887b)
+#9 389.0   Executable tests/fixture_provisioning_reads.rs (rust-controller/target/debug/deps/fixture_provisioning_reads-a9a5b734db1730f1)
+#9 389.0   Executable tests/fixture_read_client.rs (rust-controller/target/debug/deps/fixture_read_client-b4abd5067afffe3b)
+#9 389.0   Executable tests/fixture_stage.rs (rust-controller/target/debug/deps/fixture_stage-007820741669bb51)
+#9 389.0   Executable tests/fixture_stage_consumers.rs (rust-controller/target/debug/deps/fixture_stage_consumers-79048fecc2c193cd)
+#9 389.0   Executable tests/fixture_task.rs (rust-controller/target/debug/deps/fixture_task-e43cedc3e1ef27e4)
+#9 389.0   Executable tests/infrastructure_visibility.rs (rust-controller/target/debug/deps/infrastructure_visibility-bf6a51b110b76f2e)
+#9 389.0   Executable tests/infrastructure_visibility_http.rs (rust-controller/target/debug/deps/infrastructure_visibility_http-79949864dae062a4)
+#9 389.0   Executable tests/native_contract.rs (rust-controller/target/debug/deps/native_contract-9e3c6284301fef72)
+#9 389.0   Executable tests/network_deny.rs (rust-controller/target/debug/deps/network_deny-204fbaa42fb8d3fb)
+#9 389.0   Executable tests/preflight.rs (rust-controller/target/debug/deps/preflight-8797e35a8e45362f)
+#9 389.0   Executable tests/provisioning_config.rs (rust-controller/target/debug/deps/provisioning_config-30af1c404130d5b4)
+#9 389.0   Executable tests/provisioning_evaluation.rs (rust-controller/target/debug/deps/provisioning_evaluation-0efc1f307cd4260f)
+#9 389.0   Executable tests/provisioning_expectations.rs (rust-controller/target/debug/deps/provisioning_expectations-90c7a208b3f32198)
+#9 389.0   Executable tests/provisioning_fake.rs (rust-controller/target/debug/deps/provisioning_fake-d82c0735fe363a62)
+#9 389.0   Executable tests/provisioning_requests.rs (rust-controller/target/debug/deps/provisioning_requests-99420e591684bf5a)
+#9 389.0   Executable tests/visibility.rs (rust-controller/target/debug/deps/visibility-3a59ed8e79dd8e7e)
+#9 389.0   Executable tests/visibility_http.rs (rust-controller/target/debug/deps/visibility_http-791b7346dcf1dea4)
+#9 389.0   Executable unittests src/lib.rs (rust-controller/target/debug/deps/scheduler-e4743bfd4d9c390c)
+#9 389.0   Executable tests/postgres.rs (rust-controller/target/debug/deps/postgres-4cb9b69eda1ceb1e)
+#9 DONE 389.3s
+
+#10 [ 7/12] RUN cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p pve-port && cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p operation-controller --test decision && cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p operation-controller --test postgres_native support:: -- --test-threads=1
+#10 0.556    Compiling smallvec v1.15.2
+#10 0.557    Compiling serde_core v1.0.229
+#10 0.558    Compiling serde v1.0.229
+#10 1.384    Compiling parking_lot_core v0.9.12
+#10 1.515    Compiling getrandom v0.2.17
+#10 2.274    Compiling parking_lot v0.12.5
+#10 2.310    Compiling futures-task v0.3.33
+#10 3.964    Compiling tokio v1.53.1
+#10 4.373    Compiling slab v0.4.12
+#10 4.661    Compiling ring v0.17.14
+#10 5.157    Compiling futures-util v0.3.33
+#10 8.027    Compiling icu_normalizer v2.3.0
+#10 9.285    Compiling num-traits v0.2.19
+#10 9.866    Compiling idna_adapter v1.2.2
+#10 9.886    Compiling rustls-webpki v0.103.14
+#10 10.48    Compiling futures-channel v0.3.33
+#10 11.33    Compiling serde_json v1.0.151
+#10 11.65    Compiling hyper v1.11.0
+#10 11.90    Compiling rustls v0.23.43
+#10 12.04    Compiling tracing v0.1.44
+#10 12.94    Compiling idna v1.1.0
+#10 14.09    Compiling memchr v2.8.3
+#10 14.43    Compiling hyper-util v0.1.20
+#10 15.56    Compiling tokio-rustls v0.26.4
+#10 16.59    Compiling tower v0.5.3
+#10 17.17    Compiling digest v0.10.7
+#10 17.71    Compiling uuid v1.26.0
+#10 18.07    Compiling url v2.5.8
+#10 18.85    Compiling bitflags v2.13.1
+#10 18.95    Compiling sha2 v0.10.9
+#10 19.46    Compiling tower-http v0.6.11
+#10 19.66    Compiling serde_urlencoded v0.7.1
+#10 19.93    Compiling chrono v0.4.45
+#10 20.49    Compiling hyper-rustls v0.27.9
+#10 20.53    Compiling controller-domain v0.1.0 (/workspace/rust-controller/crates/controller-domain)
+#10 21.43    Compiling reqwest v0.12.28
+#10 21.85    Compiling event-journal v0.1.0 (/workspace/rust-controller/crates/event-journal)
+#10 22.96    Compiling pve-port v0.1.0 (/workspace/rust-controller/crates/pve-port)
+#10 43.62     Finished `test` profile [unoptimized + debuginfo] target(s) in 43.32s
+#10 43.63      Running unittests src/lib.rs (rust-controller/target/debug/deps/pve_port-d1b92ee1217d95f3)
+#10 43.65 
+#10 43.65 running 25 tests
+#10 43.67 test tests::clone_intent_rejects_a_upid_for_another_node ... ok
+#10 43.68 test observer::boundary_tests::denied_production_target_never_reaches_client_builder ... ok
+#10 43.69 test observer::boundary_tests::credential_denial_precedes_client_build_for_every_denied_mode ... ok
+#10 43.74 test tests::contradictory_uuid_or_mac_is_never_identity_satisfied ... ok
+#10 43.88 test tests::http_401_and_403_are_unauthorized_without_response_payloads ... ok
+#10 43.89 test tests::http_404_and_409_remain_distinct_read_errors ... ok
+#10 43.89 test tests::identifiers_and_base_urls_reject_unsafe_or_ambiguous_values ... ok
+#10 43.89 test tests::combined_http_observation_evaluates_fresh_facts_after_collection ... ok
+#10 43.90 test tests::late_upid_completion_is_a_new_fact_without_replaying_requests ... ok
+#10 43.91 
+#10 43.91 running 1 test
+#10 43.91 test tests::injected_evaluation_clock_runs_after_http_collection_and_rejects_old_or_future_facts ... ok
+#10 43.91 test tests::not_found_and_conflict_are_unavailable_observations ... ok
+#10 44.17 test tests::observer_never_follows_a_redirect_hop ... ok
+#10 44.17 test tests::old_observations_are_stale ... ok
+#10 44.18 test tests::qga_ping_uses_the_typed_post_observation_endpoint ... ok
+#10 44.18 test tests::redirect_to_production_is_rejected_without_a_production_attempt ... ok
+#10 44.20 test tests::loopback_target_never_uses_proxy_environment ... ok
+#10 44.20 
+#10 44.20 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 0.29s
+#10 44.20 
+#10 44.21 test tests::loopback_target_never_uses_proxy_environment ... ok
+#10 44.21 test tests::sanitized_upid_fixture_decodes_as_completed_task ... ok
+#10 44.22 test tests::sanitized_upid_fixture_decodes_as_failed_task ... ok
+#10 44.22 test tests::stopped_failure_is_distinct_from_a_running_task ... ok
+#10 44.22 test tests::task_status_rejects_route_node_mismatch_before_a_request ... ok
+#10 44.22 test tests::timeout_is_timed_out_not_failed ... ok
+#10 44.22 test tests::upid_requires_the_documented_proxmox_field_shape ... ok
+#10 44.22 test tests::upid_success_is_not_vm_postcondition ... ok
+#10 44.29 test tests::retryable_protocol_response_has_at_most_one_wire_attempt ... ok
+#10 44.37 test tests::delayed_loopback_response_maps_to_timeout ... ok
+#10 44.37 
+#10 44.37 test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+#10 44.37 
+#10 44.37      Running tests/credentials.rs (rust-controller/target/debug/deps/credentials-9fee9f51a216fb4e)
+#10 44.40 
+#10 44.40 running 4 tests
+#10 44.77 test token_is_sent_once_only_in_sensitive_authorization_header ... ok
+#10 44.77 test default_observer_sends_no_authorization ... ok
+#10 44.77 test redirect_cannot_forward_token_or_issue_second_request ... ok
+#10 44.77 test token_validation_and_debug_never_echo_input ... ok
+#10 44.77 
+#10 44.77 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+#10 44.77 
+#10 44.77      Running tests/durable_fixture_log.rs (rust-controller/target/debug/deps/durable_fixture_log-687de19c5640f707)
+#10 44.79 
+#10 44.79 running 12 tests
+#10 45.18 test duplicate_attempt_cannot_accept_and_reordered_valid_frames_fail_recovery ... ok
+#10 45.18 test acceptance_and_world_transition_recover_together_after_durable_attempt ... ok
+#10 45.18 test effect_lookup_rejects_invalid_identity_without_appending ... ok
+#10 45.19 test durable_fixture_log::power_tests::atomic_start_admission_survives_replay_without_consuming_duplicate_authority ... ok
+#10 45.19 test durable_fixture_log::power_tests::power_replay_requires_exact_effect_and_fresh_observation ... ok
+#10 45.19 test invalid_inputs_do_not_append_and_create_never_overwrites ... ok
+#10 45.20 test rejects_trailing_garbage_oversized_lines_and_replayed_frames ... ok
+#10 45.20 test restart_preserves_every_duplicate_attempt_including_changed_digest ... ok
+#10 45.20 test stage_identity_rejects_legacy_mixing_and_invalid_authority ... ok
+#10 45.21 test every_truncated_record_and_checksum_corruption_fail_closed ... ok
+#10 45.22 test stage_replay_rejects_canonical_but_rebound_effects_and_ambiguous_legacy ... ok
+#10 45.22 test stage_keys_replay_exactly_and_bind_original_authority ... ok
+#10 45.22 
+#10 45.22 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+#10 45.22 
+#10 45.22      Running tests/fixture_checkpoint.rs (rust-controller/target/debug/deps/fixture_checkpoint-40f23d8d7f0d2f23)
+#10 45.24 
+#10 45.24 running 0 tests
+#10 45.24 
+#10 45.24 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.24 
+#10 45.24      Running tests/fixture_clone_contract.rs (rust-controller/target/debug/deps/fixture_clone_contract-480975917a3058de)
+#10 45.25 
+#10 45.25 running 0 tests
+#10 45.25 
+#10 45.25 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.25 
+#10 45.25      Running tests/fixture_controller_admission.rs (rust-controller/target/debug/deps/fixture_controller_admission-f902367e81ece5fd)
+#10 45.26 
+#10 45.26 running 0 tests
+#10 45.26 
+#10 45.26 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.26 
+#10 45.27      Running tests/fixture_daemon.rs (rust-controller/target/debug/deps/fixture_daemon-750aba1be82d4225)
+#10 45.28 
+#10 45.28 running 12 tests
+#10 45.31 test daemon_lifetime_keeps_a_sixty_second_hard_limit ... ok
+#10 45.33 test durable_fixture_log::power_tests::atomic_start_admission_survives_replay_without_consuming_duplicate_authority ... ok
+#10 45.34 test delayed_payload_is_read_within_the_frame_deadline ... ok
+#10 45.34 test durable_fixture_log::power_tests::power_replay_requires_exact_effect_and_fresh_observation ... ok
+#10 45.39 test accepted_effect_lookup_binds_request_and_survives_restart ... ok
+#10 45.39 test fixture_daemon::snapshot::tests::inventory_is_strict_and_bounded ... ok
+#10 45.39 test fixture_daemon_child ... ignored, subprocess entry point only
+#10 45.40 test endpoint_substitution_and_corrupt_restart_fail_closed ... ok
+#10 45.45 test effects_commit_replay_and_reject_duplicates_over_ipc ... ok
+#10 45.46 test oversized_and_partial_requests_cannot_mutate_or_stall_daemon ... ok
+#10 45.50 test killed_daemon_rebind_requires_supervisor_cleanup_and_preserves_ledger ... ok
+#10 45.52 test separate_process_enforces_control_boundary_and_durable_duplicate_ledger ... ok
+#10 45.52 
+#10 45.52 test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.24s
+#10 45.52 
+#10 45.52      Running tests/fixture_inventory_projection.rs (rust-controller/target/debug/deps/fixture_inventory_projection-c8d3ace9e80a4dd3)
+#10 45.53 
+#10 45.53 running 0 tests
+#10 45.53 
+#10 45.53 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.53 
+#10 45.53      Running tests/fixture_inventory_v2.rs (rust-controller/target/debug/deps/fixture_inventory_v2-13024e0bf47fec31)
+#10 45.55 
+#10 45.55 running 0 tests
+#10 45.55 
+#10 45.55 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.55 
+#10 45.55      Running tests/fixture_legacy_resize.rs (rust-controller/target/debug/deps/fixture_legacy_resize-fd071bb374a69df8)
+#10 45.56 
+#10 45.56 running 0 tests
+#10 45.56 
+#10 45.56 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.56 
+#10 45.56      Running tests/fixture_post_dispatch.rs (rust-controller/target/debug/deps/fixture_post_dispatch-377c61cb8bef3b51)
+#10 45.57 
+#10 45.57 running 0 tests
+#10 45.57 
+#10 45.57 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.58 
+#10 45.58      Running tests/fixture_provisioning_reads.rs (rust-controller/target/debug/deps/fixture_provisioning_reads-4424a9feadb6e55e)
+#10 45.59 
+#10 45.59 running 0 tests
+#10 45.59 
+#10 45.59 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.59 
+#10 45.59      Running tests/fixture_read_client.rs (rust-controller/target/debug/deps/fixture_read_client-d99406b0567ca48d)
+#10 45.60 
+#10 45.60 running 0 tests
+#10 45.60 
+#10 45.60 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.60 
+#10 45.61      Running tests/fixture_stage.rs (rust-controller/target/debug/deps/fixture_stage-0c13287b045827ea)
+#10 45.62 
+#10 45.62 running 0 tests
+#10 45.62 
+#10 45.62 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.62 
+#10 45.62      Running tests/fixture_stage_consumers.rs (rust-controller/target/debug/deps/fixture_stage_consumers-fe82e3f0fd8970a2)
+#10 45.63 
+#10 45.63 running 0 tests
+#10 45.63 
+#10 45.63 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.63 
+#10 45.63      Running tests/fixture_task.rs (rust-controller/target/debug/deps/fixture_task-bb1aa11940bfe18c)
+#10 45.65 
+#10 45.65 running 0 tests
+#10 45.65 
+#10 45.65 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#10 45.65 
+#10 45.65      Running tests/infrastructure_visibility.rs (rust-controller/target/debug/deps/infrastructure_visibility-269d34d9617edf56)
+#10 45.66 
+#10 45.66 running 26 tests
+#10 45.67 test empty_network_remains_unverified ... ok
+#10 45.68 test duplicate_identity_is_detected_before_metadata_rejection ... ok
+#10 45.68 test duplicate_identity_invalidates_network_report ... ok
+#10 45.68 test interface_activity_preserves_zero_one_and_missing ... ok
+#10 45.68 test invalid_activity_is_counted ... ok
+#10 45.68 test invalid_interface_identity_is_counted ... ok
+#10 45.68 test invalid_or_crossnode_binding_invalidates_even_otherwise_malformed_rows ... ok
+#10 45.68 test malformed_rows_are_counted_without_losing_valid_rows ... ok
+#10 45.68 test matching_network_node_binding_is_retained ... ok
+#10 45.68 test invalid_or_mismatched_node_binding_invalidates_node_report ... ok
+#10 45.68 test matching_node_binding_is_retained ... ok
+#10 45.68 test missing_or_nonstring_type_is_counted ... ok
+#10 45.68 test missing_uptime_is_unknown ... ok
+#10 45.68 test network_timestamp_is_preserved ... ok
+#10 45.69 test node_serialization_retains_only_sanitized_visibility ... ok
+#10 45.69 test node_timestamp_is_preserved ... ok
+#10 45.69 test nonarray_network_data_is_invalid ... ok
+#10 45.69 test network_row_limit_accepts_1024_and_rejects_1025 ... ok
+#10 45.69 test nonobject_node_data_is_invalid ... ok
+#10 45.69 test network_serialization_preserves_order_and_only_sanitized_fields ... ok
+#10 45.69 test opaque_interface_identity_accepts_exact_byte_and_character_boundaries ... ok
+#10 45.69 test ovs_and_missing_activity_remain_visible ... ok
+#10 45.69 test positive_and_maximum_uptime_are_retained ... ok
+#10 45.69 test present_invalid_uptime_invalidates_report ... ok
+#10 45.69 test zero_uptime_is_visibility_not_online_authority ... ok
+#10 45.69 test unknown_interface_types_remain_visible_without_raw_metadata ... ok
+#10 45.69 
+#10 45.69 test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+#10 45.69 
+#10 45.69      Running tests/infrastructure_visibility_http.rs (rust-controller/target/debug/deps/infrastructure_visibility_http-7764b080c6227c3e)
+#10 45.71 
+#10 45.71 running 22 tests
+#10 45.96 test authenticated_network_preserves_ovs_missing_activity_and_rejected_rows ... ok
+#10 45.97 test chunked_oversize_is_rejected ... ok
+#10 45.98 test conflict_409_is_fixed_and_not_retried ... ok
+#10 45.98 test authenticated_node_zero_uptime_is_one_timestamped_unverified_get ... ok
+#10 45.98 test cross_node_network_row_rejects_report ... ok
+#10 45.99 test duplicate_interface_after_rejected_metadata_rejects_report ... ok
+#10 45.99 test declared_oversize_is_rejected_before_reading_body ... ok
+#10 46.00 test eof_oversize_is_rejected ... ok
+#10 46.01 test forbidden_403_is_fixed_and_not_retried ... ok
+#10 46.01 test invalid_network_shape_is_rejected ... ok
+#10 46.02 test exactly_one_mib_valid_bodies_are_accepted ... ok
+#10 46.02 test invalid_node_data_is_rejected ... ok
+#10 46.03 test missing_404_is_fixed_and_not_retried ... ok
+#10 46.03 test network_1025_rows_is_rejected ... ok
+#10 46.04 test malformed_envelopes_are_rejected ... ok
+#10 46.06 test redirects_never_contact_target_or_forward_credentials ... ok
+#10 46.07 
+#10 46.07 running 1 test
+#10 46.18 test authenticated_node_zero_uptime_is_one_timestamped_unverified_get ... ok
+#10 46.18 
+#10 46.18 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.11s
+#10 46.18 
+#10 46.20 
+#10 46.20 running 1 test
+#10 46.26 test authenticated_network_preserves_ovs_missing_activity_and_rejected_rows ... ok
+#10 46.26 
+#10 46.26 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.07s
+#10 46.26 
+#10 46.27 test proxy_environment_never_receives_node_or_network_requests ... ok
+#10 46.27 test server_500_is_fixed_and_not_retried ... ok
+#10 46.28 test unauthorized_401_is_fixed_and_not_retried ... ok
+#10 50.08 test request_deadline_overrides_larger_client_timeout ... ok
+#10 50.25 test cancelling_collection_closes_body_and_does_not_retry ... ok
+#10 50.30 test whole_body_deadline_includes_time_already_spent_waiting_for_headers ... ok
+#10 50.30 
+#10 50.30 test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.59s
+#10 50.30 
+#10 50.30      Running tests/native_contract.rs (rust-controller/target/debug/deps/native_contract-52d95d338a1f9a56)
+#10 50.32 
+#10 50.32 running 16 tests
+#10 50.47 test clone_outcomes_distinguish_rejection_loss_failure_and_delayed_application ... ok
+#10 50.47 test changed_digest_alone_rejects_configure_without_refresh_or_resend ... ok
+#10 50.47 test configure_and_start_outcomes_preserve_their_distinct_receipt_contracts ... ok
+#10 50.47 test delayed_clone_cannot_overwrite_an_occupant_inserted_before_completion ... ok
+#10 50.47 test fixed_requests_apply_identity_preserve_disk_and_provenance ... ok
+#10 50.48 test historical_binding_can_be_old_but_current_identity_and_final_fields_must_match ... ok
+#10 50.48 test every_mutable_plan_field_and_step_changes_canonical_digest ... ok
+#10 50.48 test missing_or_mismatched_provenance_and_stale_or_wrong_identity_cannot_configure ... ok
+#10 50.49 test immutable_plan_roundtrip_rejects_unknown_fields_and_invalid_values ... ok
+#10 50.49 test request_markers_and_operation_ids_are_hashed_and_provenance_is_not_circular ... ok
+#10 50.50 test retained_marker_does_not_hide_changed_intermediate_identity_or_disk ... ok
+#10 50.50 test successful_clone_task_and_same_name_do_not_authorize_foreign_occupant ... ok
+#10 50.51 test normal_infrastructure_reads_refresh_time_but_explicit_stale_config_does_not ... ok
+#10 50.53 test typed_fake_reads_report_inventory_storage_power_and_no_guest_readiness ... ok
+#10 50.53 test typed_fault_hooks_preserve_read_errors_and_gate_submission ... ok
+#10 50.57 test http_observer_never_imports_fake_provenance_from_response ... ok
+#10 50.57 
+#10 50.57 test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+#10 50.57 
+#10 50.57      Running tests/network_deny.rs (rust-controller/target/debug/deps/network_deny-dbcb45e0b8dc0df8)
+#10 50.58 
+#10 50.58 running 6 tests
+#10 50.62 test adapter_permission_cannot_authorize_a_non_loopback_target ... ok
+#10 50.62 test every_non_loopback_target_is_denied_without_explicit_observe_permission ... ok
+#10 50.62 test credentials_never_authorize_denied_targets_or_send_requests ... ok
+#10 50.62 test production_address_is_rejected_before_http_client_construction ... ok
+#10 50.65 test production_observe_requires_explicit_read_permission ... ok
+#10 50.65 test normalized_literal_loopback_targets_remain_local_test_targets ... ok
+#10 50.65 
+#10 50.65 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+#10 50.65 
+#10 50.65      Running tests/preflight.rs (rust-controller/target/debug/deps/preflight-2d2d4da2c1b3e165)
+#10 50.66 
+#10 50.66 running 15 tests
+#10 50.72 test additional_nics_cannot_hide_malformed_identity_behind_unsupported_layout ... ok
+#10 50.74 test every_snapshot_enforces_thirty_second_freshness_and_rejects_future_facts ... ok
+#10 50.74 test inventory_rejects_duplicate_vmids_and_malformed_identity ... ok
+#10 50.75 test lock_and_agent_state_are_preserved_and_normalized ... ok
+#10 50.75 test native_config_rejects_missing_or_malformed_required_facts ... ok
+#10 50.76 test node_storage_and_bridge_wire_validation_fails_closed ... ok
+#10 50.76 test power_status_rejects_wrong_identity_and_unknown_states ... ok
+#10 50.79 test sanitized_decoding_rejects_forged_or_malformed_fact_fields ... ok
+#10 50.81 test sanitized_maps_reject_duplicate_identity_keys ... ok
+#10 50.82 test sanitized_snapshots_round_trip_through_validated_deserialization ... ok
+#10 50.99 test all_preflight_routes_return_bound_typed_facts ... ok
+#10 50.99 test absence_does_not_accept_stale_or_future_inventory ... ok
+#10 51.00 test unsupported_configuration_is_typed_and_never_copies_raw_text ... ok
+#10 51.06 test target_absence_requires_inventory_exclusion_and_config_not_found ... ok
+#10 51.25 test status_decode_and_timeout_failures_are_fixed_and_never_leak_body ... ok
+#10 51.25 
+#10 51.25 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s
+#10 51.25 
+#10 51.26      Running tests/provisioning_config.rs (rust-controller/target/debug/deps/provisioning_config-75c0e0088cad60e3)
+#10 51.28 
+#10 51.28 running 20 tests
+#10 51.32 test comma_syntax_duplicates_fail_before_unsupported_projection ... ok
+#10 51.32 test explicit_core_fields_types_and_binding_cannot_be_defaulted ... ok
+#10 51.32 test capacity_is_exact_positive_checked_binary_bytes ... ok
+#10 51.34 test fake_provenance_object_shape_is_required_without_changing_legacy_type ... ok
+#10 51.35 test fake_marker_requires_fake_source_valid_provenance_and_target_binding ... ok
+#10 51.36 test media_discriminators_require_strings_standalone_and_in_snapshots ... ok
+#10 51.36 test media_inventory_binds_storage_unique_bounded_volids_and_explicit_coverage ... ok
+#10 51.37 test nested_before_state_still_rejects_object_source_discriminators ... ok
+#10 51.37 test old_native_parser_keeps_rejecting_rich_layout ... ok
+#10 51.37 test nested_persisted_fields_reject_duplicates_and_unknowns_without_payloads ... ok
+#10 51.37 test persisted_facts_require_objects_even_when_an_array_has_valid_ordered_fields ... ok
+#10 51.38 test persisted_sanitized_invariants_cannot_be_forged ... ok
+#10 51.38 test persisted_config_exact_shape_rejects_missing_duplicate_and_unknown_fields ... ok
+#10 51.38 test qga_is_a_bound_observation_and_auxiliary_persisted_shapes_validate ... ok
+#10 51.38 test rich_source_discriminator_requires_strings_from_value ... ok
+#10 51.38 test rich_source_discriminator_requires_strings_from_str ... ok
+#10 51.39 test standalone_classification_decoders_never_echo_untrusted_values ... ok
+#10 51.39 test rich_template_and_destination_preserve_every_sanitized_field ... ok
+#10 51.39 test unsupported_values_are_fixed_payload_free_and_block_template_admission ... ok
+#10 51.40 test template_semantic_hash_has_independent_golden_and_exact_field_binding ... ok
+#10 51.40 
+#10 51.40 test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+#10 51.40 
+#10 51.40      Running tests/provisioning_evaluation.rs (rust-controller/target/debug/deps/provisioning_evaluation-1556446355ca7d5e)
+#10 51.41 
+#10 51.41 running 25 tests
+#10 51.71 test clone_outcome_source_change_and_request_provenance_are_conflicts ... ok
+#10 51.72 test all_possible_send_states_never_return_ready ... ok
+#10 51.74 test cancellation_ineligible_state_deadline_and_freshness_boundaries ... ok
+#10 51.76 test complete_legacy_identity_projection_can_cover_shared_namespace ... ok
+#10 51.79 test failed_clone_with_exact_unchanged_vacancy_is_failed ... ok
+#10 51.83 test historical_owner_and_predecessor_cannot_cross_run_workflow_or_request ... ok
+#10 51.85 test inventory_coverage_errors_collisions_and_legacy_projection_are_conservative ... ok
+#10 51.89 test media_requires_both_exact_full_storage_catalogs ... ok
+#10 51.92 test no_change_is_limited_to_capacity_and_stop_before_dispatch ... ok
+#10 51.93 test outcome_cannot_use_stale_source_snapshot_in_inventory_comparison ... ok
+#10 51.96 test receipt_collection_clock_and_absence_power_contradiction_are_checked ... ok
+#10 51.99 test receipt_substitution_is_rejected_in_context_and_evidence ... ok
+#10 52.04 test same_target_vmid_on_another_node_blocks_even_with_local_404 ... ok
+#10 52.08 test seven_action_physical_chain_preserves_original_clone_proof ... ok
+#10 52.09 test retained_capacity_including_nonintegral_bytes_continues_without_resize ... ok
+#10 52.17 test snapshot_wrapper_and_collection_clocks_are_independent ... ok
+#10 52.19 test supported_layout_lock_template_and_digest_changes_are_independent ... ok
+#10 52.20 test evidence_persistence_is_required_nullable_and_route_validated ... ok
+#10 52.22 test synchronous_lost_receipt_requires_exact_original_reconciliation ... ok
+#10 52.25 test task_dispatch_without_receipt_stays_unknown_even_with_desired_world ... ok
+#10 52.27 test task_snapshot_cannot_predate_receipt_acceptance ... ok
+#10 52.28 test task_failure_and_running_do_not_mask_replaced_disks ... ok
+#10 52.30 test task_success_does_not_replace_missing_physical_postconditions ... ok
+#10 52.33 test wrong_identity_projection_duplicate_keys_and_incomplete_catalogs_are_rejected ... ok
+#10 52.46 test unrelated_before_and_after_categories_cannot_be_hidden_by_task_success ... ok
+#10 52.46 
+#10 52.46 test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+#10 52.46 
+#10 52.46      Running tests/provisioning_expectations.rs (rust-controller/target/debug/deps/provisioning_expectations-3a6c125ca17e5719)
+#10 52.47 
+#10 52.47 running 7 tests
+#10 52.49 test admits_explicit_capacity_and_normalizes_template_sha ... ok
+#10 52.49 test enforces_approved_hash_serial_and_iso_token_rules ... ok
+#10 52.50 test nested_vm_plan_must_keep_its_named_fields_in_new_contract ... ok
+#10 52.50 test persisted_expectation_and_operation_shape_requires_an_object ... ok
+#10 52.50 test rejects_invalid_growth_but_retains_exact_template_bytes ... ok
+#10 52.50 test persisted_expectations_and_plans_cannot_bypass_admission ... ok
+#10 52.51 test canonical_shape_roundtrips_and_all_inputs_bind_the_fingerprint ... ok
+#10 52.51 
+#10 52.51 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+#10 52.51 
+#10 52.51      Running tests/provisioning_fake.rs (rust-controller/target/debug/deps/provisioning_fake-4449fb5f45b55eca)
+#10 52.52 
+#10 52.52 running 23 tests
+#10 52.76 test clone_preserves_source_serials_resources_and_media_without_final_preconfiguration ... ok
+#10 52.76 test accepted_task_can_physically_finish_after_strict_controller_deadline ... ok
+#10 52.77 test delayed_clone_rejects_new_target_and_legacy_replacement_without_touching_occupants ... ok
+#10 52.81 test clone_changes_the_shared_world_without_preconfiguring_final_identity ... ok
+#10 53.01 test delayed_work_cannot_target_copied_replacement_or_independent_power_change ... ok
+#10 53.01 test fixture_source_and_script_source_cannot_claim_live_pve ... ok
+#10 53.04 test current_power_route_media_and_catalog_changes_are_rejected_at_admission ... ok
+#10 53.05 test exact_before_state_rejects_tampering_even_when_digest_and_marker_are_copied ... ok
+#10 53.08 test full_world_sequence_grows_80_to_120_and_preserves_power_only_fields ... ok
+#10 53.10 test full_world_sequence_retains_exact_non_whole_gib_capacity ... ok
+#10 53.10 test full_world_sequence_retains_160_for_requested_120 ... ok
+#10 53.11 test legacy_fault_and_pause_controls_do_not_leak_into_provisioning ... ok
+#10 53.14 test history_preserves_exact_ordered_forms_and_only_allowed_effects ... ok
+#10 53.15 test missing_distinct_catalog_and_growth_delta_reject_without_world_change ... ok
+#10 53.15 test mixed_family_inventory_downcasts_coverage_and_reserved_identity_collisions ... ok
+#10 53.15 test independent_qga_survives_config_power_and_does_not_invalidate_delayed_growth ... ok
+#10 53.16 test pending_resources_overlap_across_families_and_completions_keep_separate_queues ... ok
+#10 53.17 test provisioning_pause_rechecks_world_and_records_only_resumed_admission ... ok
+#10 53.17 test scripted_errors_and_pauses_are_independent_observations ... ok
+#10 53.17 test scripts_preserve_routes_timestamps_and_unsupported_facts_without_world_effects ... ok
+#10 53.18 test selector_priority_fifo_duplicate_and_failed_admission_do_not_consume_faults ... ok
+#10 53.25 test pe_and_disk_faults_are_independent_despite_identical_start_forms ... ok
+#10 54.02 test outcome_matrix_records_attempts_acceptance_and_actual_effects ... ok
+#10 54.02 
+#10 54.02 test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.50s
+#10 54.02 
+#10 54.02      Running tests/provisioning_requests.rs (rust-controller/target/debug/deps/provisioning_requests-b2a2eeec9b293255)
+#10 54.04 
+#10 54.04 running 12 tests
+#10 54.11 test binding_rejects_invalid_full_workflow_hash ... ok
+#10 54.12 test bindings_compare_attempt_identity_but_not_collection_fence ... ok
+#10 54.28 test complete_request_json_and_digest_golden ... ok
+#10 54.30 test constructor_serial_compatibility_is_checked_for_every_family ... ok
+#10 54.35 test every_action_admits_twenty_and_rejects_twenty_one_byte_desired_serials ... ok
+#10 54.40 test dispatch_and_receipt_reconstruction_enforce_full_request_and_provenance ... ok
+#10 54.41 test every_closed_variant_has_a_pinned_complete_digest ... ok
+#10 54.45 test every_request_hash_binds_clock_digest_operation_attempt_workflow_and_fence ... ok
+#10 54.50 test persisted_owned_reference_tampering_never_recreates_historical_authority ... ok
+#10 54.51 test receipt_workers_nodes_and_vmids_are_closed ... ok
+#10 54.52 test persisted_requests_reject_missing_unknown_duplicate_and_object_discriminators ... ok
+#10 54.57 test requests_pin_exact_forms_routes_and_distinct_start_digests ... ok
+#10 54.57 
+#10 54.57 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+#10 54.57 
+#10 54.57      Running tests/visibility.rs (rust-controller/target/debug/deps/visibility-0b6f9d13f038fb7e)
+#10 54.58 
+#10 54.58 running 17 tests
+#10 54.60 test empty_inventory_never_claims_verified_coverage ... ok
+#10 54.60 test duplicate_identity_is_detected_even_when_metadata_is_rejected ... ok
+#10 54.60 test duplicate_valid_vmid_rejects_response_across_nodes_and_kinds ... ok
+#10 54.60 test invalid_nodes_are_rejected_and_counted ... ok
+#10 54.60 test invalid_vmids_are_rejected_and_counted ... ok
+#10 54.60 test missing_identity_and_non_object_rows_are_rejected_and_counted ... ok
+#10 54.60 test invalid_optional_template_is_rejected_and_counted ... ok
+#10 54.60 test missing_status_is_unknown ... ok
+#10 54.60 test missing_or_non_string_kind_is_rejected_without_defaulting_to_qemu ... ok
+#10 54.60 test present_non_string_status_is_rejected_and_counted ... ok
+#10 54.60 test non_array_response_is_rejected ... ok
+#10 54.60 test mixed_inventory_preserves_lxc_and_unknown_metadata ... ok
+#10 54.60 test stopped_and_template_one_remain_explicit ... ok
+#10 54.61 test unknown_kind_is_preserved_without_retaining_raw_type ... ok
+#10 54.61 test unknown_status_is_unknown_without_retaining_raw_status ... ok
+#10 54.61 test sanitization_preserves_wire_order_timestamp_and_rejection_count ... ok
+#10 54.61 test row_limit_accepts_1024_and_rejects_1025_before_row_validation ... ok
+#10 54.61 
+#10 54.61 test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+#10 54.61 
+#10 54.62      Running tests/visibility_http.rs (rust-controller/target/debug/deps/visibility_http-b87ff9742f336c6b)
+#10 54.63 
+#10 54.63 running 11 tests
+#10 54.84 test body_byte_limit_is_enforced_for_declared_chunked_and_eof_streams ... ok
+#10 54.86 test exactly_one_mib_body_is_accepted ... ok
+#10 54.86 test authenticated_inventory_is_exactly_one_get_and_timestamped_after_collection ... ok
+#10 54.87 test http_failures_are_fixed_categories_without_retry ... ok
+#10 54.88 test invalid_envelopes_data_and_row_limit_are_rejected ... ok
+#10 54.89 test redirect_target_receives_no_request ... ok
+#10 54.89 test rejected_rows_remain_successful_non_authoritative_visibility ... ok
+#10 54.91 
+#10 54.91 running 1 test
+#10 55.02 test authenticated_inventory_is_exactly_one_get_and_timestamped_after_collection ... ok
+#10 55.02 
+#10 55.02 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.12s
+#10 55.02 
+#10 55.04 test proxy_environment_canary_receives_no_request ... ok
+#10 56.90 test request_deadline_also_bounds_an_unfinished_streaming_body ... ok
+#10 56.93 test dropped_collection_does_not_start_another_request ... ok
+#10 57.04 test request_times_out_after_two_seconds_without_retry ... ok
+#10 57.04 
+#10 57.04 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.42s
+#10 57.05 
+#10 57.05    Doc-tests pve_port
+#10 57.67 
+#10 57.67 running 18 tests
+#10 57.94 test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::NodeVisibility (line 45) - compile fail ... ok
+#10 57.99 test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::PveInfrastructureVisibilityReadPort (line 251) - compile fail ... ok
+#10 57.99 test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::PveInfrastructureVisibilityReadPort (line 244) - compile fail ... ok
+#10 58.26 test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::PveInfrastructureVisibilityReadPort (line 258) - compile fail ... ok
+#10 58.28 test crates/pve-port/src/native.rs - native::PveMutationPort (line 450) - compile fail ... ok
+#10 58.28 test crates/pve-port/src/native.rs - native::PveMutationPort (line 444) - compile fail ... ok
+#10 58.56 test crates/pve-port/src/native.rs - native::PveMutationPort (line 456) - compile fail ... ok
+#10 58.58 test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 165) - compile fail ... ok
+#10 58.72 test crates/pve-port/src/native.rs - native::PveMutationPort (line 462) - compile fail ... ok
+#10 58.87 test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 171) - compile fail ... ok
+#10 58.89 test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 177) - compile fail ... ok
+#10 59.03 test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 183) - compile fail ... ok
+#10 59.12 test crates/pve-port/src/provisioning.rs - provisioning::ProvisioningFakePort (line 23) - compile fail ... ok
+#10 59.16 test crates/pve-port/src/provisioning.rs - provisioning::ProvisioningFakePort (line 16) - compile fail ... ok
+#10 59.29 test crates/pve-port/src/provisioning/evaluation/context.rs - provisioning::evaluation::context::ProvisioningCloneOwnershipV1 (line 102) - compile fail ... ok
+#10 59.37 test crates/pve-port/src/provisioning/evaluation/context.rs - provisioning::evaluation::context::ProvisioningStageBaselineV1 (line 180) - compile fail ... ok
+#10 59.40 test crates/pve-port/src/provisioning/evidence.rs - provisioning::evidence::ProvisioningEvidenceV1 (line 233) - compile fail ... ok
+#10 59.51 test crates/pve-port/src/provisioning/requests.rs - provisioning::requests::ProvisioningBeforeStateV1 (line 10) - compile fail ... ok
+#10 59.51 
+#10 59.51 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+#10 59.51 
+#10 59.90    Compiling serde_core v1.0.229
+#10 62.37    Compiling serde v1.0.229
+#10 62.37    Compiling uuid v1.26.0
+#10 62.63    Compiling serde_json v1.0.151
+#10 63.43    Compiling smallvec v1.15.2
+#10 63.47    Compiling chrono v0.4.45
+#10 65.29    Compiling parking_lot_core v0.9.12
+#10 65.46    Compiling icu_normalizer v2.3.0
+#10 66.36    Compiling parking_lot v0.12.5
+#10 66.95    Compiling idna_adapter v1.2.2
+#10 67.00    Compiling controller-domain v0.1.0 (/workspace/rust-controller/crates/controller-domain)
+#10 67.51    Compiling tokio v1.53.1
+#10 67.55    Compiling idna v1.1.0
+#10 68.36    Compiling event-journal v0.1.0 (/workspace/rust-controller/crates/event-journal)
+#10 69.06    Compiling url v2.5.8
+#10 70.14    Compiling futures-intrusive v0.5.0
+#10 70.96    Compiling serde_urlencoded v0.7.1
+#10 71.36    Compiling either v1.18.0
+#10 71.90    Compiling artifact-index v0.1.0 (/workspace/rust-controller/crates/artifact-index)
+#10 72.28    Compiling hyper v1.11.0
+#10 73.10    Compiling tokio-rustls v0.26.4
+#10 74.03    Compiling hyper-util v0.1.20
+#10 74.23    Compiling tower v0.5.3
+#10 74.24    Compiling tokio-stream v0.1.18
+#10 75.39    Compiling tower-http v0.6.11
+#10 75.43    Compiling sqlx-core v0.8.6
+#10 76.27    Compiling hyper-rustls v0.27.9
+#10 77.00    Compiling reqwest v0.12.28
+#10 77.76    Compiling sqlx-postgres v0.8.6
+#10 78.62    Compiling pve-port v0.1.0 (/workspace/rust-controller/crates/pve-port)
+#10 80.85    Compiling sqlx v0.8.6
+#10 82.71    Compiling osdeploy-adapter v0.1.0 (/workspace/rust-controller/crates/osdeploy-adapter)
+#10 84.14    Compiling postgres-store v0.1.0 (/workspace/rust-controller/crates/postgres-store)
+#10 87.80    Compiling scheduler v0.1.0 (/workspace/rust-controller/crates/scheduler)
+#10 88.00    Compiling operation-controller v0.1.0 (/workspace/rust-controller/crates/operation-controller)
+#10 91.48     Finished `test` profile [unoptimized + debuginfo] target(s) in 31.84s
+#10 91.49      Running tests/decision.rs (rust-controller/target/debug/deps/decision-b5b16c6d7604f551)
+#10 91.50 
+#10 91.50 running 24 tests
+#10 91.62 test all_execution_states_guard_preflight_and_unknown_requires_narrow_mode ... ok
+#10 91.62 test coherent_receipt_and_task_substitution_cannot_replace_persisted_upid ... ok
+#10 91.62 test configure_response_loss_can_reconcile_only_from_owned_exact_postconditions ... ok
+#10 91.62 test additional_matrix_rows ... ok
+#10 91.63 test deadline_or_transport_loss_require_reconciliation_to_settle ... ok
+#10 91.64 test decision_matrix ... ok
+#10 91.67 test changed_attempt_or_digest_never_authorizes ... ok
+#10 91.67 test duplicate_boot_volume_cannot_establish_unique_clone_ownership ... ok
+#10 91.68 test every_desired_field_is_required_for_configure_and_start_satisfaction ... ok
+#10 91.68 test freshness_rejects_future_and_accepts_exact_boundary ... ok
+#10 91.69 test independent_fresh_reads_can_agree_without_identical_timestamps ... ok
+#10 91.69 test outcome_observations_must_postdate_dispatch_including_absence_and_power ... ok
+#10 91.71 test ownership_reload_requires_full_historical_success_and_coverage ... ok
+#10 91.71 test ownership_roundtrip_preserves_dispatch_before_intervening_observations ... ok
+#10 91.71 test provenance_conflict_precedes_running_task_and_cancellation ... ok
+#10 91.71 test receipt_requires_persisted_dispatch_and_preflight_cannot_ignore_it ... ok
+#10 91.71 test receipt_survives_later_evidence_fences_but_evidence_context_does_not ... ok
+#10 91.71 test running_clone_cannot_treat_unowned_occupant_as_pending_owned_work ... ok
+#10 91.72 test different_vm_desired_uuid_or_mac_collision_never_authorizes ... ok
+#10 91.72 test successful_proof_cannot_use_target_snapshot_from_before_dispatch ... ok
+#10 91.72 test unauthorized_required_read_precedes_missing_observation ... ok
+#10 91.72 test validated_roundtrip_rejects_cross_binding_and_fake_source_relabeling ... ok
+#10 91.78 test stale_inventory_never_authorizes ... ok
+#10 91.83 test contradictory_target_identity_never_authorizes ... ok
+#10 91.83 
+#10 91.83 test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+#10 91.83 
+#10 92.20    Compiling operation-controller v0.1.0 (/workspace/rust-controller/crates/operation-controller)
+#10 96.16     Finished `test` profile [unoptimized + debuginfo] target(s) in 4.23s
+#10 96.17      Running tests/postgres_native.rs (rust-controller/target/debug/deps/postgres_native-cd0a3cd959864ea0)
+#10 96.19 
+#10 96.19 running 44 tests
+#10 96.19 test support::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+#10 96.32 test support::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+#10 102.2 test support::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+#10 102.3 test support::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+#10 102.4 test support::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+#10 102.4 test support::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+#10 102.6 test support::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+#10 102.6 test support::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+#10 102.6 test support::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+#10 102.6 test support::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+#10 102.6 test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ignored, requires the owned Linux fixture namespace
+#10 102.6 test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ignored, requires the owned Linux fixture namespace
+#10 102.6 test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ignored, requires the owned Linux fixture namespace
+#10 102.6 test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ignored, requires the owned Linux fixture namespace
+#10 102.6 test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ignored, requires the owned Linux fixture namespace
+#10 102.6 test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ignored, requires the owned Linux fixture namespace
+#10 102.6 test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ignored, requires the owned Linux fixture namespace
+#10 102.6 test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ignored, requires the owned Linux fixture namespace
+#10 102.6 test support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ignored, requires the owned Linux fixture namespace
+#10 102.6 test support::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+#10 102.6 test support::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+#10 102.6 test support::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+#10 102.6 test support::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+#10 102.6 test support::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+#10 102.6 test support::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+#10 102.6 test support::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+#10 102.6 test support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+#10 102.7 test support::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+#10 102.8 test support::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+#10 103.0 test support::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+#10 104.0 test support::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+#10 104.1 test support::local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+#10 104.1 test support::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+#10 104.6 test support::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+#10 105.2 test support::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+#10 105.8 test support::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+#10 106.1 test support::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+#10 106.1 test support::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+#10 106.4 test support::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+#10 107.1 test support::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+#10 107.2 test support::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+#10 107.2 test support::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+#10 107.2 test support::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+#10 107.2 test support::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+#10 107.2 
+#10 107.2 test result: ok. 35 passed; 0 failed; 9 ignored; 0 measured; 25 filtered out; finished in 10.97s
+#10 107.2 
+#10 DONE 107.7s
+
+#11 [ 8/12] RUN cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p artifact-index
+#11 0.443    Compiling syn v3.0.4
+#11 0.443    Compiling libc v0.2.189
+#11 2.383    Compiling getrandom v0.4.3
+#11 2.415    Compiling serde_derive v1.0.229
+#11 2.485    Compiling thiserror-impl v2.0.20
+#11 3.179    Compiling uuid v1.26.0
+#11 4.001    Compiling thiserror v2.0.20
+#11 4.634    Compiling serde v1.0.229
+#11 5.466    Compiling controller-domain v0.1.0 (/workspace/rust-controller/crates/controller-domain)
+#11 5.466    Compiling chrono v0.4.45
+#11 6.801    Compiling event-journal v0.1.0 (/workspace/rust-controller/crates/event-journal)
+#11 7.626    Compiling artifact-index v0.1.0 (/workspace/rust-controller/crates/artifact-index)
+#11 9.949     Finished `test` profile [unoptimized + debuginfo] target(s) in 9.72s
+#11 9.956      Running unittests src/lib.rs (rust-controller/target/debug/deps/artifact_index-4a5605eb53d375fe)
+#11 9.968 
+#11 9.968 running 0 tests
+#11 9.969 
+#11 9.969 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#11 9.970 
+#11 9.971      Running tests/bytes.rs (rust-controller/target/debug/deps/bytes-5971392951f27f02)
+#11 9.983 
+#11 9.983 running 7 tests
+#11 10.00 test empty_iso_fails_even_when_its_declared_digest_matches ... ok
+#11 10.00 test iso_mismatch_is_rejected_independently ... ok
+#11 10.01 test empty_wim_fails_even_when_its_declared_digest_matches ... ok
+#11 10.01 test swapped_distinct_inputs_are_rejected ... ok
+#11 10.01 test wim_mismatch_is_rejected_independently ... ok
+#11 10.01 test matching_bytes_report_only_bound_fingerprint_lengths_and_limited_evidence ... ok
+#11 10.01 test matching_same_content_for_another_descriptor_changes_the_report_binding ... ok
+#11 10.01 
+#11 10.01 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+#11 10.01 
+#11 10.01      Running tests/descriptor.rs (rust-controller/target/debug/deps/descriptor-5000e4c6ca2e9ac8)
+#11 10.03 
+#11 10.03 running 11 tests
+#11 10.03 test all_error_variants_have_fixed_payload_free_messages ... ok
+#11 10.03 test architecture_accepts_only_literal_amd64 ... ok
+#11 10.03 test build_label_accepts_only_fourteen_ascii_digits_without_calendar_authority ... ok
+#11 10.06 test descriptor_serialization_pins_the_complete_declared_only_contract ... ok
+#11 10.06 test hashes_normalize_all_hex_letters_and_digits_without_changing_fingerprint ... ok
+#11 10.06 test hashes_reject_non_ascii_nonhex_and_wrong_lengths_independently ... ok
+#11 10.06 test missing_output_falls_back_to_source_with_distinct_provenance ... ok
+#11 10.06 test every_variable_descriptor_field_is_bound_into_the_fingerprint ... ok
+#11 10.06 test indices_reject_zero_and_preserve_positive_u32_bounds ... ok
+#11 10.06 test nil_uuid_is_rejected_but_non_version_seven_opaque_ids_are_accepted ... ok
+#11 10.06 test valid_fixture_preserves_declared_identity_and_prefers_output_index ... ok
+#11 10.06 
+#11 10.06 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+#11 10.06 
+#11 10.06      Running tests/export_gate.rs (rust-controller/target/debug/deps/export_gate-c1ded785a09bf811)
+#11 10.07 
+#11 10.07 running 1 test
+#11 10.08 test immutable_exports_and_rollback_window_never_authorize_cutover ... ok
+#11 10.08 
+#11 10.08 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#11 10.08 
+#11 10.08    Doc-tests artifact_index
+#11 10.31 
+#11 10.31 running 3 tests
+#11 10.56 test crates/artifact-index/src/bytes.rs - bytes::SuppliedByteMatch (line 19) - compile fail ... ok
+#11 10.56 test crates/artifact-index/src/bytes.rs - bytes::SuppliedByteMatch (line 13) - compile fail ... ok
+#11 10.56 test crates/artifact-index/src/descriptor.rs - descriptor::DeclaredArtifact (line 30) - compile fail ... ok
+#11 10.56 
+#11 10.56 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+#11 10.56 
+#11 DONE 10.7s
+
+#12 [ 9/12] RUN cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p pve-port --features fixture-ipc -- --test-threads=1
+#12 0.485    Compiling pve-port v0.1.0 (/workspace/rust-controller/crates/pve-port)
+#12 36.62     Finished `test` profile [unoptimized + debuginfo] target(s) in 36.37s
+#12 36.64      Running unittests src/lib.rs (rust-controller/target/debug/deps/pve_port-de29167a4238efbd)
+#12 36.65 
+#12 36.65 running 36 tests
+#12 36.65 test fixture_support::clone_reads::tests::legacy_inventory_does_not_relabel_opaque_configuration_digests ... ok
+#12 36.66 test fixture_support::clone_reads::tests::preserves_observation_times_errors_and_identity ... ok
+#12 36.66 test fixture_support::clone_reads::tests::rejects_unknown_fields_zero_time_duplicates_and_caps ... ok
+#12 36.66 test fixture_support::durable_fixture_log::power_tests::atomic_start_admission_survives_replay_without_consuming_duplicate_authority ... ok
+#12 36.88 test fixture_support::durable_fixture_log::power_tests::power_replay_requires_exact_effect_and_fresh_observation ... ok
+#12 36.88 test fixture_support::fixture_daemon::snapshot::tests::inventory_is_strict_and_bounded ... ok
+#12 36.89 test fixture_support::inventory_read::tests::projection_preserves_seed_time_and_refuses_to_invent_power ... ok
+#12 36.89 test fixture_support::provisioning_port::tests::capability_is_sealed_and_unsupported_reads_are_unavailable ... ok
+#12 36.90 test fixture_support::provisioning_port::tests::observations_keep_time_and_error_classes ... ok
+#12 36.90 test fixture_support::provisioning_reads::tests::errors_remain_explicit_and_identity_and_unknown_fields_fail_closed ... ok
+#12 36.90 test fixture_support::stage_effect::tests::legacy_clone_authorizes_only_exact_new_resize_without_reassignment ... ok
+#12 37.00 test observer::boundary_tests::credential_denial_precedes_client_build_for_every_denied_mode ... ok
+#12 37.00 test observer::boundary_tests::denied_production_target_never_reaches_client_builder ... ok
+#12 37.00 test tests::clone_intent_rejects_a_upid_for_another_node ... ok
+#12 37.00 test tests::combined_http_observation_evaluates_fresh_facts_after_collection ... ok
+#12 37.07 test tests::contradictory_uuid_or_mac_is_never_identity_satisfied ... ok
+#12 37.07 test tests::delayed_loopback_response_maps_to_timeout ... ok
+#12 37.58 test tests::http_401_and_403_are_unauthorized_without_response_payloads ... ok
+#12 37.60 test tests::http_404_and_409_remain_distinct_read_errors ... ok
+#12 37.60 test tests::identifiers_and_base_urls_reject_unsafe_or_ambiguous_values ... ok
+#12 37.61 test tests::injected_evaluation_clock_runs_after_http_collection_and_rejects_old_or_future_facts ... ok
+#12 37.64 test tests::late_upid_completion_is_a_new_fact_without_replaying_requests ... ok
+#12 37.64 test tests::loopback_target_never_uses_proxy_environment ... 
+#12 37.67 running 1 test
+#12 37.97 test tests::loopback_target_never_uses_proxy_environment ... ok
+#12 37.97 
+#12 37.97 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 35 filtered out; finished in 0.30s
+#12 37.97 
+#12 37.97 ok
+#12 37.97 test tests::not_found_and_conflict_are_unavailable_observations ... ok
+#12 37.98 test tests::observer_never_follows_a_redirect_hop ... ok
+#12 38.24 test tests::old_observations_are_stale ... ok
+#12 38.24 test tests::qga_ping_uses_the_typed_post_observation_endpoint ... ok
+#12 38.25 test tests::redirect_to_production_is_rejected_without_a_production_attempt ... ok
+#12 38.26 test tests::retryable_protocol_response_has_at_most_one_wire_attempt ... ok
+#12 38.37 test tests::sanitized_upid_fixture_decodes_as_completed_task ... ok
+#12 38.38 test tests::sanitized_upid_fixture_decodes_as_failed_task ... ok
+#12 38.39 test tests::stopped_failure_is_distinct_from_a_running_task ... ok
+#12 38.39 test tests::task_status_rejects_route_node_mismatch_before_a_request ... ok
+#12 38.39 test tests::timeout_is_timed_out_not_failed ... ok
+#12 38.39 test tests::upid_requires_the_documented_proxmox_field_shape ... ok
+#12 38.39 test tests::upid_success_is_not_vm_postcondition ... ok
+#12 38.39 
+#12 38.39 test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.74s
+#12 38.39 
+#12 38.40      Running tests/credentials.rs (rust-controller/target/debug/deps/credentials-676816cb1741045a)
+#12 38.42 
+#12 38.42 running 4 tests
+#12 38.42 test default_observer_sends_no_authorization ... ok
+#12 38.48 test redirect_cannot_forward_token_or_issue_second_request ... ok
+#12 38.48 test token_is_sent_once_only_in_sensitive_authorization_header ... ok
+#12 38.49 test token_validation_and_debug_never_echo_input ... ok
+#12 38.49 
+#12 38.49 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+#12 38.49 
+#12 38.49      Running tests/durable_fixture_log.rs (rust-controller/target/debug/deps/durable_fixture_log-1cd00195465159ea)
+#12 38.50 
+#12 38.50 running 12 tests
+#12 38.51 test acceptance_and_world_transition_recover_together_after_durable_attempt ... ok
+#12 38.53 test duplicate_attempt_cannot_accept_and_reordered_valid_frames_fail_recovery ... ok
+#12 38.53 test durable_fixture_log::power_tests::atomic_start_admission_survives_replay_without_consuming_duplicate_authority ... ok
+#12 38.55 test durable_fixture_log::power_tests::power_replay_requires_exact_effect_and_fresh_observation ... ok
+#12 38.55 test effect_lookup_rejects_invalid_identity_without_appending ... ok
+#12 38.55 test every_truncated_record_and_checksum_corruption_fail_closed ... ok
+#12 38.57 test invalid_inputs_do_not_append_and_create_never_overwrites ... ok
+#12 38.57 test rejects_trailing_garbage_oversized_lines_and_replayed_frames ... ok
+#12 38.57 test restart_preserves_every_duplicate_attempt_including_changed_digest ... ok
+#12 38.58 test stage_identity_rejects_legacy_mixing_and_invalid_authority ... ok
+#12 38.58 test stage_keys_replay_exactly_and_bind_original_authority ... ok
+#12 38.60 test stage_replay_rejects_canonical_but_rebound_effects_and_ambiguous_legacy ... ok
+#12 38.60 
+#12 38.60 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+#12 38.60 
+#12 38.60      Running tests/fixture_checkpoint.rs (rust-controller/target/debug/deps/fixture_checkpoint-221d63a857da86b5)
+#12 38.62 
+#12 38.62 running 2 tests
+#12 38.62 test missing_checkpoint_daemon_is_typed_unavailable ... ok
+#12 38.63 test trait_object_checkpoint_preserves_native_pause_and_release ... ok
+#12 38.64 
+#12 38.64 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+#12 38.64 
+#12 38.64      Running tests/fixture_clone_contract.rs (rust-controller/target/debug/deps/fixture_clone_contract-c1f8ca9d2c63a3bc)
+#12 38.65 
+#12 38.65 running 8 tests
+#12 38.65 test bound_stable_read_adapter_reports_unavailable_late_transport ... ok
+#12 38.68 test clone_task_receipt_requires_source_node_worker_and_synthetic_user ... ok
+#12 38.69 test daemon_clone_commits_receipt_and_rejects_duplicate_after_restart ... ok
+#12 40.74 test late_authorization_candidate_requires_exact_dispatch_and_entered_owner ... ok
+#12 40.76 test late_resize_requires_original_clone_and_never_submits_before_checkpoint ... ok
+#12 40.84 test receipt_rejects_mismatched_fixture_request_sequence_and_extra_fields ... ok
+#12 40.85 test request_and_original_task_receipt_round_trip_without_identity_loss ... ok
+#12 40.85 test request_rejects_unknown_fields_versions_nil_fixture_and_invalid_typed_clone ... ok
+#12 40.85 
+#12 40.85 test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.20s
+#12 40.85 
+#12 40.85      Running tests/fixture_controller_admission.rs (rust-controller/target/debug/deps/fixture_controller_admission-a701a0c6eac83071)
+#12 40.87 
+#12 40.87 running 5 tests
+#12 40.87 test clone_admission_requires_each_daemon_read_family ... ok
+#12 40.96 test clone_vacancy_does_not_require_power_for_an_absent_target ... ok
+#12 41.01 test complete_inventory_does_not_upgrade_partial_identity_coverage ... ok
+#12 41.05 test node_inventory_cannot_be_promoted_to_global_identity_coverage ... ok
+#12 41.10 test source_power_without_explicit_unlocked_observation_blocks_clone ... ok
+#12 41.15 
+#12 41.15 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+#12 41.15 
+#12 41.15      Running tests/fixture_daemon.rs (rust-controller/target/debug/deps/fixture_daemon-f2013948a187c6df)
+#12 41.16 
+#12 41.16 running 22 tests
+#12 41.16 test accepted_effect_lookup_binds_request_and_survives_restart ... ok
+#12 41.28 test bound_late_clone_consumes_exact_authorization_once ... ok
+#12 41.50 test bound_late_clone_persistence_failure_creates_no_effect ... ok
+#12 41.62 test clone_reads_preserve_seed_errors_identity_and_restart_observations ... ok
+#12 41.80 test daemon_lifetime_keeps_a_sixty_second_hard_limit ... ok
+#12 41.81 test delayed_payload_is_read_within_the_frame_deadline ... ok
+#12 41.85 test durable_fixture_log::power_tests::atomic_start_admission_survives_replay_without_consuming_duplicate_authority ... ok
+#12 41.87 test durable_fixture_log::power_tests::power_replay_requires_exact_effect_and_fresh_observation ... ok
+#12 41.88 test effects_commit_replay_and_reject_duplicates_over_ipc ... ok
+#12 42.00 test endpoint_substitution_and_corrupt_restart_fail_closed ... ok
+#12 42.05 test fixture_daemon_child ... ignored, subprocess entry point only
+#12 42.05 test killed_daemon_rebind_requires_supervisor_cleanup_and_preserves_ledger ... ok
+#12 42.16 test late_authorization_is_supervisor_owned_atomic_and_invalidated_on_restart ... ok
+#12 43.48 test missing_lock_or_invalid_coverage_prevents_daemon_startup ... ok
+#12 43.60 test oversized_and_partial_requests_cannot_mutate_or_stall_daemon ... ok
+#12 43.86 test provisioning_reads_preserve_populated_facts_errors_and_restart_identity ... ok
+#12 44.09 test read_client_observes_daemon_owned_effect_without_writing ... ok
+#12 44.15 test separate_process_enforces_control_boundary_and_durable_duplicate_ledger ... ok
+#12 44.22 test snapshot_is_daemon_owned_and_survives_restart ... ok
+#12 44.36 test stable_v2_collection_is_versioned_and_survives_restart_without_request_digest ... ok
+#12 44.55 test supervisor_checkpoint_release_timeout_and_restart_are_owned ... ok
+#12 44.71 test target_presence_and_power_survive_restart_without_mutation ... ok
+#12 44.95 
+#12 44.95 test result: ok. 21 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.79s
+#12 44.95 
+#12 44.96      Running tests/fixture_inventory_projection.rs (rust-controller/target/debug/deps/fixture_inventory_projection-f673781011ec2782)
+#12 44.97 
+#12 44.97 running 3 tests
+#12 44.97 test inventory_status_requires_explicit_valid_snapshot_bound_observation ... ok
+#12 44.98 test seeded_inventory_status_supplies_its_own_power_observation ... ok
+#12 44.99 test unrelated_inventory_identity_preserves_its_own_configuration_coverage ... ok
+#12 44.99 
+#12 44.99 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+#12 44.99 
+#12 44.99      Running tests/fixture_inventory_v2.rs (rust-controller/target/debug/deps/fixture_inventory_v2-93ffd9b23fa9f590)
+#12 45.01 
+#12 45.01 running 1 test
+#12 45.01 test inventory_v2_preserves_opaque_identity_and_rejects_rebinding_and_partial_facts ... ok
+#12 45.17 
+#12 45.17 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+#12 45.17 
+#12 45.17      Running tests/fixture_legacy_resize.rs (rust-controller/target/debug/deps/fixture_legacy_resize-51a4f1ba23194c47)
+#12 45.19 
+#12 45.19 running 1 test
+#12 45.19 test legacy_clone_bridge_requires_original_receipt_across_daemon_restarts ... ok
+#12 45.58 
+#12 45.58 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+#12 45.58 
+#12 45.58      Running tests/fixture_post_dispatch.rs (rust-controller/target/debug/deps/fixture_post_dispatch-8f682520fbcc9ea0)
+#12 45.59 
+#12 45.59 running 12 tests
+#12 45.59 test every_observation_is_bounded_by_independent_acceptance_and_collection_times ... ok
+#12 45.69 test exact_receipt_request_and_vm_identity_cannot_be_substituted ... ok
+#12 45.70 test full_start_pe_worker_death_preserves_exact_publication_and_ledger ... ok
+#12 47.28 test stage_publication_binds_owner_attempt_and_restart_for_clone_and_resize ... ok
+#12 47.66 test stage_resize_observations_require_exact_digest_and_resize_receipt ... ok
+#12 47.72 test start_full_process::daemon_child ... ok
+#12 47.72 test start_full_process::restoration_child ... ok
+#12 47.72 test strict_wire_rejects_missing_extra_duplicate_and_oversized_fields ... ok
+#12 47.73 test supervisor_publication_requires_accepted_effect_and_invalidates_on_restart ... ok
+#12 47.89 test synchronous_configure_publication_requires_resize_and_invalidates_on_restart ... ok
+#12 49.04 test synchronous_contract_requires_configure_receipt_and_rejects_task_fields ... ok
+#12 49.10 test typed_observations_preserve_task_states_absence_errors_and_partial_coverage ... ok
+#12 49.10 
+#12 49.10 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.51s
+#12 49.10 
+#12 49.11      Running tests/fixture_provisioning_reads.rs (rust-controller/target/debug/deps/fixture_provisioning_reads-919a016bcabfca4c)
+#12 49.12 
+#12 49.12 running 5 tests
+#12 49.12 test lock_and_coverage_are_explicit_strict_and_never_upgraded ... ok
+#12 49.15 test populated_config_and_media_reject_wrong_identity_time_and_invalid_content ... ok
+#12 49.15 test populated_config_media_and_explicit_errors_round_trip_without_refresh ... ok
+#12 49.16 test target_config_identity_time_and_power_envelopes_are_strict ... ok
+#12 49.16 test target_presence_and_absence_keep_independent_power_observations ... ok
+#12 49.16 
+#12 49.16 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+#12 49.16 
+#12 49.16      Running tests/fixture_read_client.rs (rust-controller/target/debug/deps/fixture_read_client-21a5b1c422de7fd4)
+#12 49.18 
+#12 49.18 running 2 tests
+#12 49.18 test stalled_peer_and_input_bounds ... ok
+#12 49.23 test status_and_invalid_replies ... ok
+#12 49.24 
+#12 49.24 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+#12 49.24 
+#12 49.24      Running tests/fixture_stage.rs (rust-controller/target/debug/deps/fixture_stage-9242188a2e304a35)
+#12 49.25 
+#12 49.25 running 5 tests
+#12 49.25 test controller_request_checkpoint_rejects_unbound_and_unsupported_stages ... ok
+#12 49.35 test first_four_stage_contracts_bind_exact_request_and_receipt_kind ... ok
+#12 49.42 test stage_transport_rejects_without_attempts_or_effects_across_restart ... ok
+#12 51.45 test start_pe_requires_exact_configure_predecessor_and_target_start_receipt ... ok
+#12 51.51 test start_validation_rejects_adapter_identity_before_socket_io ... ok
+#12 51.56 
+#12 51.56 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.31s
+#12 51.56 
+#12 51.56      Running tests/fixture_stage_consumers.rs (rust-controller/target/debug/deps/fixture_stage_consumers-953992f482cef7aa)
+#12 51.57 
+#12 51.57 running 2 tests
+#12 51.57 test durable_clone_resize_configure_requires_exact_accepted_predecessor ... ok
+#12 52.28 test stage_consumers_bind_all_fields_and_restart_without_mutation ... ok
+#12 52.60 
+#12 52.60 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+#12 52.61 
+#12 52.61      Running tests/fixture_task.rs (rust-controller/target/debug/deps/fixture_task-62ccd373bacdd19d)
+#12 52.62 
+#12 52.62 running 2 tests
+#12 52.62 test task_envelope_rejects_unknown_and_invalid_data ... ok
+#12 52.64 test task_observation_survives_restart_and_binds_all_identity_fields ... ok
+#12 53.67 
+#12 53.67 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+#12 53.67 
+#12 53.67      Running tests/infrastructure_visibility.rs (rust-controller/target/debug/deps/infrastructure_visibility-781a9e260cf2e35e)
+#12 53.70 
+#12 53.70 running 26 tests
+#12 53.70 test duplicate_identity_invalidates_network_report ... ok
+#12 53.70 test duplicate_identity_is_detected_before_metadata_rejection ... ok
+#12 53.70 test empty_network_remains_unverified ... ok
+#12 53.71 test interface_activity_preserves_zero_one_and_missing ... ok
+#12 53.71 test invalid_activity_is_counted ... ok
+#12 53.71 test invalid_interface_identity_is_counted ... ok
+#12 53.71 test invalid_or_crossnode_binding_invalidates_even_otherwise_malformed_rows ... ok
+#12 53.71 test invalid_or_mismatched_node_binding_invalidates_node_report ... ok
+#12 53.71 test malformed_rows_are_counted_without_losing_valid_rows ... ok
+#12 53.71 test matching_network_node_binding_is_retained ... ok
+#12 53.71 test matching_node_binding_is_retained ... ok
+#12 53.71 test missing_or_nonstring_type_is_counted ... ok
+#12 53.71 test missing_uptime_is_unknown ... ok
+#12 53.71 test network_row_limit_accepts_1024_and_rejects_1025 ... ok
+#12 53.71 test network_serialization_preserves_order_and_only_sanitized_fields ... ok
+#12 53.72 test network_timestamp_is_preserved ... ok
+#12 53.72 test node_serialization_retains_only_sanitized_visibility ... ok
+#12 53.72 test node_timestamp_is_preserved ... ok
+#12 53.72 test nonarray_network_data_is_invalid ... ok
+#12 53.72 test nonobject_node_data_is_invalid ... ok
+#12 53.72 test opaque_interface_identity_accepts_exact_byte_and_character_boundaries ... ok
+#12 53.72 test ovs_and_missing_activity_remain_visible ... ok
+#12 53.72 test positive_and_maximum_uptime_are_retained ... ok
+#12 53.72 test present_invalid_uptime_invalidates_report ... ok
+#12 53.72 test unknown_interface_types_remain_visible_without_raw_metadata ... ok
+#12 53.72 test zero_uptime_is_visibility_not_online_authority ... ok
+#12 53.72 
+#12 53.72 test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+#12 53.72 
+#12 53.72      Running tests/infrastructure_visibility_http.rs (rust-controller/target/debug/deps/infrastructure_visibility_http-f3f6e68b3366f797)
+#12 53.73 
+#12 53.73 running 22 tests
+#12 53.73 test authenticated_network_preserves_ovs_missing_activity_and_rejected_rows ... ok
+#12 53.80 test authenticated_node_zero_uptime_is_one_timestamped_unverified_get ... ok
+#12 53.85 test cancelling_collection_closes_body_and_does_not_retry ... ok
+#12 58.19 test chunked_oversize_is_rejected ... ok
+#12 58.21 test conflict_409_is_fixed_and_not_retried ... ok
+#12 58.22 test cross_node_network_row_rejects_report ... ok
+#12 58.23 test declared_oversize_is_rejected_before_reading_body ... ok
+#12 58.24 test duplicate_interface_after_rejected_metadata_rejects_report ... ok
+#12 58.25 test eof_oversize_is_rejected ... ok
+#12 58.27 test exactly_one_mib_valid_bodies_are_accepted ... ok
+#12 58.31 test forbidden_403_is_fixed_and_not_retried ... ok
+#12 58.31 test invalid_network_shape_is_rejected ... ok
+#12 58.32 test invalid_node_data_is_rejected ... ok
+#12 58.33 test malformed_envelopes_are_rejected ... ok
+#12 58.37 test missing_404_is_fixed_and_not_retried ... ok
+#12 58.38 test network_1025_rows_is_rejected ... ok
+#12 58.39 test proxy_environment_never_receives_node_or_network_requests ... 
+#12 58.41 running 1 test
+#12 58.52 test authenticated_node_zero_uptime_is_one_timestamped_unverified_get ... ok
+#12 58.52 
+#12 58.52 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.11s
+#12 58.52 
+#12 58.55 
+#12 58.55 running 1 test
+#12 58.60 test authenticated_network_preserves_ovs_missing_activity_and_rejected_rows ... ok
+#12 58.60 
+#12 58.60 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.06s
+#12 58.60 
+#12 58.62 ok
+#12 58.62 test redirects_never_contact_target_or_forward_credentials ... ok
+#12 58.63 test request_deadline_overrides_larger_client_timeout ... ok
+#12 62.64 test server_500_is_fixed_and_not_retried ... ok
+#12 62.65 test unauthorized_401_is_fixed_and_not_retried ... ok
+#12 62.66 test whole_body_deadline_includes_time_already_spent_waiting_for_headers ... ok
+#12 66.68 
+#12 66.68 test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.95s
+#12 66.68 
+#12 66.69      Running tests/native_contract.rs (rust-controller/target/debug/deps/native_contract-f0b07b5967ac6579)
+#12 66.70 
+#12 66.70 running 16 tests
+#12 66.70 test changed_digest_alone_rejects_configure_without_refresh_or_resend ... ok
+#12 66.74 test clone_outcomes_distinguish_rejection_loss_failure_and_delayed_application ... ok
+#12 66.74 test configure_and_start_outcomes_preserve_their_distinct_receipt_contracts ... ok
+#12 66.75 test delayed_clone_cannot_overwrite_an_occupant_inserted_before_completion ... ok
+#12 66.75 test every_mutable_plan_field_and_step_changes_canonical_digest ... ok
+#12 66.76 test fixed_requests_apply_identity_preserve_disk_and_provenance ... ok
+#12 66.76 test historical_binding_can_be_old_but_current_identity_and_final_fields_must_match ... ok
+#12 66.76 test http_observer_never_imports_fake_provenance_from_response ... ok
+#12 66.81 test immutable_plan_roundtrip_rejects_unknown_fields_and_invalid_values ... ok
+#12 66.81 test missing_or_mismatched_provenance_and_stale_or_wrong_identity_cannot_configure ... ok
+#12 66.81 test normal_infrastructure_reads_refresh_time_but_explicit_stale_config_does_not ... ok
+#12 66.82 test request_markers_and_operation_ids_are_hashed_and_provenance_is_not_circular ... ok
+#12 66.82 test retained_marker_does_not_hide_changed_intermediate_identity_or_disk ... ok
+#12 66.82 test successful_clone_task_and_same_name_do_not_authorize_foreign_occupant ... ok
+#12 66.82 test typed_fake_reads_report_inventory_storage_power_and_no_guest_readiness ... ok
+#12 66.83 test typed_fault_hooks_preserve_read_errors_and_gate_submission ... ok
+#12 66.83 
+#12 66.83 test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+#12 66.83 
+#12 66.83      Running tests/network_deny.rs (rust-controller/target/debug/deps/network_deny-0b4dc9799107d7a6)
+#12 66.84 
+#12 66.84 running 6 tests
+#12 66.84 test adapter_permission_cannot_authorize_a_non_loopback_target ... ok
+#12 66.85 test credentials_never_authorize_denied_targets_or_send_requests ... ok
+#12 66.85 test every_non_loopback_target_is_denied_without_explicit_observe_permission ... ok
+#12 66.85 test normalized_literal_loopback_targets_remain_local_test_targets ... ok
+#12 66.86 test production_address_is_rejected_before_http_client_construction ... ok
+#12 66.86 test production_observe_requires_explicit_read_permission ... ok
+#12 66.86 
+#12 66.86 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+#12 66.86 
+#12 66.86      Running tests/preflight.rs (rust-controller/target/debug/deps/preflight-92d393aef615b624)
+#12 66.87 
+#12 66.87 running 15 tests
+#12 66.87 test absence_does_not_accept_stale_or_future_inventory ... ok
+#12 66.95 test additional_nics_cannot_hide_malformed_identity_behind_unsupported_layout ... ok
+#12 66.95 test all_preflight_routes_return_bound_typed_facts ... ok
+#12 66.98 test every_snapshot_enforces_thirty_second_freshness_and_rejects_future_facts ... ok
+#12 66.98 test inventory_rejects_duplicate_vmids_and_malformed_identity ... ok
+#12 66.98 test lock_and_agent_state_are_preserved_and_normalized ... ok
+#12 66.98 test native_config_rejects_missing_or_malformed_required_facts ... ok
+#12 66.98 test node_storage_and_bridge_wire_validation_fails_closed ... ok
+#12 66.98 test power_status_rejects_wrong_identity_and_unknown_states ... ok
+#12 66.98 test sanitized_decoding_rejects_forged_or_malformed_fact_fields ... ok
+#12 66.99 test sanitized_maps_reject_duplicate_identity_keys ... ok
+#12 66.99 test sanitized_snapshots_round_trip_through_validated_deserialization ... ok
+#12 67.00 test status_decode_and_timeout_failures_are_fixed_and_never_leak_body ... ok
+#12 67.27 test target_absence_requires_inventory_exclusion_and_config_not_found ... ok
+#12 67.36 test unsupported_configuration_is_typed_and_never_copies_raw_text ... ok
+#12 67.37 
+#12 67.37 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+#12 67.37 
+#12 67.37      Running tests/provisioning_config.rs (rust-controller/target/debug/deps/provisioning_config-47901d986ad301fc)
+#12 67.39 
+#12 67.39 running 20 tests
+#12 67.39 test capacity_is_exact_positive_checked_binary_bytes ... ok
+#12 67.40 test comma_syntax_duplicates_fail_before_unsupported_projection ... ok
+#12 67.41 test explicit_core_fields_types_and_binding_cannot_be_defaulted ... ok
+#12 67.41 test fake_marker_requires_fake_source_valid_provenance_and_target_binding ... ok
+#12 67.42 test fake_provenance_object_shape_is_required_without_changing_legacy_type ... ok
+#12 68.86 test media_discriminators_require_strings_standalone_and_in_snapshots ... ok
+#12 68.87 test media_inventory_binds_storage_unique_bounded_volids_and_explicit_coverage ... ok
+#12 68.88 test nested_before_state_still_rejects_object_source_discriminators ... ok
+#12 68.89 test nested_persisted_fields_reject_duplicates_and_unknowns_without_payloads ... ok
+#12 68.89 test old_native_parser_keeps_rejecting_rich_layout ... ok
+#12 68.89 test persisted_config_exact_shape_rejects_missing_duplicate_and_unknown_fields ... ok
+#12 68.90 test persisted_facts_require_objects_even_when_an_array_has_valid_ordered_fields ... ok
+#12 68.90 test persisted_sanitized_invariants_cannot_be_forged ... ok
+#12 68.90 test qga_is_a_bound_observation_and_auxiliary_persisted_shapes_validate ... ok
+#12 68.91 test rich_source_discriminator_requires_strings_from_str ... ok
+#12 68.91 test rich_source_discriminator_requires_strings_from_value ... ok
+#12 68.91 test rich_template_and_destination_preserve_every_sanitized_field ... ok
+#12 68.91 test standalone_classification_decoders_never_echo_untrusted_values ... ok
+#12 68.91 test template_semantic_hash_has_independent_golden_and_exact_field_binding ... ok
+#12 68.92 test unsupported_values_are_fixed_payload_free_and_block_template_admission ... ok
+#12 68.92 
+#12 68.92 test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.53s
+#12 68.92 
+#12 68.92      Running tests/provisioning_evaluation.rs (rust-controller/target/debug/deps/provisioning_evaluation-820e9b2e79856ced)
+#12 68.94 
+#12 68.94 running 25 tests
+#12 68.94 test all_possible_send_states_never_return_ready ... ok
+#12 69.04 test cancellation_ineligible_state_deadline_and_freshness_boundaries ... ok
+#12 69.12 test clone_outcome_source_change_and_request_provenance_are_conflicts ... ok
+#12 69.17 test complete_legacy_identity_projection_can_cover_shared_namespace ... ok
+#12 69.22 test evidence_persistence_is_required_nullable_and_route_validated ... ok
+#12 69.73 test failed_clone_with_exact_unchanged_vacancy_is_failed ... ok
+#12 69.78 test historical_owner_and_predecessor_cannot_cross_run_workflow_or_request ... ok
+#12 69.83 test inventory_coverage_errors_collisions_and_legacy_projection_are_conservative ... ok
+#12 69.87 test media_requires_both_exact_full_storage_catalogs ... ok
+#12 69.92 test no_change_is_limited_to_capacity_and_stop_before_dispatch ... ok
+#12 69.97 test outcome_cannot_use_stale_source_snapshot_in_inventory_comparison ... ok
+#12 70.01 test receipt_collection_clock_and_absence_power_contradiction_are_checked ... ok
+#12 70.06 test receipt_substitution_is_rejected_in_context_and_evidence ... ok
+#12 70.11 test retained_capacity_including_nonintegral_bytes_continues_without_resize ... ok
+#12 70.23 test same_target_vmid_on_another_node_blocks_even_with_local_404 ... ok
+#12 70.27 test seven_action_physical_chain_preserves_original_clone_proof ... ok
+#12 70.32 test snapshot_wrapper_and_collection_clocks_are_independent ... ok
+#12 70.38 test supported_layout_lock_template_and_digest_changes_are_independent ... ok
+#12 70.47 test synchronous_lost_receipt_requires_exact_original_reconciliation ... ok
+#12 70.52 test task_dispatch_without_receipt_stays_unknown_even_with_desired_world ... ok
+#12 70.57 test task_failure_and_running_do_not_mask_replaced_disks ... ok
+#12 70.64 test task_snapshot_cannot_predate_receipt_acceptance ... ok
+#12 70.69 test task_success_does_not_replace_missing_physical_postconditions ... ok
+#12 70.74 test unrelated_before_and_after_categories_cannot_be_hidden_by_task_success ... ok
+#12 70.92 test wrong_identity_projection_duplicate_keys_and_incomplete_catalogs_are_rejected ... ok
+#12 70.97 
+#12 70.97 test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.01s
+#12 70.97 
+#12 70.97      Running tests/provisioning_expectations.rs (rust-controller/target/debug/deps/provisioning_expectations-acfa78220becdc67)
+#12 70.98 
+#12 70.98 running 7 tests
+#12 70.98 test admits_explicit_capacity_and_normalizes_template_sha ... ok
+#12 70.99 test canonical_shape_roundtrips_and_all_inputs_bind_the_fingerprint ... ok
+#12 71.00 test enforces_approved_hash_serial_and_iso_token_rules ... ok
+#12 71.00 test nested_vm_plan_must_keep_its_named_fields_in_new_contract ... ok
+#12 71.00 test persisted_expectation_and_operation_shape_requires_an_object ... ok
+#12 71.00 test persisted_expectations_and_plans_cannot_bypass_admission ... ok
+#12 71.01 test rejects_invalid_growth_but_retains_exact_template_bytes ... ok
+#12 71.01 
+#12 71.01 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+#12 71.01 
+#12 71.01      Running tests/provisioning_fake.rs (rust-controller/target/debug/deps/provisioning_fake-8bcb22af9f3997f1)
+#12 71.02 
+#12 71.02 running 23 tests
+#12 71.02 test accepted_task_can_physically_finish_after_strict_controller_deadline ... ok
+#12 71.08 test clone_changes_the_shared_world_without_preconfiguring_final_identity ... ok
+#12 71.14 test clone_preserves_source_serials_resources_and_media_without_final_preconfiguration ... ok
+#12 71.14 test current_power_route_media_and_catalog_changes_are_rejected_at_admission ... ok
+#12 71.42 test delayed_clone_rejects_new_target_and_legacy_replacement_without_touching_occupants ... ok
+#12 71.42 test delayed_work_cannot_target_copied_replacement_or_independent_power_change ... ok
+#12 71.65 test exact_before_state_rejects_tampering_even_when_digest_and_marker_are_copied ... ok
+#12 71.89 test fixture_source_and_script_source_cannot_claim_live_pve ... ok
+#12 71.89 test full_world_sequence_grows_80_to_120_and_preserves_power_only_fields ... ok
+#12 71.95 test full_world_sequence_retains_160_for_requested_120 ... ok
+#12 71.99 test full_world_sequence_retains_exact_non_whole_gib_capacity ... ok
+#12 72.04 test history_preserves_exact_ordered_forms_and_only_allowed_effects ... ok
+#12 72.09 test independent_qga_survives_config_power_and_does_not_invalidate_delayed_growth ... ok
+#12 72.14 test legacy_fault_and_pause_controls_do_not_leak_into_provisioning ... ok
+#12 72.15 test missing_distinct_catalog_and_growth_delta_reject_without_world_change ... ok
+#12 72.18 test mixed_family_inventory_downcasts_coverage_and_reserved_identity_collisions ... ok
+#12 72.19 test outcome_matrix_records_attempts_acceptance_and_actual_effects ... ok
+#12 73.10 test pe_and_disk_faults_are_independent_despite_identical_start_forms ... ok
+#12 73.20 test pending_resources_overlap_across_families_and_completions_keep_separate_queues ... ok
+#12 73.21 test provisioning_pause_rechecks_world_and_records_only_resumed_admission ... ok
+#12 73.22 test scripted_errors_and_pauses_are_independent_observations ... ok
+#12 73.22 test scripts_preserve_routes_timestamps_and_unsupported_facts_without_world_effects ... ok
+#12 73.22 test selector_priority_fifo_duplicate_and_failed_admission_do_not_consume_faults ... ok
+#12 73.23 
+#12 73.23 test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+#12 73.23 
+#12 73.23      Running tests/provisioning_requests.rs (rust-controller/target/debug/deps/provisioning_requests-963f5a0d585a7b7a)
+#12 73.25 
+#12 73.25 running 12 tests
+#12 73.25 test binding_rejects_invalid_full_workflow_hash ... ok
+#12 73.27 test bindings_compare_attempt_identity_but_not_collection_fence ... ok
+#12 73.27 test complete_request_json_and_digest_golden ... ok
+#12 73.35 test constructor_serial_compatibility_is_checked_for_every_family ... ok
+#12 73.40 test dispatch_and_receipt_reconstruction_enforce_full_request_and_provenance ... ok
+#12 73.56 test every_action_admits_twenty_and_rejects_twenty_one_byte_desired_serials ... ok
+#12 73.62 test every_closed_variant_has_a_pinned_complete_digest ... ok
+#12 73.73 test every_request_hash_binds_clock_digest_operation_attempt_workflow_and_fence ... ok
+#12 73.83 test persisted_owned_reference_tampering_never_recreates_historical_authority ... ok
+#12 73.94 test persisted_requests_reject_missing_unknown_duplicate_and_object_discriminators ... ok
+#12 74.05 test receipt_workers_nodes_and_vmids_are_closed ... ok
+#12 74.10 test requests_pin_exact_forms_routes_and_distinct_start_digests ... ok
+#12 74.16 
+#12 74.16 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.91s
+#12 74.16 
+#12 74.16      Running tests/visibility.rs (rust-controller/target/debug/deps/visibility-fcc36fdc5feb58b2)
+#12 74.17 
+#12 74.17 running 17 tests
+#12 74.17 test duplicate_identity_is_detected_even_when_metadata_is_rejected ... ok
+#12 74.18 test duplicate_valid_vmid_rejects_response_across_nodes_and_kinds ... ok
+#12 74.18 test empty_inventory_never_claims_verified_coverage ... ok
+#12 74.18 test invalid_nodes_are_rejected_and_counted ... ok
+#12 74.18 test invalid_optional_template_is_rejected_and_counted ... ok
+#12 74.18 test invalid_vmids_are_rejected_and_counted ... ok
+#12 74.18 test missing_identity_and_non_object_rows_are_rejected_and_counted ... ok
+#12 74.18 test missing_or_non_string_kind_is_rejected_without_defaulting_to_qemu ... ok
+#12 74.18 test missing_status_is_unknown ... ok
+#12 74.18 test mixed_inventory_preserves_lxc_and_unknown_metadata ... ok
+#12 74.18 test non_array_response_is_rejected ... ok
+#12 74.18 test present_non_string_status_is_rejected_and_counted ... ok
+#12 74.18 test row_limit_accepts_1024_and_rejects_1025_before_row_validation ... ok
+#12 74.19 test sanitization_preserves_wire_order_timestamp_and_rejection_count ... ok
+#12 74.19 test stopped_and_template_one_remain_explicit ... ok
+#12 74.19 test unknown_kind_is_preserved_without_retaining_raw_type ... ok
+#12 74.19 test unknown_status_is_unknown_without_retaining_raw_status ... ok
+#12 74.20 
+#12 74.20 test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+#12 74.20 
+#12 74.20      Running tests/visibility_http.rs (rust-controller/target/debug/deps/visibility_http-d32ed6faf701d279)
+#12 74.21 
+#12 74.21 running 11 tests
+#12 74.21 test authenticated_inventory_is_exactly_one_get_and_timestamped_after_collection ... ok
+#12 74.32 test body_byte_limit_is_enforced_for_declared_chunked_and_eof_streams ... ok
+#12 74.34 test dropped_collection_does_not_start_another_request ... ok
+#12 76.45 test exactly_one_mib_body_is_accepted ... ok
+#12 76.47 test http_failures_are_fixed_categories_without_retry ... ok
+#12 76.49 test invalid_envelopes_data_and_row_limit_are_rejected ... ok
+#12 76.53 test proxy_environment_canary_receives_no_request ... 
+#12 76.56 running 1 test
+#12 76.68 test authenticated_inventory_is_exactly_one_get_and_timestamped_after_collection ... ok
+#12 76.68 
+#12 76.68 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.11s
+#12 76.68 
+#12 76.69 ok
+#12 76.69 test redirect_target_receives_no_request ... ok
+#12 76.70 test rejected_rows_remain_successful_non_authoritative_visibility ... ok
+#12 76.70 test request_deadline_also_bounds_an_unfinished_streaming_body ... ok
+#12 78.71 test request_times_out_after_two_seconds_without_retry ... ok
+#12 80.71 
+#12 80.71 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.51s
+#12 80.72 
+#12 80.72    Doc-tests pve_port
+#12 82.81 
+#12 82.81 running 1 test
+#12 82.81 test crates/pve-port/src/fixture_support/provisioning_port.rs - fixture_support::provisioning_port::FixtureProvisioningPort (line 16) ... ok
+#12 82.82 
+#12 82.82 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+#12 82.82 
+#12 82.83 
+#12 82.83 running 22 tests
+#12 82.83 test crates/pve-port/src/fixture_ipc.rs - fixture_ipc::ControllerFixturePort (line 24) - compile fail ... ok
+#12 83.07 test crates/pve-port/src/fixture_support/read_client.rs - fixture_support::read_client::FixtureReadClient (line 23) - compile fail ... ok
+#12 83.31 test crates/pve-port/src/fixture_support/read_client.rs - fixture_support::read_client::FixtureReadClient (line 30) - compile fail ... ok
+#12 83.54 test crates/pve-port/src/fixture_support/read_client.rs - fixture_support::read_client::FixtureReadClient (line 37) - compile fail ... ok
+#12 83.77 test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::NodeVisibility (line 45) - compile fail ... ok
+#12 84.01 test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::PveInfrastructureVisibilityReadPort (line 244) - compile fail ... ok
+#12 84.30 test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::PveInfrastructureVisibilityReadPort (line 251) - compile fail ... ok
+#12 84.61 test crates/pve-port/src/infrastructure_visibility.rs - infrastructure_visibility::PveInfrastructureVisibilityReadPort (line 258) - compile fail ... ok
+#12 84.90 test crates/pve-port/src/native.rs - native::PveMutationPort (line 444) - compile fail ... ok
+#12 85.20 test crates/pve-port/src/native.rs - native::PveMutationPort (line 450) - compile fail ... ok
+#12 85.49 test crates/pve-port/src/native.rs - native::PveMutationPort (line 456) - compile fail ... ok
+#12 85.78 test crates/pve-port/src/native.rs - native::PveMutationPort (line 462) - compile fail ... ok
+#12 86.25 test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 165) - compile fail ... ok
+#12 86.56 test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 171) - compile fail ... ok
+#12 86.86 test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 177) - compile fail ... ok
+#12 87.16 test crates/pve-port/src/observer.rs - observer::ReqwestPveObserver (line 183) - compile fail ... ok
+#12 87.45 test crates/pve-port/src/provisioning.rs - provisioning::ProvisioningFakePort (line 16) - compile fail ... ok
+#12 87.74 test crates/pve-port/src/provisioning.rs - provisioning::ProvisioningFakePort (line 23) - compile fail ... ok
+#12 87.97 test crates/pve-port/src/provisioning/evaluation/context.rs - provisioning::evaluation::context::ProvisioningCloneOwnershipV1 (line 102) - compile fail ... ok
+#12 88.22 test crates/pve-port/src/provisioning/evaluation/context.rs - provisioning::evaluation::context::ProvisioningStageBaselineV1 (line 180) - compile fail ... ok
+#12 88.47 test crates/pve-port/src/provisioning/evidence.rs - provisioning::evidence::ProvisioningEvidenceV1 (line 233) - compile fail ... ok
+#12 88.70 test crates/pve-port/src/provisioning/requests.rs - provisioning::requests::ProvisioningBeforeStateV1 (line 10) - compile fail ... ok
+#12 88.93 
+#12 88.93 test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.10s
+#12 88.93 
+#12 88.93 all doctests ran in 7.35s; merged doctests compilation took 1.22s
+#12 DONE 89.0s
+
+#13 [10/12] RUN cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p osdeploy-adapter
+#13 0.575    Compiling artifact-index v0.1.0 (/workspace/rust-controller/crates/artifact-index)
+#13 1.260    Compiling osdeploy-adapter v0.1.0 (/workspace/rust-controller/crates/osdeploy-adapter)
+#13 11.91     Finished `test` profile [unoptimized + debuginfo] target(s) in 11.62s
+#13 11.92      Running unittests src/lib.rs (rust-controller/target/debug/deps/osdeploy_adapter-4103817ab0eb30e3)
+#13 11.93 
+#13 11.93 running 0 tests
+#13 11.93 
+#13 11.93 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+#13 11.94 
+#13 11.94      Running tests/disk_boot_boundary.rs (rust-controller/target/debug/deps/disk_boot_boundary-9667a4890d8f06d4)
+#13 11.95 
+#13 11.95 running 2 tests
+#13 11.95 test substitutions_and_invalid_evidence_fail_closed ... ok
+#13 11.95 test both_stages_refuse_even_matching_claims_and_repeated_reads ... ok
+#13 11.95 
+#13 11.95 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 11.96 
+#13 11.96      Running tests/guest_action.rs (rust-controller/target/debug/deps/guest_action-a3a932090db09c09)
+#13 11.97 
+#13 11.97 running 3 tests
+#13 11.98 test non_guest_stage_and_nil_identities_fail_closed ... ok
+#13 11.98 test identity_uses_operation_as_stable_step_and_zero_retry ... ok
+#13 11.98 test only_the_five_guest_stages_admit_identity ... ok
+#13 11.98 
+#13 11.98 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 11.98 
+#13 11.98      Running tests/heartbeat_boundary.rs (rust-controller/target/debug/deps/heartbeat_boundary-2fa2970d8c827fa5)
+#13 11.99 
+#13 11.99 running 1 test
+#13 12.00 test fresh_heartbeat_claims_never_authenticate_and_stale_or_replayed_claims_refuse ... ok
+#13 12.00 
+#13 12.00 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.00 
+#13 12.00      Running tests/input_values.rs (rust-controller/target/debug/deps/input_values-8b55447d49ae5bcc)
+#13 12.01 
+#13 12.01 running 12 tests
+#13 12.02 test disk_capacity_rejects_subminimum_requests_and_empty_templates ... ok
+#13 12.02 test disk_capacity_checks_binary_gib_overflow_before_comparing_template ... ok
+#13 12.02 test every_phase_duration_independently_enforces_inclusive_bounds ... ok
+#13 12.02 test freshness_is_positive_at_most_300_and_no_larger_than_mutation_budget ... ok
+#13 12.02 test disk_capacity_is_grow_only_and_preserves_exact_template_bytes ... ok
+#13 12.03 test legacy_normalization_uses_literal_ascii_golden_examples ... ok
+#13 12.03 test equivalent_normalized_names_share_agent_id_without_claiming_uniqueness ... ok
+#13 12.03 test native_names_reject_unsupported_normalized_outputs ... ok
+#13 12.03 test names_reject_invalid_original_utf8_byte_length_and_controls ... ok
+#13 12.03 test names_preserve_requested_and_independent_pve_identity_and_derive_agent_id ... ok
+#13 12.03 test production_defaults_pin_all_budgets_and_preserve_force_stop_choice ... ok
+#13 12.03 test policy_retains_short_phase_budgets_independently_of_freshness ... ok
+#13 12.03 
+#13 12.03 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+#13 12.03 
+#13 12.03      Running tests/install_agent_boundary.rs (rust-controller/target/debug/deps/install_agent_boundary-203ea7ecbcc694f9)
+#13 12.04 
+#13 12.04 running 1 test
+#13 12.05 test package_and_predecessor_claims_cannot_authorize_agent_installation ... ok
+#13 12.05 
+#13 12.05 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.05 
+#13 12.05      Running tests/install_qga_boundary.rs (rust-controller/target/debug/deps/install_qga_boundary-734279d052bb8a7e)
+#13 12.06 
+#13 12.06 running 1 test
+#13 12.07 test host_claims_never_authenticate_agent_or_authorize_installation ... ok
+#13 12.07 
+#13 12.07 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.07 
+#13 12.07      Running tests/operational_boundary.rs (rust-controller/target/debug/deps/operational_boundary-16c69b71d8445869)
+#13 12.08 
+#13 12.08 running 1 test
+#13 12.09 test aggregate_claims_never_establish_operational_acceptance ... ok
+#13 12.09 
+#13 12.09 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.09 
+#13 12.09      Running tests/pe_complete_boundary.rs (rust-controller/target/debug/deps/pe_complete_boundary-620ffcbb7182769d)
+#13 12.10 
+#13 12.10 running 2 tests
+#13 12.12 test complete_looking_report_cannot_replace_authenticated_registration_predecessor ... ok
+#13 12.12 test malformed_and_incomplete_reports_are_refused ... ok
+#13 12.12 
+#13 12.12 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+#13 12.12 
+#13 12.12      Running tests/pe_register_authority.rs (rust-controller/target/debug/deps/pe_register_authority-6fbcbea1f5822e63)
+#13 12.13 
+#13 12.13 running 1 test
+#13 12.14 test verifier_authority_checks_exact_fence_and_result_revision_without_authentication_success ... ok
+#13 12.14 
+#13 12.14 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.14 
+#13 12.14      Running tests/pe_register_callback.rs (rust-controller/target/debug/deps/pe_register_callback-be7cbfed06cf15b1)
+#13 12.15 
+#13 12.15 running 1 test
+#13 12.16 test callback_witness_stays_unavailable_and_replay_conflicts_keep_original_deadline ... ok
+#13 12.16 
+#13 12.16 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.16 
+#13 12.16      Running tests/pe_registration_precision.rs (rust-controller/target/debug/deps/pe_registration_precision-e401af785bbb61b5)
+#13 12.18 
+#13 12.18 running 1 test
+#13 12.19 test microsecond_anchor_preserves_original_deadline_and_refuses_lossy_v1_conversion ... ok
+#13 12.19 
+#13 12.19 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.19 
+#13 12.19      Running tests/pe_shutdown_boundary.rs (rust-controller/target/debug/deps/pe_shutdown_boundary-85ef8e1a565c4cb5)
+#13 12.20 
+#13 12.20 running 2 tests
+#13 12.21 test malformed_scope_is_not_constructible ... ok
+#13 12.21 test stopped_claim_and_expiry_never_grant_shutdown_or_force_stop ... ok
+#13 12.21 
+#13 12.21 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.21 
+#13 12.21      Running tests/plan.rs (rust-controller/target/debug/deps/plan-4cb0bb0e98f983e5)
+#13 12.22 
+#13 12.22 running 15 tests
+#13 12.24 test both_media_fields_admit_only_narrow_native_iso_references ... ok
+#13 12.24 test both_serials_require_bounded_ascii_tokens_with_alphanumeric_endpoints ... ok
+#13 12.24 test artifact_apply_index_fits_signed_guest_consumer_and_retains_source_provenance ... ok
+#13 12.25 test equivalent_hash_case_normalizes_before_complete_fingerprinting ... ok
+#13 12.25 test complete_snapshot_pins_all_inputs_fixed_native_fields_and_nested_claims ... ok
+#13 12.25 test canonical_fingerprint_matches_independently_hashed_literal_snapshot_on_reconstruction ... ok
+#13 12.26 test fingerprint_binds_every_artifact_input_and_output_index_provenance ... ok
+#13 12.26 test fingerprint_binds_every_media_payload_serial_os_and_profile_reference ... ok
+#13 12.26 test os_labels_and_language_are_bounded_declarations_without_commands_or_paths ... ok
+#13 12.26 test payload_and_template_hashes_reject_length_nonhex_unicode_and_controls ... ok
+#13 12.26 test payload_hash_presence_controls_only_declared_or_unverified_claim ... ok
+#13 12.26 test profile_references_are_required_non_nil_opaque_ids ... ok
+#13 12.26 test vm_admission_requires_four_gib_and_consistent_independent_pve_name ... ok
+#13 12.27 test fingerprint_binds_every_vm_identity_resource_and_free_storage_field ... ok
+#13 12.27 test fingerprint_binds_names_capacity_every_phase_and_force_stop_policy ... ok
+#13 12.27 
+#13 12.27 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+#13 12.27 
+#13 12.27      Running tests/provisioning.rs (rust-controller/target/debug/deps/provisioning-e7572a1b5c60ea66)
+#13 12.28 
+#13 12.28 running 3 tests
+#13 12.32 test serial_20_succeeds_and_21_fails_without_narrowing_declarations ... ok
+#13 12.32 test derives_every_pve_field_and_retains_effective_capacity ... ok
+#13 12.32 test non_pve_inputs_change_workflow_digest_without_changing_pve_subset ... ok
+#13 12.33 
+#13 12.33 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+#13 12.33 
+#13 12.33      Running tests/restore.rs (rust-controller/target/debug/deps/restore-0729e2d8a051344c)
+#13 12.34 
+#13 12.34 running 14 tests
+#13 12.44 test broad_serial_declaration_restores_but_does_not_grant_dispatch_compatibility ... ok
+#13 12.44 test equivalent_json_layout_roundtrips_but_wrong_or_noncanonical_hashes_do_not ... ok
+#13 12.46 test constructors_revalidate_identities_resources_and_input_limits ... ok
+#13 12.47 test every_object_rejects_unknown_fields_scalars_null_and_positional_arrays ... ok
+#13 12.49 test fixed_fields_cannot_be_changed_even_with_a_matching_forged_digest ... ok
+#13 12.49 test input_limit_counts_utf8_bytes_and_accepts_exactly_65536 ... ok
+#13 12.49 test nonintegral_retained_capacity_and_phase_policy_boundaries_roundtrip ... ok
+#13 12.51 test normalized_and_derived_claims_cannot_be_forged ... ok
+#13 12.51 test rejects_duplicate_fields_before_value_normalization ... ok
+#13 12.51 test rejects_malformed_trailing_and_deep_json_with_payload_free_errors ... ok
+#13 12.51 test restores_complete_admitted_plan ... ok
+#13 12.51 test valid_source_fallback_and_all_required_null_payloads_roundtrip ... ok
+#13 12.54 test every_string_field_rejects_enum_objects_numbers_booleans_and_null ... ok
+#13 12.55 test every_top_level_and_nested_field_is_required_unique_and_typed ... ok
+#13 12.55 
+#13 12.55 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+#13 12.55 
+#13 12.55      Running tests/stages.rs (rust-controller/target/debug/deps/stages-c4eb203200bb9436)
+#13 12.56 
+#13 12.56 running 4 tests
+#13 12.57 test only_ensure_stopped_has_the_guarded_escalation_dependency ... ok
+#13 12.57 test stage_kinds_preserve_mutation_callback_observation_and_guest_boundaries ... ok
+#13 12.57 test serialization_pins_every_stage_kind_and_dependency_encoding ... ok
+#13 12.57 test fixed_manifest_preserves_all_sixteen_operation_identities_in_order ... ok
+#13 12.57 
+#13 12.57 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.57 
+#13 12.57      Running tests/start_pe_arming.rs (rust-controller/target/debug/deps/start_pe_arming-dc975f0c206b9a32)
+#13 12.59 
+#13 12.59 running 1 test
+#13 12.60 test arming_preserves_original_deadline_and_never_invents_authenticated_witness ... ok
+#13 12.60 
+#13 12.60 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.60 
+#13 12.60      Running tests/verify_qga_boundary.rs (rust-controller/target/debug/deps/verify_qga_boundary-6794d61ebc9f1670)
+#13 12.61 
+#13 12.61 running 1 test
+#13 12.62 test reports_cannot_forge_host_authentication_or_replace_receipt_binding ... ok
+#13 12.62 
+#13 12.62 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.62 
+#13 12.62      Running tests/watchdog_boundary.rs (rust-controller/target/debug/deps/watchdog_boundary-3b9a5a9f645ab61c)
+#13 12.63 
+#13 12.63 running 1 test
+#13 12.63 test watchdog_claims_cannot_replace_authenticated_predecessor_or_agent ... ok
+#13 12.64 
+#13 12.64 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+#13 12.64 
+#13 12.64    Doc-tests osdeploy_adapter
+#13 12.96 
+#13 12.96 running 6 tests
+#13 13.21 test crates/osdeploy-adapter/src/input_values.rs - input_values::PhasePolicy (line 124) - compile fail ... ok
+#13 13.21 test crates/osdeploy-adapter/src/input_values.rs - input_values::DiskCapacity (line 9) - compile fail ... ok
+#13 13.22 test crates/osdeploy-adapter/src/plan.rs - plan::OsDeployPlanV1 (line 87) - compile fail ... ok
+#13 13.46 test crates/osdeploy-adapter/src/plan.rs - plan::OsDeployPlanV1 (line 94) - compile fail ... ok
+#13 13.48 test crates/osdeploy-adapter/src/plan.rs - plan::PayloadDeclaration (line 24) - compile fail ... ok
+#13 13.49 test crates/osdeploy-adapter/src/plan.rs - plan::PayloadDeclaration (line 17) - compile fail ... ok
+#13 13.49 
+#13 13.49 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+#13 13.49 
+#13 DONE 14.1s
+
+#14 [11/12] RUN cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service --bin controller-service config:: && cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service --bin controller-service health:: && cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service --bin controller-service pve_credentials:: && cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service --bin controller-service pve_observation:: && cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service --bin controller-service infrastructure_ && cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service --bin controller-service runtime::tests::observation_loop && cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service --bin controller-service runtime::tests::runtime_defensively && cargo test --offline --locked --manifest-path rust-controller/Cargo.toml -p controller-service --test service -- --skip observation_service::authenticated_service_is_visible_but_never_execution_ready_or_a_writer --skip observation_service::infrastructure_service::selected_node_service_is_independent_and_never_a_writer
+#14 0.485    Compiling pve-port v0.1.0 (/workspace/rust-controller/crates/pve-port)
+#14 4.218    Compiling osdeploy-adapter v0.1.0 (/workspace/rust-controller/crates/osdeploy-adapter)
+#14 5.721    Compiling postgres-store v0.1.0 (/workspace/rust-controller/crates/postgres-store)
+#14 9.138    Compiling scheduler v0.1.0 (/workspace/rust-controller/crates/scheduler)
+#14 9.343    Compiling ansible-adapter v0.1.0 (/workspace/rust-controller/crates/ansible-adapter)
+#14 11.45    Compiling controller-service v0.1.0 (/workspace/rust-controller/crates/controller-service)
+#14 16.25     Finished `test` profile [unoptimized + debuginfo] target(s) in 16.05s
+#14 16.26      Running unittests src/main.rs (rust-controller/target/debug/deps/controller_service-c8aaf81c848ce655)
+#14 16.27 
+#14 16.27 running 11 tests
+#14 16.32 test config::tests::explicit_remote_reads_are_limited_to_observe_mode ... ok
+#14 16.32 test config::tests::normalized_literal_loopback_endpoints_are_allowed_without_opt_in ... ok
+#14 16.32 test config::tests::observation_fake_defaults_without_file_and_http_requires_nonempty_file ... ok
+#14 16.32 test config::tests::observe_requires_explicit_production_read_permission ... ok
+#14 16.32 test config::tests::rejects_production_controller_in_adapter_mode ... ok
+#14 16.32 test config::tests::selected_node_factory_preserves_selection_and_absence ... ok
+#14 16.33 test config::tests::selected_node_presence_is_rejected_under_fake ... ok
+#14 16.33 test config::tests::observation_rechecks_database_boundary_before_file_reference ... ok
+#14 16.33 test config::tests::selected_node_rejects_invalid_values_before_token_reference ... ok
+#14 16.33 test config::tests::unapproved_observe_rejects_database_and_pve_aliases_before_construction ... ok
+#14 16.33 test config::tests::observation_gates_before_loader_matrix ... ok
+#14 16.33 
+#14 16.33 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 47 filtered out; finished in 0.06s
+#14 16.33 
+#14 16.68     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s
+#14 16.69      Running unittests src/main.rs (rust-controller/target/debug/deps/controller_service-c8aaf81c848ce655)
+#14 16.70 
+#14 16.70 running 9 tests
+#14 16.74 test health::tests::observation_freshness_expires_monotonically_and_failure_cannot_reuse_last_success ... ok
+#14 16.77 test health::tests::fresh_http_observation_cannot_mask_execution_failure_or_database_failure ... ok
+#14 16.77 test infrastructure_health::tests::component_freshness_has_exact_boundary_and_snapshots_do_not_refresh_it ... ok
+#14 16.78 test infrastructure_health::tests::each_failed_component_retains_last_success_without_granting_readiness ... ok
+#14 16.78 test infrastructure_health::tests::missing_component_fields_cannot_set_success_or_readiness ... ok
+#14 16.78 test infrastructure_health::tests::node_ages_independently_of_later_network_completion ... ok
+#14 16.79 test infrastructure_health::tests::serialized_health_contains_only_sanitized_components_and_fixed_coverage ... ok
+#14 16.80 test health::tests::readiness_requires_current_dependencies_and_real_sweep_progress ... ok
+#14 16.81 test health::tests::readiness_exposes_only_sanitized_operational_facts ... ok
+#14 16.81 
+#14 16.81 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 49 filtered out; finished in 0.11s
+#14 16.81 
+#14 17.14     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+#14 17.15      Running unittests src/main.rs (rust-controller/target/debug/deps/controller_service-c8aaf81c848ce655)
+#14 17.17 
+#14 17.17 running 6 tests
+#14 17.19 test pve_credentials::tests::credential_metadata_rejects_effective_owner_mismatch_without_chown ... ok
+#14 17.19 test pve_credentials::tests::credential_read_cap_rejects_growth_after_metadata_check ... ok
+#14 17.21 test pve_credentials::tests::credential_rejects_missing_symlink_directory_and_exposed_permissions ... ok
+#14 17.22 test pve_credentials::tests::credential_valid_0600_redacts_token_and_accepts_exact_size_limit ... ok
+#14 17.22 test pve_credentials::tests::credential_fifo_is_nonblocking_and_errors_do_not_leak_to_stderr ... ok
+#14 17.22 test pve_credentials::tests::credential_rejects_oversize_and_strict_json_or_token_failures ... ok
+#14 17.22 
+#14 17.22 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 52 filtered out; finished in 0.06s
+#14 17.22 
+#14 17.56     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+#14 17.56      Running unittests src/main.rs (rust-controller/target/debug/deps/controller_service-c8aaf81c848ce655)
+#14 17.58 
+#14 17.58 running 5 tests
+#14 17.66 test pve_observation::tests::caller_cancellation_drops_the_only_inflight_read ... ok
+#14 17.77 test pve_observation::tests::errors_have_fixed_status_with_no_timestamp_or_counts ... ok
+#14 17.80 test pve_observation::tests::summaries_serialize_only_classified_counts_and_unverified_coverage ... ok
+#14 19.68 test pve_observation::tests::production_constructor_enforces_two_second_request_timeout ... ok
+#14 20.62 test pve_observation::tests::collection_deadline_drops_pending_read_at_three_seconds ... ok
+#14 20.62 
+#14 20.62 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 53 filtered out; finished in 3.05s
+#14 20.63 
+#14 20.97     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.23s
+#14 20.97      Running unittests src/main.rs (rust-controller/target/debug/deps/controller_service-c8aaf81c848ce655)
+#14 20.99 
+#14 20.99 running 19 tests
+#14 21.00 test infrastructure_health::tests::component_freshness_has_exact_boundary_and_snapshots_do_not_refresh_it ... ok
+#14 21.01 test infrastructure_health::tests::node_ages_independently_of_later_network_completion ... ok
+#14 21.01 test infrastructure_health::tests::missing_component_fields_cannot_set_success_or_readiness ... ok
+#14 21.01 test infrastructure_health::tests::each_failed_component_retains_last_success_without_granting_readiness ... ok
+#14 21.02 test infrastructure_health::tests::serialized_health_contains_only_sanitized_components_and_fixed_coverage ... ok
+#14 21.11 test infrastructure_observation::tests::constructor_requires_explicit_selection ... ok
+#14 21.11 test infrastructure_observation::tests::cancellation_drops_active_read_and_starts_no_later_read ... ok
+#14 21.11 test infrastructure_observation::tests::delayed_repoll_respects_each_call_deadline ... ok
+#14 21.11 test infrastructure_observation::tests::each_error_is_fixed_and_independent_of_the_other_component ... ok
+#14 21.11 test infrastructure_observation::tests::each_pending_call_is_dropped_at_two_seconds ... ok
+#14 21.11 test infrastructure_observation::tests::expired_whole_deadline_discards_an_earlier_success ... ok
+#14 21.11 test infrastructure_observation::tests::expired_whole_deadline_cancels_without_starting_network ... ok
+#14 21.11 test infrastructure_observation::tests::network_degrades_only_for_rejected_rows ... ok
+#14 21.11 test infrastructure_observation::tests::two_pending_reads_finish_in_four_seconds_without_retry ... ok
+#14 21.11 test infrastructure_observation::tests::zero_and_missing_uptime_are_fresh_with_distinct_knowledge ... ok
+#14 21.12 test infrastructure_observation::tests::successful_pair_sanitizes_counts_and_captures_each_completion ... ok
+#14 21.12 test runtime::tests::infrastructure_loop_shutdown_before_start_issues_no_request ... ok
+#14 21.13 test runtime::tests::infrastructure_loop_is_immediate_ten_second_skip_and_joins_cancelled_read ... ok
+#14 21.16 test infrastructure_observation::tests::production_constructor_uses_only_authenticated_selected_node_gets ... ok
+#14 21.16 
+#14 21.16 test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 39 filtered out; finished in 0.17s
+#14 21.16 
+#14 21.48     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+#14 21.49      Running unittests src/main.rs (rust-controller/target/debug/deps/controller_service-c8aaf81c848ce655)
+#14 21.51 
+#14 21.51 running 1 test
+#14 21.52 test runtime::tests::observation_loop_bounds_cadence_skips_missed_ticks_and_cancels_inflight_read ... ok
+#14 21.52 
+#14 21.52 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 57 filtered out; finished in 0.02s
+#14 21.52 
+#14 21.85     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+#14 21.86      Running unittests src/main.rs (rust-controller/target/debug/deps/controller_service-c8aaf81c848ce655)
+#14 21.88 
+#14 21.88 running 1 test
+#14 21.90 test runtime::tests::runtime_defensively_denies_observation_in_adapter_before_credential_io ... ok
+#14 21.90 
+#14 21.90 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 57 filtered out; finished in 0.02s
+#14 21.90 
+#14 22.23    Compiling controller-service v0.1.0 (/workspace/rust-controller/crates/controller-service)
+#14 32.81     Finished `test` profile [unoptimized + debuginfo] target(s) in 6.85s
+#14 32.82      Running tests/service.rs (rust-controller/target/debug/deps/service-f4f13d5307799184)
+#14 32.84 
+#14 32.84 running 52 tests
+#14 32.96 test native_startup_fails_before_local_io_even_with_read_permission ... ok
+#14 32.96 test http_observe_missing_credentials_fails_before_local_io ... ok
+#14 35.03 test live_server_survives_database_failure_and_sanitizes_readiness ... ok
+#14 35.22 test observation_service::infrastructure_service::selected_node_startup_denials_precede_owned_canaries_and_listener ... ok
+#14 35.31 test observation_service::http_observation_remains_fresh_when_database_is_unavailable ... ok
+#14 35.35 test observation_service::local_postgres::cleanup_tests::cancellation_before_create_receipt_recovers_owned_container ... ok
+#14 35.47 test observation_service::local_postgres::cleanup_tests::explicit_cleanup_and_drop_attempt_owned_removal_only_once ... ok
+#14 35.54 test observation_service::local_postgres::cleanup_tests::lost_create_response_recovers_only_verified_owned_id ... ok
+#14 35.62 test observation_service::local_postgres::cleanup_tests::storage_refusal_preserves_one_shot_container_only_cleanup ... ok
+#14 35.88 test observation_service::local_postgres::cleanup_tests::wrong_ownership_or_ambiguous_absence_never_removes_a_target ... ok
+#14 35.88 test observation_service::local_postgres::docker_storage_probe::tests::capacity_requires_actual_fixed_tmpfs_and_reserve ... ok
+#14 35.88 test observation_service::local_postgres::docker_storage_probe::tests::event_cutoff_preserves_subsecond_query_boundary ... ok
+#14 35.89 test observation_service::local_postgres::docker_storage_probe::tests::memory_requires_numeric_complete_non_oom_counters ... ok
+#14 35.89 test observation_service::local_postgres::docker_storage_probe::tests::retained_events_require_a_bracket_without_attributed_mounts ... ok
+#14 35.89 test observation_service::local_postgres::linux_postgres::owned_linux_tests::owned_linux_active_create_lock_refuses_even_absent_name ... ignored, requires the owned Linux fixture namespace
+#14 35.89 test observation_service::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_before_create_reaps_and_confirms_absence ... ignored, requires the owned Linux fixture namespace
+#14 35.89 test observation_service::local_postgres::linux_postgres::owned_linux_tests::owned_linux_cancel_unmarked_create_retains_unconfirmed_database ... ignored, requires the owned Linux fixture namespace
+#14 35.89 test observation_service::local_postgres::linux_postgres::owned_linux_tests::owned_linux_create_identity_independent_pools_and_open_pool_cleanup ... ignored, requires the owned Linux fixture namespace
+#14 35.89 test observation_service::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_marker_retains_database ... ignored, requires the owned Linux fixture namespace
+#14 35.89 test observation_service::local_postgres::linux_postgres::owned_linux_tests::owned_linux_foreign_receipt_and_namespace_refuse_mutation ... ignored, requires the owned Linux fixture namespace
+#14 35.89 test observation_service::local_postgres::linux_postgres::owned_linux_tests::owned_linux_lost_stamped_response_recovers_only_full_marker ... ignored, requires the owned Linux fixture namespace
+#14 35.89 test observation_service::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database ... ignored, requires the owned Linux fixture namespace
+#14 35.89 test observation_service::local_postgres::linux_postgres::owned_linux_tests::owned_linux_setup_cancellation_drops_child_before_one_shot_guard_cleanup ... ignored, requires the owned Linux fixture namespace
+#14 35.89 test observation_service::local_postgres::linux_postgres::tests::cleanup_requires_exact_confirmed_absence_record ... ok
+#14 35.89 test observation_service::local_postgres::linux_postgres::tests::create_response_only_confirms_exact_identity_and_positive_oid ... ok
+#14 35.89 test observation_service::local_postgres::linux_postgres::tests::database_identity_is_generated_and_bounded ... ok
+#14 35.89 test observation_service::local_postgres::linux_postgres::tests::mode_is_explicit_and_platform_scoped ... ok
+#14 35.89 test observation_service::local_postgres::linux_postgres::tests::overrides_and_noncanonical_mode_never_select_a_backend ... ok
+#14 35.89 test observation_service::local_postgres::linux_postgres::tests::receipt_is_exact_canonical_and_duplicate_free ... ok
+#14 35.90 test observation_service::local_postgres::linux_postgres::tests::receipt_rejects_each_schema_type_identity_and_encoding_violation ... ok
+#14 36.02 test observation_service::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor ... ok
+#14 36.09 test observation_service::infrastructure_service::selected_node_service_stays_fresh_without_database ... ok
+#14 36.11 test observation_service::local_postgres::process::tests::child_hang_obeys_timeout_and_is_reaped ... ok
+#14 36.23 test observation_service::local_postgres::process::tests::cleanup_child_hang_shares_one_budget_with_reaping ... ok
+#14 36.27 test observation_service::local_postgres::process::tests::direct_drop_terminates_and_reaps_child ... ok
+#14 36.27 test observation_service::local_postgres::process::tests::expired_reap_deadline_polls_once_without_reset_or_false_success ... ok
+#14 36.79 test observation_service::local_postgres::process::tests::fault_output_overflow_after_readiness_reaps_before_owner_drop ... ok
+#14 37.15 test observation_service::local_postgres::process::tests::delayed_fault_startup_does_not_reset_original_deadline ... ok
+#14 37.43 test observation_service::local_postgres::process::tests::fault_supervision_progresses_during_synchronous_cleanup ... ok
+#14 37.69 test observation_service::local_postgres::process::tests::interpreter_startup_exhaustion_reaps_before_readiness_or_owner_drop ... ok
+#14 37.72 test observation_service::local_postgres::process::tests::linux_invocation_rejects_timeout_widening_and_invalid_protocol_without_admission ... ok
+#14 37.73 test observation_service::local_postgres::process::tests::output_is_size_bounded_and_overflow_reaps_child ... ok
+#14 38.00 test observation_service::local_postgres::process::tests::owned_log_capture_combines_streams_and_bounds_overflow_and_cancellation ... ok
+#14 38.07 test observation_service::local_postgres::process::tests::stalled_setup_child_obeys_current_thread_timeout ... ok
+#14 38.08 test observation_service::local_postgres::storage_tests::actual_launch_selects_fixed_bounded_pgdata_tmpfs ... ok
+#14 38.08 test observation_service::local_postgres::storage_tests::both_bounded_tmpfs_representations_are_admitted ... ok
+#14 38.08 test observation_service::local_postgres::storage_tests::ownership_valid_persistent_pgdata_is_refused ... ok
+#14 38.08 test observation_service::local_postgres::storage_tests::storage_projection_rejects_each_wrong_field_and_failed_output ... ok
+#14 38.17 test real_transport_startup_fails_before_local_io_even_with_read_permission ... ok
+#14 38.37 test observation_service::local_postgres::process::tests::retained_ready_fault_is_reaped_before_owner_drop ... ok
+#14 39.35 test remote_pve_and_database_startup_targets_are_denied ... ok
+#14 41.11 test observation_service::local_postgres::cleanup_tests::cancellation_runs_finite_drop_cleanup_and_reaps_hung_inspector ... ok
+#14 41.11 
+#14 41.11 test result: ok. 43 passed; 0 failed; 9 ignored; 0 measured; 2 filtered out; finished in 8.27s
+#14 41.11 
+#14 DONE 41.7s
+
+#15 [12/12] RUN sed -i '1s|^#! */usr/bin/python3$|#!/usr/bin/python3|' /usr/bin/ansible-playbook
+#15 DONE 0.1s
+
+#16 exporting to image
+#16 exporting layers
+#16 exporting layers 180.1s done
+#16 exporting manifest sha256:e41156af7a24579f9d38567ff9fb88224a66ce1b1af84f5e0a2e359e7030459d done
+#16 exporting config sha256:8f96e060a8dcb17be2313756290dc737b1917fcec932c37db43a5c99e566ae81 done
+#16 exporting attestation manifest sha256:45dec8528c3a487efe512828106de404dac68aa283839d19483e8952cfa07fa6 0.0s done
+#16 exporting manifest list sha256:d615e6c8b3270ae13dc9ca95cf49aea549192b6775c1d0f1aa711457f5927f94 0.0s done
+#16 naming to docker.io/library/rust-controller-task9:35400bd0 done
+#16 DONE 180.2s
+{"event": "end", "utc": "2026-09-11T07:54:12.780397+00:00", "exit": 0, "elapsed": 826.7956350829918, "group_clean": true, "direct_child_reaped": true}

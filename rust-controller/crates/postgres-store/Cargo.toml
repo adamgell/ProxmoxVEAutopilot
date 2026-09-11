@@ -1,0 +1,31 @@
+[package]
+name = "postgres-store"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+fixture-ipc = ["pve-port/fixture-ipc", "dep:api-compat"]
+
+[[test]]
+name = "postgres"
+path = "tests/postgres.rs"
+
+[dependencies]
+api-compat = { path = "../api-compat", optional = true }
+chrono.workspace = true
+controller-domain = { path = "../controller-domain" }
+event-journal = { path = "../event-journal" }
+serde_json.workspace = true
+serde.workspace = true
+pve-port = { path = "../pve-port" }
+osdeploy-adapter = { path = "../osdeploy-adapter" }
+sqlx.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+libc = "0.2"
+
+[dev-dependencies]
+tokio.workspace = true

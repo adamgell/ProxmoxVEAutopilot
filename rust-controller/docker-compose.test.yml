@@ -1,0 +1,79 @@
+name: rust-controller-proof
+x-worker: &worker
+  image: rust-controller-task9:local
+  platform: linux/amd64
+  network_mode: service:postgres
+  depends_on:
+    seed:
+      condition: service_completed_successfully
+  environment: &worker-env
+    RUST_CONTROLLER_MODE: adapter
+    RUST_CONTROLLER_DATABASE_URL: postgresql://postgres:local-proof@127.0.0.1:5432/rust_controller_test
+    RUST_CONTROLLER_PVE_BASE_URL: http://127.0.0.1:1
+    RUST_CONTROLLER_PVE_TRANSPORT: fake
+    RUST_CONTROLLER_AUTHORITY_GENERATION: "1"
+    RUST_CONTROLLER_SYNTHETIC_CAP: "2"
+    RUST_CONTROLLER_SYNTHETIC_JOB: /workspace/rust-controller/fixtures/jobs/synthetic-long-sleep.json
+  stop_grace_period: 15s
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    environment:
+      POSTGRES_PASSWORD: local-proof
+      POSTGRES_DB: rust_controller_test
+    command: [postgres, -c, log_statement=all, -c, "log_line_prefix=%m [%p] %u %a "]
+    networks: [proof]
+    ports: ["127.0.0.1::9091", "127.0.0.1::9092", "127.0.0.1::9093", "127.0.0.1::9094"]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres -d rust_controller_test]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    tmpfs: [/var/lib/postgresql/data]
+  seed:
+    image: rust-controller-task9:local
+    platform: linux/amd64
+    network_mode: service:postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: [/workspace/rust-controller/target/release/examples/seed]
+  worker-1:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      RUST_CONTROLLER_WORKER_ID: worker-1
+      RUST_CONTROLLER_LISTEN: 127.0.0.1:9091
+  worker-2:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      RUST_CONTROLLER_WORKER_ID: worker-2
+      RUST_CONTROLLER_LISTEN: 127.0.0.1:9092
+  worker-3:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      RUST_CONTROLLER_WORKER_ID: worker-3
+      RUST_CONTROLLER_LISTEN: 127.0.0.1:9093
+  observer:
+    <<: *worker
+    environment:
+      RUST_CONTROLLER_MODE: observe
+      RUST_CONTROLLER_DATABASE_URL: postgresql://observer_login:local-observe@127.0.0.1:5432/rust_controller_test?application_name=compose_observer
+      RUST_CONTROLLER_PVE_BASE_URL: http://127.0.0.1:1
+      RUST_CONTROLLER_PVE_TRANSPORT: fake
+      RUST_CONTROLLER_AUTHORITY_GENERATION: "1"
+      RUST_CONTROLLER_LISTEN: 127.0.0.1:9094
+  proof:
+    image: rust-controller-task9:local
+    platform: linux/amd64
+    network_mode: service:postgres
+    profiles: [tools]
+    volumes:
+      - ./scripts/compose-proof.py:/workspace/rust-controller/scripts/compose-proof.py:ro
+      - ./scripts/proof_wait.py:/workspace/rust-controller/scripts/proof_wait.py:ro
+    entrypoint: [/usr/bin/python3, /workspace/rust-controller/scripts/compose-proof.py]
+networks:
+  proof:
+    internal: true

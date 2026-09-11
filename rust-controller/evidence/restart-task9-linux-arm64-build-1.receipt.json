@@ -1,0 +1,1 @@
+{"architecture": "linux/arm64", "digest": "sha256:b230719fccfb02fdef55e37872065d821a8bd44cd491b65cceee2c7e5d6904e9", "elapsed_s": 319, "end_epoch": 1789058596, "exit": 0, "image": "rust-controller-task9:arm64", "source": "0134a8dcf2f9662198c4abb887104b607088a860", "start_epoch": 1789058277}

@@ -1,0 +1,982 @@
+   Compiling pve-port v0.1.0 (/workspace/rust-controller/crates/pve-port)
+   Compiling osdeploy-adapter v0.1.0 (/workspace/rust-controller/crates/osdeploy-adapter)
+   Compiling postgres-store v0.1.0 (/workspace/rust-controller/crates/postgres-store)
+   Compiling scheduler v0.1.0 (/workspace/rust-controller/crates/scheduler)
+   Compiling operation-controller v0.1.0 (/workspace/rust-controller/crates/operation-controller)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 02s
+     Running unittests src/lib.rs (target/debug/deps/operation_controller-eeead19385917840)
+     Running tests/decision.rs (target/debug/deps/decision-b14d26f5601d9b09)
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+proptest: FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs
+     Running tests/postgres_fixture_clone.rs (target/debug/deps/postgres_fixture_clone-461aba0e25341b04)
+owned_prefix_recovery_ledger /tmp/pglate-01a08eff-9835-7732-852e-37bf8bbc2397
+owned_prefix_recovery_ledger /tmp/pglate-01a08f00-2642-78b3-aede-5c51e240551c
+owned_prefix_recovery_ledger /tmp/pglate-01a08f00-e00a-73b3-a123-0f9ef0f7a3b8
+native_fake_cleanup_unconfirmed
+native_fake_cleanup_unconfirmed
+owned_linux_cleanup confirmed=false elapsed_ms=116
+owned_linux_child_reaped pid=5091 elapsed_ms=43
+owned_linux_cleanup confirmed=false elapsed_ms=0
+owned_linux_child_reaped pid=5098 elapsed_ms=42
+owned_linux_cleanup confirmed=true elapsed_ms=124
+owned_linux_child_reaped pid=5105 elapsed_ms=41
+owned_linux_cleanup confirmed=false elapsed_ms=112
+owned_linux_retained_unmarked_database=lf_native_test_01a08f0217f57373bceea7cb7663d6f9
+owned_linux_cleanup confirmed=true elapsed_ms=242
+owned_linux_cleanup confirmed=true elapsed_ms=0
+owned_linux_cleanup confirmed=false elapsed_ms=115
+owned_linux_retained_foreign_marker_database=lf_native_test_01a08f021c007bb19e4494f8d75f759e
+owned_linux_cleanup confirmed=false elapsed_ms=89
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f021de37fa0809c4ef3cb25fbc4
+owned_linux_cleanup confirmed=false elapsed_ms=80
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f021faa7270983ca3f486fd2c78
+owned_linux_child_reaped pid=5130 elapsed_ms=41
+owned_linux_cleanup confirmed=true elapsed_ms=127
+owned_linux_cleanup confirmed=false elapsed_ms=124
+owned_linux_retained_oid_mismatch_database=lf_native_test_01a08f0223977e41afa23a694f649acc
+owned_linux_setup_cancelled pid=5142 cleanup_elapsed_ms=327
+
+thread 'osdeploy_support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor' (5154) panicked at crates/operation-controller/tests/../../postgres-store/tests/osdeploy_support/../../../../proof_support/process.rs:584:13:
+fixed_owned_fault_caller_panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+     Running tests/postgres_fixture_workers.rs (target/debug/deps/postgres_fixture_workers-c630bc09268a4686)
+native_fake_cleanup_unconfirmed
+native_fake_cleanup_unconfirmed
+owned_linux_cleanup confirmed=false elapsed_ms=117
+owned_linux_child_reaped pid=5271 elapsed_ms=39
+owned_linux_cleanup confirmed=false elapsed_ms=0
+owned_linux_child_reaped pid=5278 elapsed_ms=41
+owned_linux_cleanup confirmed=true elapsed_ms=117
+owned_linux_child_reaped pid=5285 elapsed_ms=37
+owned_linux_cleanup confirmed=false elapsed_ms=126
+owned_linux_retained_unmarked_database=lf_native_test_01a08f02df4270609466727f9b746eab
+owned_linux_cleanup confirmed=true elapsed_ms=219
+owned_linux_cleanup confirmed=true elapsed_ms=0
+owned_linux_cleanup confirmed=false elapsed_ms=125
+owned_linux_retained_foreign_marker_database=lf_native_test_01a08f02e33579d3b7877daf5adad0c9
+owned_linux_cleanup confirmed=false elapsed_ms=91
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f02e51b79b0ac06d801316ea1fc
+owned_linux_cleanup confirmed=false elapsed_ms=88
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f02e6eb7fe281bcc50cf9e1d11e
+owned_linux_child_reaped pid=5310 elapsed_ms=43
+owned_linux_cleanup confirmed=true elapsed_ms=128
+owned_linux_cleanup confirmed=false elapsed_ms=116
+owned_linux_retained_oid_mismatch_database=lf_native_test_01a08f02eabe7d4284f0c8c3bb150b1c
+owned_linux_setup_cancelled pid=5322 cleanup_elapsed_ms=344
+
+thread 'osdeploy_support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor' (5334) panicked at crates/operation-controller/tests/../../postgres-store/tests/osdeploy_support/../../../../proof_support/process.rs:584:13:
+fixed_owned_fault_caller_panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+     Running tests/postgres_native.rs (target/debug/deps/postgres_native-4e18db9cb5a7914b)
+native_fake_cleanup_unconfirmed
+native_fake_cleanup_unconfirmed
+owned_linux_cleanup confirmed=false elapsed_ms=121
+owned_linux_child_reaped pid=5563 elapsed_ms=42
+owned_linux_cleanup confirmed=false elapsed_ms=0
+owned_linux_child_reaped pid=5570 elapsed_ms=43
+owned_linux_cleanup confirmed=true elapsed_ms=119
+owned_linux_child_reaped pid=5577 elapsed_ms=44
+owned_linux_cleanup confirmed=false elapsed_ms=128
+owned_linux_retained_unmarked_database=lf_native_test_01a08f045db278228d8c6179cbb8f0e9
+owned_linux_cleanup confirmed=true elapsed_ms=232
+owned_linux_cleanup confirmed=true elapsed_ms=0
+owned_linux_cleanup confirmed=false elapsed_ms=115
+owned_linux_retained_foreign_marker_database=lf_native_test_01a08f04619d74b2bc1fe0e18fa12b0a
+owned_linux_cleanup confirmed=false elapsed_ms=82
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f0463827321ae45e8978493120c
+owned_linux_cleanup confirmed=false elapsed_ms=80
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f04653f7743aba913be8aba7935
+owned_linux_child_reaped pid=5602 elapsed_ms=41
+owned_linux_cleanup confirmed=true elapsed_ms=129
+
+thread 'support::local_postgres::linux_postgres::owned_linux_tests::owned_linux_matching_marker_wrong_oid_retains_database' (5607) panicked at crates/operation-controller/tests/../proof_support/../../../proof_support/linux_postgres.rs:236:49:
+called `Result::unwrap()` on an `Err` value: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+owned_linux_setup_cancelled pid=5613 cleanup_elapsed_ms=353
+
+thread 'support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor' (5625) panicked at crates/operation-controller/tests/../proof_support/../../../proof_support/process.rs:584:13:
+fixed_owned_fault_caller_panic
+error: test failed, to rerun pass `-p operation-controller --test postgres_native`
+     Running tests/postgres_osdeploy.rs (target/debug/deps/postgres_osdeploy-9e239f22048ee744)
+native_fake_cleanup_unconfirmed
+native_fake_cleanup_unconfirmed
+owned_linux_cleanup confirmed=false elapsed_ms=114
+owned_linux_child_reaped pid=5819 elapsed_ms=42
+owned_linux_cleanup confirmed=false elapsed_ms=0
+owned_linux_child_reaped pid=5826 elapsed_ms=43
+owned_linux_cleanup confirmed=true elapsed_ms=116
+owned_linux_child_reaped pid=5833 elapsed_ms=42
+owned_linux_cleanup confirmed=false elapsed_ms=120
+owned_linux_retained_unmarked_database=lf_native_test_01a08f05f4787c53b9d72f64a618383b
+owned_linux_cleanup confirmed=true elapsed_ms=239
+owned_linux_cleanup confirmed=true elapsed_ms=0
+owned_linux_cleanup confirmed=false elapsed_ms=122
+owned_linux_retained_foreign_marker_database=lf_native_test_01a08f05f8877980bdc0c1d27b6237f9
+owned_linux_cleanup confirmed=false elapsed_ms=89
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f05fa7179a08406aa2b8d4dd278
+owned_linux_cleanup confirmed=false elapsed_ms=82
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f05fc3679b39511b4713577a9c2
+owned_linux_child_reaped pid=5858 elapsed_ms=42
+owned_linux_cleanup confirmed=true elapsed_ms=124
+owned_linux_cleanup confirmed=false elapsed_ms=113
+owned_linux_retained_oid_mismatch_database=lf_native_test_01a08f06000e7600a27c63d83fc40812
+owned_linux_setup_cancelled pid=5870 cleanup_elapsed_ms=334
+
+thread 'osdeploy_support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor' (5882) panicked at crates/operation-controller/tests/../../postgres-store/tests/osdeploy_support/../../../../proof_support/process.rs:584:13:
+fixed_owned_fault_caller_panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+     Running unittests src/lib.rs (target/debug/deps/osdeploy_adapter-d5eee714ca60f524)
+     Running tests/disk_boot_boundary.rs (target/debug/deps/disk_boot_boundary-431e9b55f359a005)
+     Running tests/guest_action.rs (target/debug/deps/guest_action-c94ff628d5316bf9)
+     Running tests/heartbeat_boundary.rs (target/debug/deps/heartbeat_boundary-3e6c8068b3ebbfa6)
+     Running tests/input_values.rs (target/debug/deps/input_values-d3ead9414dfeba4d)
+     Running tests/install_agent_boundary.rs (target/debug/deps/install_agent_boundary-74b226400fe517d1)
+     Running tests/install_qga_boundary.rs (target/debug/deps/install_qga_boundary-7db5b727af318b98)
+     Running tests/operational_boundary.rs (target/debug/deps/operational_boundary-ccc0e4114a8d2778)
+     Running tests/pe_complete_boundary.rs (target/debug/deps/pe_complete_boundary-d0097bbff6a12f2d)
+     Running tests/pe_register_authority.rs (target/debug/deps/pe_register_authority-b2e83080d50beb53)
+     Running tests/pe_register_callback.rs (target/debug/deps/pe_register_callback-7adac8f27f9ca78d)
+     Running tests/pe_registration_precision.rs (target/debug/deps/pe_registration_precision-2e398b1937103580)
+     Running tests/pe_shutdown_boundary.rs (target/debug/deps/pe_shutdown_boundary-bf81805fbe137e05)
+     Running tests/plan.rs (target/debug/deps/plan-098f220e6c351de6)
+     Running tests/provisioning.rs (target/debug/deps/provisioning-6d22bd6f41e0d8a1)
+     Running tests/restore.rs (target/debug/deps/restore-39440a3a38b0d0d6)
+     Running tests/stages.rs (target/debug/deps/stages-70105448f5094168)
+     Running tests/start_pe_arming.rs (target/debug/deps/start_pe_arming-6508a2c8c56658e5)
+     Running tests/verify_qga_boundary.rs (target/debug/deps/verify_qga_boundary-bb860889a118b3b9)
+     Running tests/watchdog_boundary.rs (target/debug/deps/watchdog_boundary-1eeb44f879bea53d)
+     Running unittests src/lib.rs (target/debug/deps/postgres_store-8e31a7da718f32e2)
+native_fake_cleanup_unconfirmed
+native_fake_cleanup_unconfirmed
+owned_linux_cleanup confirmed=false elapsed_ms=128
+owned_linux_child_reaped pid=6131 elapsed_ms=44
+owned_linux_cleanup confirmed=false elapsed_ms=0
+owned_linux_child_reaped pid=6138 elapsed_ms=40
+owned_linux_cleanup confirmed=true elapsed_ms=122
+owned_linux_child_reaped pid=6145 elapsed_ms=44
+owned_linux_cleanup confirmed=false elapsed_ms=118
+owned_linux_retained_unmarked_database=lf_native_test_01a08f068fa9722296bee2694111c5da
+owned_linux_cleanup confirmed=true elapsed_ms=230
+owned_linux_cleanup confirmed=true elapsed_ms=0
+owned_linux_cleanup confirmed=false elapsed_ms=115
+owned_linux_retained_foreign_marker_database=lf_native_test_01a08f0693a67b318c4897e140da9224
+owned_linux_cleanup confirmed=false elapsed_ms=92
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f06957d7371bda0cee03457f58e
+owned_linux_cleanup confirmed=false elapsed_ms=86
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f06975c7fe2a5b6a18c3cba4cc9
+owned_linux_child_reaped pid=6170 elapsed_ms=40
+owned_linux_cleanup confirmed=true elapsed_ms=125
+owned_linux_cleanup confirmed=false elapsed_ms=126
+owned_linux_retained_oid_mismatch_database=lf_native_test_01a08f069b2c7b909b13874591e21e12
+owned_linux_setup_cancelled pid=6182 cleanup_elapsed_ms=344
+
+thread 'scheduler::osdeploy::transition::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor' (6194) panicked at crates/postgres-store/src/scheduler/osdeploy/../../../../../proof_support/process.rs:584:13:
+fixed_owned_fault_caller_panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+     Running tests/docker_fixture_storage.rs (target/debug/deps/docker_fixture_storage-9882f94cd8010afc)
+     Running tests/native.rs (target/debug/deps/native-9dcd6f0729c6b82d)
+native_fake_child_reap_unconfirmed pid=6340 cleanup_elapsed_us=539 deadline_remaining_at_start_us=0 deadline_overrun_us=244522486 kill_error=None wait_error=None
+
+thread 'intake_changed_digest_conflicts' (6338) panicked at crates/postgres-store/tests/support/../../../../proof_support/mod.rs:299:30:
+local_linux_create_unconfirmed: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+native_fake_cleanup_unconfirmed
+native_fake_cleanup_unconfirmed
+owned_linux_cleanup confirmed=false elapsed_ms=114
+owned_linux_child_reaped pid=6432 elapsed_ms=42
+owned_linux_cleanup confirmed=false elapsed_ms=0
+owned_linux_child_reaped pid=6439 elapsed_ms=42
+owned_linux_cleanup confirmed=true elapsed_ms=109
+owned_linux_child_reaped pid=6446 elapsed_ms=39
+owned_linux_cleanup confirmed=false elapsed_ms=123
+owned_linux_retained_unmarked_database=lf_native_test_01a08f0b61af7d71b5c9ddb8f4bcdcc5
+owned_linux_cleanup confirmed=true elapsed_ms=233
+owned_linux_cleanup confirmed=true elapsed_ms=0
+owned_linux_cleanup confirmed=false elapsed_ms=123
+owned_linux_retained_foreign_marker_database=lf_native_test_01a08f0b65bb7083bfaf72e239e74937
+owned_linux_cleanup confirmed=false elapsed_ms=78
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f0b67ac7203a40106ca0b4f2600
+owned_linux_cleanup confirmed=false elapsed_ms=85
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f0b69737e739abd4a44839b34b9
+owned_linux_child_reaped pid=6471 elapsed_ms=35
+owned_linux_cleanup confirmed=true elapsed_ms=131
+owned_linux_cleanup confirmed=false elapsed_ms=115
+owned_linux_retained_oid_mismatch_database=lf_native_test_01a08f0b6d4b7140babbc58e4dad815a
+owned_linux_setup_cancelled pid=6483 cleanup_elapsed_ms=357
+
+thread 'support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor' (6495) panicked at crates/postgres-store/tests/support/../../../../proof_support/process.rs:584:13:
+fixed_owned_fault_caller_panic
+error: test failed, to rerun pass `-p postgres-store --test native`
+     Running tests/osdeploy_durability.rs (target/debug/deps/osdeploy_durability-3f2bf43e1cc63dec)
+native_fake_cleanup_unconfirmed
+native_fake_cleanup_unconfirmed
+owned_linux_cleanup confirmed=false elapsed_ms=123
+owned_linux_child_reaped pid=6750 elapsed_ms=41
+owned_linux_cleanup confirmed=false elapsed_ms=0
+owned_linux_child_reaped pid=6757 elapsed_ms=39
+owned_linux_cleanup confirmed=true elapsed_ms=120
+owned_linux_child_reaped pid=6764 elapsed_ms=45
+owned_linux_cleanup confirmed=false elapsed_ms=114
+owned_linux_retained_unmarked_database=lf_native_test_01a08f0c752b7842ac9343ca1085ee53
+owned_linux_cleanup confirmed=true elapsed_ms=226
+owned_linux_cleanup confirmed=true elapsed_ms=0
+owned_linux_cleanup confirmed=false elapsed_ms=111
+owned_linux_retained_foreign_marker_database=lf_native_test_01a08f0c7920794289c99b7a8a698142
+owned_linux_cleanup confirmed=false elapsed_ms=86
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f0c7b067c71bc116fb287c49ed8
+owned_linux_cleanup confirmed=false elapsed_ms=86
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f0c7ce07623a820377caf49aaeb
+owned_linux_child_reaped pid=6789 elapsed_ms=42
+owned_linux_cleanup confirmed=true elapsed_ms=139
+owned_linux_cleanup confirmed=false elapsed_ms=125
+owned_linux_retained_oid_mismatch_database=lf_native_test_01a08f0c80df7c708387c7d64cb1430f
+owned_linux_setup_cancelled pid=6801 cleanup_elapsed_ms=333
+
+thread 'osdeploy_support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor' (6813) panicked at crates/postgres-store/tests/osdeploy_support/../../../../proof_support/process.rs:584:13:
+fixed_owned_fault_caller_panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+     Running tests/osdeploy_permit_seam.rs (target/debug/deps/osdeploy_permit_seam-2a9191d513f79a92)
+     Running tests/osdeploy_registration.rs (target/debug/deps/osdeploy_registration-abe6f27d163baae3)
+native_fake_cleanup_unconfirmed
+native_fake_cleanup_unconfirmed
+owned_linux_cleanup confirmed=false elapsed_ms=116
+owned_linux_child_reaped pid=7251 elapsed_ms=43
+owned_linux_cleanup confirmed=false elapsed_ms=0
+owned_linux_child_reaped pid=7258 elapsed_ms=30
+owned_linux_cleanup confirmed=true elapsed_ms=124
+owned_linux_child_reaped pid=7265 elapsed_ms=44
+owned_linux_cleanup confirmed=false elapsed_ms=130
+owned_linux_retained_unmarked_database=lf_native_test_01a08f13ce837d91a3b18bc2928bee1f
+owned_linux_cleanup confirmed=true elapsed_ms=226
+owned_linux_cleanup confirmed=true elapsed_ms=0
+owned_linux_cleanup confirmed=false elapsed_ms=120
+owned_linux_retained_foreign_marker_database=lf_native_test_01a08f13d2a07231a84aba4c05c2bb93
+owned_linux_cleanup confirmed=false elapsed_ms=81
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f13d47f76f39a4385bb60eee4c7
+owned_linux_cleanup confirmed=false elapsed_ms=82
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f13d6367800877cd395baf0b039
+owned_linux_child_reaped pid=7290 elapsed_ms=41
+owned_linux_cleanup confirmed=true elapsed_ms=129
+owned_linux_cleanup confirmed=false elapsed_ms=117
+owned_linux_retained_oid_mismatch_database=lf_native_test_01a08f13da2772b0bfe205cbceadee97
+owned_linux_setup_cancelled pid=7302 cleanup_elapsed_ms=313
+
+thread 'osdeploy_support::local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor' (7314) panicked at crates/postgres-store/tests/osdeploy_support/../../../../proof_support/process.rs:584:13:
+fixed_owned_fault_caller_panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+     Running tests/pe_register_result_gate.rs (target/debug/deps/pe_register_result_gate-033ab77b598caa82)
+     Running tests/pe_register_result_transaction.rs (target/debug/deps/pe_register_result_transaction-432c7fe6b3992ca1)
+
+thread 'concurrent_result_probe_conflicts_then_rolls_back_and_releases_lock' (7466) panicked at crates/postgres-store/tests/pe_register_result_transaction.rs:22:55:
+explicit isolated database required: NotPresent
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p postgres-store --test pe_register_result_transaction`
+     Running tests/postgres.rs (target/debug/deps/postgres-2d9978f1b7894226)
+native_fake_cleanup_unconfirmed
+native_fake_cleanup_unconfirmed
+owned_linux_cleanup confirmed=false elapsed_ms=112
+owned_linux_child_reaped pid=7543 elapsed_ms=42
+owned_linux_cleanup confirmed=false elapsed_ms=0
+owned_linux_child_reaped pid=7550 elapsed_ms=36
+owned_linux_cleanup confirmed=true elapsed_ms=125
+owned_linux_child_reaped pid=7557 elapsed_ms=39
+owned_linux_cleanup confirmed=false elapsed_ms=118
+owned_linux_retained_unmarked_database=lf_native_test_01a08f145b6174c1a3172aea7be36b5e
+owned_linux_cleanup confirmed=true elapsed_ms=230
+owned_linux_cleanup confirmed=true elapsed_ms=0
+owned_linux_cleanup confirmed=false elapsed_ms=128
+owned_linux_retained_foreign_marker_database=lf_native_test_01a08f145f3e7183be1899506ec1c0e2
+owned_linux_cleanup confirmed=false elapsed_ms=91
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f1464c072f28359bf00033aa25e
+owned_linux_cleanup confirmed=false elapsed_ms=96
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f1466b17ce0805e39423422bdcb
+owned_linux_child_reaped pid=7582 elapsed_ms=36
+owned_linux_cleanup confirmed=true elapsed_ms=154
+owned_linux_cleanup confirmed=false elapsed_ms=135
+owned_linux_retained_oid_mismatch_database=lf_native_test_01a08f146b247582a2cd2e85a352a6c7
+owned_linux_setup_cancelled pid=7594 cleanup_elapsed_ms=349
+
+thread 'local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor' (7606) panicked at crates/postgres-store/tests/../../../proof_support/process.rs:584:13:
+fixed_owned_fault_caller_panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+     Running tests/start_pe_arming_gate.rs (target/debug/deps/start_pe_arming_gate-1d6b8710353daeb9)
+
+thread 'session_schema_creation_rolls_back_without_leaving_tables' (7723) panicked at crates/postgres-store/tests/start_pe_arming_gate.rs:81:55:
+explicit isolated database required: NotPresent
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p postgres-store --test start_pe_arming_gate`
+     Running unittests src/lib.rs (target/debug/deps/scheduler-277998c4cf2f4361)
+     Running tests/postgres.rs (target/debug/deps/postgres-cdca816583ed3a40)
+native_fake_cleanup_unconfirmed
+native_fake_cleanup_unconfirmed
+owned_linux_cleanup confirmed=false elapsed_ms=118
+owned_linux_child_reaped pid=7833 elapsed_ms=45
+owned_linux_cleanup confirmed=false elapsed_ms=0
+owned_linux_child_reaped pid=7840 elapsed_ms=40
+owned_linux_cleanup confirmed=true elapsed_ms=116
+owned_linux_child_reaped pid=7847 elapsed_ms=44
+owned_linux_cleanup confirmed=false elapsed_ms=118
+owned_linux_retained_unmarked_database=lf_native_test_01a08f14dec07a20967a5ecb56d5dcd0
+owned_linux_cleanup confirmed=true elapsed_ms=233
+owned_linux_cleanup confirmed=true elapsed_ms=0
+owned_linux_cleanup confirmed=false elapsed_ms=116
+owned_linux_retained_foreign_marker_database=lf_native_test_01a08f14e2c57fb2ac3bacc7976849d0
+owned_linux_cleanup confirmed=false elapsed_ms=78
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f14e4a27203a87042fe1e4f8375
+owned_linux_cleanup confirmed=false elapsed_ms=91
+owned_linux_retained_receipt_mismatch_database=lf_native_test_01a08f14e6637e02be8bdc458ba8ac05
+owned_linux_child_reaped pid=7872 elapsed_ms=28
+owned_linux_cleanup confirmed=true elapsed_ms=124
+owned_linux_cleanup confirmed=false elapsed_ms=122
+owned_linux_retained_oid_mismatch_database=lf_native_test_01a08f14ea247ea08217e71b79a15368
+owned_linux_setup_cancelled pid=7884 cleanup_elapsed_ms=347
+
+thread 'local_postgres::process::tests::cancelled_readiness_and_caller_panic_join_and_reap_fault_supervisor' (7896) panicked at crates/scheduler/tests/../../../proof_support/process.rs:584:13:
+fixed_owned_fault_caller_panic
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+   Doc-tests operation_controller
+error[E0277]: the trait bound `ReqwestPveObserver: ControllerFixturePort` is not satisfied
+  --> crates/operation-controller/src/osdeploy.rs:112:63
+   |
+10 |     let _ = OsDeployController::new_fixture(store, scheduler, observer, 1);
+   |                                                               ^^^^^^^^ the trait `ControllerFixturePort` is not implemented for `ReqwestPveObserver`
+   |
+   = help: the following other types implement trait `ControllerFixturePort`:
+             FixtureProvisioningPort
+             NativeFakePve
+   = note: required for the cast from `Arc<ReqwestPveObserver>` to `Arc<(dyn ControllerFixturePort + 'static)>`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+   Doc-tests osdeploy_adapter
+error[E0277]: the trait bound `osdeploy_adapter::DiskCapacity: serde::Deserialize<'de>` is not satisfied
+    --> crates/osdeploy-adapter/src/input_values.rs:12:23
+     |
+   6 | let _: DiskCapacity = serde_json::from_str("{}").unwrap();
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `osdeploy_adapter::DiskCapacity`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `osdeploy_adapter::DiskCapacity` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 298 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0277]: the trait bound `PhasePolicy: serde::Deserialize<'de>` is not satisfied
+    --> crates/osdeploy-adapter/src/input_values.rs:127:22
+     |
+   6 | let _: PhasePolicy = serde_json::from_str("{}").unwrap();
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `PhasePolicy`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `PhasePolicy` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 298 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0451]: fields `native_contract`, `vm`, `names`, `artifact`, `disk`, `policy`, `driver_payload`, `osd_client_payload`, `agent_payload`, `template_config_sha256`, `deployment_iso_volid`, `driver_iso_volid`, `system_serial`, `disk_serial`, `os_version`, `os_edition`, `os_language`, `image_name`, `secret_profile_id` and `callback_profile_id` of struct `OsDeployPlanV1` are private
+ --> crates/osdeploy-adapter/src/plan.rs:91:22
+  |
+7 |     OsDeployPlanV1 { system_serial: String::new(), ..existing }
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^ fields `native_contract`, `vm`, `names`, `artifact`, `disk`, `policy`, `driver_payload`, `osd_client_payload`, `agent_payload`, `template_config_sha256`, `deployment_iso_volid`, `driver_iso_volid`, `disk_serial`, `os_version`, `os_edition`, `os_language`, `image_name`, `secret_profile_id` and `callback_profile_id` are private
+  |                      |
+  |                      private field
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0451`.
+error[E0277]: the trait bound `OsDeployPlanV1: serde::Deserialize<'de>` is not satisfied
+    --> crates/osdeploy-adapter/src/plan.rs:97:25
+     |
+   6 | let _: OsDeployPlanV1 = serde_json::from_str("{}").unwrap();
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `OsDeployPlanV1`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `OsDeployPlanV1` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 298 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0451]: fields `reference_id`, `sha256` and `evidence_level` of struct `PayloadDeclaration` are private
+ --> crates/osdeploy-adapter/src/plan.rs:21:26
+  |
+7 |     PayloadDeclaration { reference_id: uuid::Uuid::nil(), ..existing }
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^ fields `sha256` and `evidence_level` are private
+  |                          |
+  |                          private field
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0451`.
+error[E0277]: the trait bound `PayloadDeclaration: serde::Deserialize<'de>` is not satisfied
+    --> crates/osdeploy-adapter/src/plan.rs:27:29
+     |
+   6 | let _: PayloadDeclaration = serde_json::from_str("{}").unwrap();
+     |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `PayloadDeclaration`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `PayloadDeclaration` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 298 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+   Doc-tests postgres_store
+error[E0624]: method `pool` is private
+   --> crates/postgres-store/src/lib.rs:12:27
+    |
+ 10 | let _unrestricted = store.pool();
+    |                           ^^^^ private method
+    |
+   ::: /workspace/rust-controller/crates/postgres-store/src/store.rs:129:5
+    |
+129 |     pub(crate) const fn pool(&self) -> &PgPool {
+    |     ------------------------------------------ private method defined here
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0624`.
+error[E0277]: the trait bound `OsDeployRegistrationV1: serde::Deserialize<'de>` is not satisfied
+    --> crates/postgres-store/src/osdeploy.rs:12:49
+     |
+   5 | let _: postgres_store::OsDeployRegistrationV1 = serde_json::from_str("{}").unwrap();
+     |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `OsDeployRegistrationV1`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `OsDeployRegistrationV1` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 304 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0277]: the trait bound `OsDeployOperationPlanV1: serde::Deserialize<'de>` is not satisfied
+    --> crates/postgres-store/src/osdeploy.rs:6:50
+     |
+   5 | let _: postgres_store::OsDeployOperationPlanV1 = serde_json::from_str("{}").unwrap();
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `OsDeployOperationPlanV1`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `OsDeployOperationPlanV1` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 304 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0277]: the trait bound `OsDeployWorkflowIds: serde::Deserialize<'de>` is not satisfied
+    --> crates/postgres-store/src/osdeploy.rs:9:46
+     |
+   5 | let _: postgres_store::OsDeployWorkflowIds = serde_json::from_str("{}").unwrap();
+     |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `OsDeployWorkflowIds`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `OsDeployWorkflowIds` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 304 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0277]: the trait bound `OsDeployOperationSnapshot: serde::Deserialize<'de>` is not satisfied
+    --> crates/postgres-store/src/osdeploy/execution.rs:106:52
+     |
+   5 | let _: postgres_store::OsDeployOperationSnapshot = serde_json::from_str("{}").unwrap();
+     |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `OsDeployOperationSnapshot`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `OsDeployOperationSnapshot` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 304 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0277]: the trait bound `OsDeployPveObservation: serde::Deserialize<'de>` is not satisfied
+    --> crates/postgres-store/src/osdeploy/execution.rs:34:49
+     |
+   5 | let _: postgres_store::OsDeployPveObservation = serde_json::from_str("{}").unwrap();
+     |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `OsDeployPveObservation`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `OsDeployPveObservation` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 304 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0603]: module `scheduler` is private
+  --> crates/postgres-store/src/scheduler/osdeploy.rs:43:25
+   |
+ 5 | let _ = postgres_store::scheduler::osdeploy::transition::OsDeployTransitionProof::OriginalDispatchReconciliation;
+   |                         ^^^^^^^^^ private module                                  ------------------------------ tuple variant `OriginalDispatchReconciliation` is not publicly re-exported
+   |
+note: the module `scheduler` is defined here
+  --> /workspace/rust-controller/crates/postgres-store/src/lib.rs:15:1
+   |
+15 | mod scheduler;
+   | ^^^^^^^^^^^^^
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0603`.
+error[E0382]: use of moved value: `permit`
+   --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:15:10
+    |
+  5 | async fn moved(permit: postgres_store::OsDeployDispatchPermit, fake: &pve_port::NativeFakePve) {
+    |                ------ move occurs because `permit` has type `OsDeployDispatchPermit`, which does not implement the `Copy` trait
+  6 |     drop(permit.submit_fake_once(fake));
+    |                 ---------------------- `permit` moved due to this method call
+  7 |     drop(permit.submit_fake_once(fake));
+    |          ^^^^^^ value used here after move
+    |
+note: `OsDeployDispatchPermit::submit_fake_once` takes ownership of the receiver `self`, which moves `permit`
+   --> /workspace/rust-controller/crates/postgres-store/src/scheduler/osdeploy/receipt.rs:126:9
+    |
+126 |         self,
+    |         ^^^^
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0382`.
+error[E0382]: use of moved value: `permit`
+   --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:22:10
+    |
+  5 | async fn moved(permit: postgres_store::OsDeployDispatchPermit, fake: &dyn pve_port::ProvisioningFakePort) {
+    |                ------ move occurs because `permit` has type `OsDeployDispatchPermit`, which does not implement the `Copy` trait
+  6 |     drop(permit.submit_fake_once(fake));
+    |                 ---------------------- `permit` moved due to this method call
+  7 |     drop(permit.submit_fake_once(fake));
+    |          ^^^^^^ value used here after move
+    |
+note: `OsDeployDispatchPermit::submit_fake_once` takes ownership of the receiver `self`, which moves `permit`
+   --> /workspace/rust-controller/crates/postgres-store/src/scheduler/osdeploy/receipt.rs:126:9
+    |
+126 |         self,
+    |         ^^^^
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0382`.
+error[E0277]: the trait bound `ReqwestPveObserver: ProvisioningFakePort` is not satisfied
+   --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:28:29
+    |
+  6 |     permit.submit_fake_once(observer).await;
+    |            ---------------- ^^^^^^^^ the trait `ProvisioningFakePort` is not implemented for `ReqwestPveObserver`
+    |            |
+    |            required by a bound introduced by this call
+    |
+    = help: the following other types implement trait `ProvisioningFakePort`:
+              FixtureProvisioningPort
+              NativeFakePve
+note: required by a bound in `OsDeployDispatchPermit::submit_fake_once`
+   --> /workspace/rust-controller/crates/postgres-store/src/scheduler/osdeploy/receipt.rs:125:38
+    |
+125 |     pub async fn submit_fake_once<P: ProvisioningFakePort + ?Sized>(
+    |                                      ^^^^^^^^^^^^^^^^^^^^ required by this bound in `OsDeployDispatchPermit::submit_fake_once`
+
+error[E0277]: the trait bound `ReqwestPveObserver: ProvisioningFakePort` is not satisfied
+   --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:28:5
+    |
+  6 |     permit.submit_fake_once(observer).await;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `ProvisioningFakePort` is not implemented for `ReqwestPveObserver`
+    |
+    = help: the following other types implement trait `ProvisioningFakePort`:
+              FixtureProvisioningPort
+              NativeFakePve
+note: required by a bound in `OsDeployDispatchPermit::submit_fake_once`
+   --> /workspace/rust-controller/crates/postgres-store/src/scheduler/osdeploy/receipt.rs:125:38
+    |
+125 |     pub async fn submit_fake_once<P: ProvisioningFakePort + ?Sized>(
+    |                                      ^^^^^^^^^^^^^^^^^^^^ required by this bound in `OsDeployDispatchPermit::submit_fake_once`
+
+error[E0277]: the trait bound `ReqwestPveObserver: ProvisioningFakePort` is not satisfied
+   --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:28:39
+    |
+  6 |     permit.submit_fake_once(observer).await;
+    |                                       ^^^^^ the trait `ProvisioningFakePort` is not implemented for `ReqwestPveObserver`
+    |
+    = help: the following other types implement trait `ProvisioningFakePort`:
+              FixtureProvisioningPort
+              NativeFakePve
+note: required by a bound in `OsDeployDispatchPermit::submit_fake_once`
+   --> /workspace/rust-controller/crates/postgres-store/src/scheduler/osdeploy/receipt.rs:125:38
+    |
+125 |     pub async fn submit_fake_once<P: ProvisioningFakePort + ?Sized>(
+    |                                      ^^^^^^^^^^^^^^^^^^^^ required by this bound in `OsDeployDispatchPermit::submit_fake_once`
+
+error: aborting due to 3 previous errors
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0599]: no method named `clone` found for struct `OsDeployDispatchPermit` in the current scope
+ --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:32:82
+  |
+5 | fn clone_handle(permit: postgres_store::OsDeployDispatchPermit) { let _ = permit.clone(); }
+  |                                                                                  ^^^^^ method not found in `OsDeployDispatchPermit`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0599`.
+error[E0277]: the trait bound `OsDeployDispatchPermit: Copy` is not satisfied
+ --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:36:15
+  |
+6 | copy_handle::<postgres_store::OsDeployDispatchPermit>();
+  |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Copy` is not implemented for `OsDeployDispatchPermit`
+  |
+note: required by a bound in `copy_handle`
+ --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:35:19
+  |
+5 | fn copy_handle<T: Copy>() {}
+  |                   ^^^^ required by this bound in `copy_handle`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0277]: the trait bound `OsDeployDispatchPermit: serde::Deserialize<'de>` is not satisfied
+    --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:39:49
+     |
+   5 | let _: postgres_store::OsDeployDispatchPermit = serde_json::from_str("{}").unwrap();
+     |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `OsDeployDispatchPermit`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `OsDeployDispatchPermit` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 304 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0277]: the trait bound `OsDeployDispatchPermit: serde::Serialize` is not satisfied
+   --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:42:100
+    |
+  5 | fn serialize_handle(permit: postgres_store::OsDeployDispatchPermit) { let _ = serde_json::to_value(permit); }
+    |                                                                               -------------------- ^^^^^^ the trait `serde_core::ser::Serialize` is not implemented for `OsDeployDispatchPermit`
+    |                                                                               |
+    |                                                                               required by a bound introduced by this call
+    |
+    = note: for local types consider adding `#[derive(serde::Serialize)]` to your `OsDeployDispatchPermit` type
+    = note: for types from other crates check whether the crate offers a `serde` feature flag
+    = help: the following other types implement trait `serde_core::ser::Serialize`:
+              &'a T
+              &'a mut T
+              ()
+              (T,)
+              (T0, T1)
+              (T0, T1, T2)
+              (T0, T1, T2, T3)
+              (T0, T1, T2, T3, T4)
+            and 336 others
+note: required by a bound in `to_value`
+   --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/value/mod.rs:997:8
+    |
+995 | pub fn to_value<T>(value: T) -> Result<Value, Error>
+    |        -------- required by a bound in this function
+996 | where
+997 |     T: Serialize,
+    |        ^^^^^^^^^ required by this bound in `to_value`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0599]: no method named `request` found for struct `OsDeployDispatchPermit` in the current scope
+ --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:45:77
+  |
+5 | fn request(permit: postgres_store::OsDeployDispatchPermit) { let _ = permit.request(); }
+  |                                                                             ^^^^^^^ method not found in `OsDeployDispatchPermit`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0599`.
+error[E0277]: the trait bound `OsDeployDispatchPermit: From<pve_port::provisioning::evidence::ProvisioningDispatchV1>` is not satisfied
+ --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:49:90
+  |
+6 |     let _: postgres_store::OsDeployDispatchPermit = snapshot.dispatch().unwrap().clone().into();
+  |                                                                                          ^^^^ the trait `From<pve_port::provisioning::evidence::ProvisioningDispatchV1>` is not implemented for `OsDeployDispatchPermit`
+  |
+  = note: required for `pve_port::provisioning::evidence::ProvisioningDispatchV1` to implement `Into<OsDeployDispatchPermit>`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0599]: no method named `clone` found for struct `OsDeployResponseCapture` in the current scope
+ --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:60:85
+  |
+5 | fn clone_handle(capture: postgres_store::OsDeployResponseCapture) { let _ = capture.clone(); }
+  |                                                                                     ^^^^^ method not found in `OsDeployResponseCapture`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0599`.
+error[E0277]: the trait bound `OsDeployResponseCapture: Copy` is not satisfied
+ --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:64:15
+  |
+6 | copy_handle::<postgres_store::OsDeployResponseCapture>();
+  |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Copy` is not implemented for `OsDeployResponseCapture`
+  |
+note: required by a bound in `copy_handle`
+ --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:63:19
+  |
+5 | fn copy_handle<T: Copy>() {}
+  |                   ^^^^ required by this bound in `copy_handle`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0277]: the trait bound `OsDeployResponseCapture: serde::Deserialize<'de>` is not satisfied
+    --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:67:50
+     |
+   5 | let _: postgres_store::OsDeployResponseCapture = serde_json::from_str("{}").unwrap();
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `serde_core::de::Deserialize<'_>` is not implemented for `OsDeployResponseCapture`
+     |
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `OsDeployResponseCapture` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a [u8]
+               &'a serde_json::value::RawValue
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 304 others
+note: required by a bound in `serde_json::from_str`
+    --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2711:8
+     |
+2709 | pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+     |        -------- required by a bound in this function
+2710 | where
+2711 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_str`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0277]: the trait bound `OsDeployResponseCapture: serde::Serialize` is not satisfied
+   --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:70:102
+    |
+  5 | fn serialize_handle(capture: postgres_store::OsDeployResponseCapture) { let _ = serde_json::to_value(capture); }
+    |                                                                                 -------------------- ^^^^^^^ the trait `serde_core::ser::Serialize` is not implemented for `OsDeployResponseCapture`
+    |                                                                                 |
+    |                                                                                 required by a bound introduced by this call
+    |
+    = note: for local types consider adding `#[derive(serde::Serialize)]` to your `OsDeployResponseCapture` type
+    = note: for types from other crates check whether the crate offers a `serde` feature flag
+    = help: the following other types implement trait `serde_core::ser::Serialize`:
+              &'a T
+              &'a mut T
+              ()
+              (T,)
+              (T0, T1)
+              (T0, T1, T2)
+              (T0, T1, T2, T3)
+              (T0, T1, T2, T3, T4)
+            and 336 others
+note: required by a bound in `to_value`
+   --> /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/value/mod.rs:997:8
+    |
+995 | pub fn to_value<T>(value: T) -> Result<Value, Error>
+    |        -------- required by a bound in this function
+996 | where
+997 |     T: Serialize,
+    |        ^^^^^^^^^ required by this bound in `to_value`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+error[E0599]: no method named `request` found for struct `OsDeployResponseCapture` in the current scope
+ --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:73:80
+  |
+5 | fn request(capture: postgres_store::OsDeployResponseCapture) { let _ = capture.request(); }
+  |                                                                                ^^^^^^^ method not found in `OsDeployResponseCapture`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0599`.
+error[E0277]: the trait bound `OsDeployResponseCapture: From<pve_port::provisioning::evidence::ProvisioningDispatchV1>` is not satisfied
+ --> crates/postgres-store/src/scheduler/osdeploy/receipt.rs:77:91
+  |
+6 |     let _: postgres_store::OsDeployResponseCapture = snapshot.dispatch().unwrap().clone().into();
+  |                                                                                           ^^^^ the trait `From<pve_port::provisioning::evidence::ProvisioningDispatchV1>` is not implemented for `OsDeployResponseCapture`
+  |
+  = note: required for `pve_port::provisioning::evidence::ProvisioningDispatchV1` to implement `Into<OsDeployResponseCapture>`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+   Doc-tests scheduler
+error: 4 targets failed:
+    `-p operation-controller --test postgres_native`
+    `-p postgres-store --test native`
+    `-p postgres-store --test pe_register_result_transaction`
+    `-p postgres-store --test start_pe_arming_gate`

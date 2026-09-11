@@ -1,0 +1,15 @@
+{
+  "id": "20260904-deadbeef",
+  "job_type": "test_long_sleep",
+  "playbook": "/app/playbooks/_test_long_sleep.yml",
+  "cmd": [
+    "ansible-playbook",
+    "/app/playbooks/_test_long_sleep.yml",
+    "-e",
+    "duration=5"
+  ],
+  "args": {
+    "duration": "5"
+  },
+  "status": "pending"
+}

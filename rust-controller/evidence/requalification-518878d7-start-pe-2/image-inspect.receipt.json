@@ -1,0 +1,2 @@
+{"event": "start", "utc": "2026-09-11T09:06:53.351698+00:00", "argv": ["docker", "image", "inspect", "rust-controller-qualification:518878d7", "--format", "{{.Id}} {{.Architecture}} {{json .Config.Env}}"], "bound": 15}
+{"event": "end", "utc": "2026-09-11T09:06:53.478374+00:00", "exit": 0, "elapsed": 0.12672612501773983, "group_clean": true, "direct_child_reaped": true, "leader_left_with_group": false}

@@ -1,0 +1,1 @@
+{"architecture": "amd64", "digest": "sha256:d2a7622623953ba9342e11ed1d6df00d8dc62c1d62713bdf94e70f9135cb459c", "exit": 0, "image": "rust-controller-task9:amd64-fixed", "os": "linux", "source": "49b08779edb1d9d5f3c2b6247cbce77bd6f33751"}
