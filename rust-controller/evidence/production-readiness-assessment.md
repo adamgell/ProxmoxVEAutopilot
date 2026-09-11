@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `127cd54c`: this branch and PR #65 contain an accumulated
+Current scope at `2993ef10`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -83,6 +83,17 @@ passing. The verified image is
 Because two `api-compat` callback files changed after that archived source,
 this is not current-HEAD qualification; launcher repinning and full PostgreSQL
 runtime qualification remain open.
+
+At `f39bfb4d`, frozen-image Linux runtime preflight refused before allocation:
+the owned PostgreSQL identity was verified, but `MemAvailable` was 11.1177 GiB
+versus the unchanged 12 GiB guard. Both bounded Docker checks exited cleanly;
+no runtime qualification or launcher repin is claimed.
+
+At `2993ef10`, the first safe implementation piece of the stop-outcome design
+is present: an immutable fixture outcome table/migration with accepted,
+refused, and ambiguous states, digest and foreign-key constraints, and
+immutability triggers. Migration inventory coverage passes; transaction-owned
+prepare/record APIs and recovery tests remain open.
 
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
