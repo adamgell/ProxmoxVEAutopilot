@@ -7,6 +7,113 @@ mod osdeploy_support;
 
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
+async fn fixture_create_origin_is_atomic_typed_immutable_and_replayable() {
+    use postgres_store::OsDeployStoreError;
+    let f = osdeploy_support::Fixture::new().await;
+    let p = osdeploy_support::plan();
+    let key = uuid::Uuid::now_v7();
+    let before = f.snapshot().await;
+    assert_eq!(
+        f.store
+            .create_fixture_osdeploy(uuid::Uuid::nil(), &p)
+            .await
+            .unwrap_err(),
+        OsDeployStoreError::Validation
+    );
+    // Fail downstream of the origin insert. Every registration row must roll back.
+    sqlx::raw_sql("CREATE FUNCTION rust_controller.reject_fixture_create() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected registration failure'; END $$; CREATE TRIGGER reject_fixture_create BEFORE INSERT ON rust_controller.osdeploy_operation_plans FOR EACH ROW EXECUTE FUNCTION rust_controller.reject_fixture_create();").execute(&f.pool).await.unwrap();
+    assert!(f.store.create_fixture_osdeploy(key, &p).await.is_err());
+    assert_eq!(f.snapshot().await, before);
+    let origins: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rust_controller.fixture_osdeploy_origins")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(origins, 0);
+    sqlx::raw_sql("DROP TRIGGER reject_fixture_create ON rust_controller.osdeploy_operation_plans; DROP FUNCTION rust_controller.reject_fixture_create();").execute(&f.pool).await.unwrap();
+    // Concurrent deliveries of a create request allocate one server-owned run.
+    let (a, b) = tokio::join!(
+        f.store.create_fixture_osdeploy(key, &p),
+        f.other.create_fixture_osdeploy(key, &p)
+    );
+    let created = a.unwrap();
+    assert_eq!(created, b.unwrap());
+    assert_ne!(created.ids().run_id().as_uuid(), key);
+    assert_eq!(
+        created.text_identity(),
+        created.ids().run_id().as_uuid().to_string()
+    );
+    assert_eq!(created.source_namespace(), "rust-owned-fixture-v1");
+    let row: (String,String,String,String) = sqlx::query_as("SELECT source_namespace,claim_kind,claim_value,workflow_sha256 FROM rust_controller.fixture_osdeploy_origins WHERE create_request_id=$1").bind(key).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(
+        row,
+        (
+            created.source_namespace().into(),
+            "text".into(),
+            created.text_identity().into(),
+            created.ids().workflow_sha256().into()
+        )
+    );
+    let after = f.snapshot().await;
+    let changed = osdeploy_support::altered(|v| {
+        v["policy"]["registration_seconds"] = serde_json::json!(2401)
+    });
+    assert_eq!(
+        f.other
+            .create_fixture_osdeploy(key, &changed)
+            .await
+            .unwrap_err(),
+        OsDeployStoreError::Conflict
+    );
+    // A different request cannot claim the same reserved VM or manufacture an alias.
+    assert_eq!(
+        f.other
+            .create_fixture_osdeploy(uuid::Uuid::now_v7(), &p)
+            .await
+            .unwrap_err(),
+        OsDeployStoreError::Conflict
+    );
+    assert_eq!(f.snapshot().await, after);
+    for (source, kind, claim) in [
+        ("rust-owned-fixture-v1", "integer", created.text_identity()),
+        ("rust-owned-fixture-v1", "text", "042"),
+        ("foreign-database", "text", created.text_identity()),
+    ] {
+        let error = sqlx::query("INSERT INTO rust_controller.fixture_osdeploy_origins(create_request_id,run_id,source_namespace,claim_kind,claim_value,workflow_sha256) VALUES($1,$2,$3,$4,$5,$6)")
+            .bind(uuid::Uuid::now_v7()).bind(created.ids().run_id().as_uuid()).bind(source).bind(kind).bind(claim).bind(created.ids().workflow_sha256()).execute(&f.pool).await.unwrap_err();
+        assert_eq!(
+            error.as_database_error().unwrap().code().as_deref(),
+            Some("23514")
+        );
+    }
+    for statement in [
+        "UPDATE rust_controller.fixture_osdeploy_origins SET claim_kind='integer'",
+        "DELETE FROM rust_controller.fixture_osdeploy_origins",
+        "TRUNCATE rust_controller.fixture_osdeploy_origins",
+    ] {
+        assert!(sqlx::query(statement).execute(&f.pool).await.is_err());
+    }
+    f.scheduler()
+        .cancel_osdeploy_run(created.ids().run_id())
+        .await
+        .unwrap();
+    // Reconstruct through a fresh store after cancellation/lost response. No
+    // process-local handle or old bearer supplies the identity association.
+    let reopened = postgres_store::PgStore::new(f.pool.clone());
+    assert_eq!(
+        reopened.create_fixture_osdeploy(key, &p).await.unwrap(),
+        created
+    );
+    let origins: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rust_controller.fixture_osdeploy_origins")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(origins, 1);
+}
+
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
 async fn fixture_start_pe_atomic_arming_rollback_race_and_reload() {
     async fn observe(
         s: &osdeploy_execution_support::Scenario,

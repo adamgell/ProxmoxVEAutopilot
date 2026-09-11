@@ -21,6 +21,34 @@ mod registration;
 pub use package_semantics::{MaterializedPePackageSemanticsV1, RegisteredPePackageSemanticsV1};
 mod stage;
 
+/// Committed Rust-owned fixture registration; never legacy-import or callback
+/// authority. Identity is always exact text, allocated by the store.
+/// ```compile_fail
+/// let _: postgres_store::FixtureCreatedOsDeployV1 = serde_json::from_str("{}").unwrap();
+/// ```
+/// ```compile_fail
+/// let _ = postgres_store::FixtureCreatedOsDeployV1 { identity: "42".into(), ids: todo!() };
+/// ```
+#[cfg(feature = "fixture-ipc")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixtureCreatedOsDeployV1 {
+    ids: OsDeployWorkflowIds,
+    identity: String,
+}
+
+#[cfg(feature = "fixture-ipc")]
+impl FixtureCreatedOsDeployV1 {
+    pub fn ids(&self) -> &OsDeployWorkflowIds {
+        &self.ids
+    }
+    pub fn text_identity(&self) -> &str {
+        &self.identity
+    }
+    pub const fn source_namespace(&self) -> &'static str {
+        "rust-owned-fixture-v1"
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum OsDeployStoreError {
     #[error("OSDeploy registration validation failed")]

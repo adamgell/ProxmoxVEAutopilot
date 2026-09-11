@@ -28,6 +28,8 @@ mod store;
 pub use native::{
     NativeDispatchPermit, NativeOperationSnapshot, NativeStoreError, NativeWorkflowIds,
 };
+#[cfg(feature = "fixture-ipc")]
+pub use osdeploy::FixtureCreatedOsDeployV1;
 pub use osdeploy::execution::{
     OsDeployDue, OsDeployDueKind, OsDeployExecutionError, OsDeployExpiryCursor,
     OsDeployOperationSnapshot, OsDeployProgress, OsDeployPveObservation, OsDeployRepairCursor,

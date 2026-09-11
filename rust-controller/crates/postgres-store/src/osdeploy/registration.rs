@@ -4,10 +4,45 @@ use controller_domain::{CommandEnvelope, SemanticOperationKey, WorkflowKind};
 use osdeploy_adapter::restore_osdeploy_plan_v1;
 use uuid::Uuid;
 
+enum RegistrationOrigin {
+    Existing(RunId),
+    #[cfg(feature = "fixture-ipc")]
+    FixtureCreate(Uuid),
+}
+
 impl PgStore {
     pub async fn enqueue_osdeploy(
         &self,
         run: RunId,
+        plan: &OsDeployPlanV1,
+    ) -> Result<OsDeployWorkflowIds, OsDeployStoreError> {
+        self.enqueue_osdeploy_inner(RegistrationOrigin::Existing(run), plan)
+            .await
+    }
+
+    /// Create a Rust-owned fixture run. The key identifies a create request;
+    /// neither the run identity nor an imported bearer identity is caller input.
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn create_fixture_osdeploy(
+        &self,
+        create_request: Uuid,
+        plan: &OsDeployPlanV1,
+    ) -> Result<FixtureCreatedOsDeployV1, OsDeployStoreError> {
+        if create_request.is_nil() {
+            return Err(OsDeployStoreError::Validation);
+        }
+        let ids = self
+            .enqueue_osdeploy_inner(RegistrationOrigin::FixtureCreate(create_request), plan)
+            .await?;
+        Ok(FixtureCreatedOsDeployV1 {
+            identity: ids.run_id().as_uuid().to_string(),
+            ids,
+        })
+    }
+
+    async fn enqueue_osdeploy_inner(
+        &self,
+        origin: RegistrationOrigin,
         plan: &OsDeployPlanV1,
     ) -> Result<OsDeployWorkflowIds, OsDeployStoreError> {
         let canonical = serde_json::to_string(plan)?;
@@ -29,6 +64,34 @@ impl PgStore {
             .parse()
             .map_err(|_| OsDeployStoreError::Validation)?;
         let vm_digest = crate::native::digest(vm)?;
+        let mut tx = self.pool().begin().await?;
+        // Fixture create-request lock precedes the shared run/VM lock order.
+        // No other registration path acquires a fixture create-request lock.
+        let run = match origin {
+            RegistrationOrigin::Existing(run) => run,
+            #[cfg(feature = "fixture-ipc")]
+            RegistrationOrigin::FixtureCreate(key) => {
+                sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+                    .bind(format!("fixture:create-osdeploy:{key}"))
+                    .execute(&mut *tx)
+                    .await?;
+                let stored: Option<(Uuid, String, String, String, String)> = sqlx::query_as("SELECT run_id,source_namespace,claim_kind,claim_value,workflow_sha256 FROM rust_controller.fixture_osdeploy_origins WHERE create_request_id=$1")
+                    .bind(key).fetch_optional(&mut *tx).await?;
+                match stored {
+                    Some((run, source, kind, value, fingerprint)) => {
+                        if source != "rust-owned-fixture-v1"
+                            || kind != "text"
+                            || value != run.to_string()
+                            || fingerprint != hash
+                        {
+                            return Err(OsDeployStoreError::Conflict);
+                        }
+                        serde_json::from_value(serde_json::json!(run))?
+                    }
+                    None => RunId::new(),
+                }
+            }
+        };
         // All fallible plan conversion, fingerprints and database integer casts precede writes.
         let commands = stages
             .iter()
@@ -55,7 +118,6 @@ impl PgStore {
                 Ok((ordinal, command, pve_hash, stage::name(stage.stage())?))
             })
             .collect::<Result<Vec<_>, OsDeployStoreError>>()?;
-        let mut tx = self.pool().begin().await?;
         crate::native::lock_run(&mut tx, run).await?;
         let existing: Option<String> = sqlx::query_scalar(
             "SELECT workflow_sha256 FROM rust_controller.osdeploy_runs WHERE run_id=$1",
@@ -99,6 +161,11 @@ impl PgStore {
         }
         sqlx::query("INSERT INTO rust_controller.native_vm_reservations(cluster_key,vmid,vm_uuid,mac,run_id,plan_digest) VALUES($1,$2,$3,$4,$5,$6)").bind(vm.cluster_key().to_string()).bind(vmid).bind(uuid).bind(vm.mac().to_string()).bind(run.as_uuid()).bind(vm_digest).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO rust_controller.osdeploy_runs(run_id,contract_version,workflow_sha256,plan_canonical_json) VALUES($1,1,$2,$3)").bind(run.as_uuid()).bind(&hash).bind(canonical).execute(&mut *tx).await?;
+        #[cfg(feature = "fixture-ipc")]
+        if let RegistrationOrigin::FixtureCreate(key) = origin {
+            sqlx::query("INSERT INTO rust_controller.fixture_osdeploy_origins(create_request_id,run_id,source_namespace,claim_kind,claim_value,workflow_sha256) VALUES($1,$2,'rust-owned-fixture-v1','text',$3,$4)")
+                .bind(key).bind(run.as_uuid()).bind(run.as_uuid().to_string()).bind(&hash).execute(&mut *tx).await?;
+        }
         sqlx::query("INSERT INTO rust_controller.osdeploy_agent_reservations(expected_agent_id,run_id) VALUES($1,$2)").bind(plan.names().expected_agent_id()).bind(run.as_uuid()).execute(&mut *tx).await?;
         let ids = OsDeployWorkflowIds {
             run_id: run,

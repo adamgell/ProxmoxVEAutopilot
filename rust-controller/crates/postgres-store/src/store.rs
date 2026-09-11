@@ -154,6 +154,12 @@ impl PgStore {
         ))
         .execute(&self.pool)
         .await?;
+        #[cfg(feature = "fixture-ipc")]
+        sqlx::raw_sql(include_str!(
+            "../migrations/0007_fixture_osdeploy_origins.sql"
+        ))
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

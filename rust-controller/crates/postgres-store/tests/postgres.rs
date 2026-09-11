@@ -13,6 +13,8 @@ const EXPECTED_TABLES: &[&str] = &[
     "attempts",
     "commands",
     #[cfg(feature = "fixture-ipc")]
+    "fixture_osdeploy_origins",
+    #[cfg(feature = "fixture-ipc")]
     "fixture_pe_boot_sessions",
     "journal_events",
     "native_decisions",
