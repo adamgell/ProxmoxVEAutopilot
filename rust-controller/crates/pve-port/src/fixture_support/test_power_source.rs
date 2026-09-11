@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct TestPowerSample {
+pub struct TestPowerSample {
     pub version: u8,
     pub identity: FixtureStageIdentity,
     pub vmid: u32,
@@ -29,7 +29,7 @@ fn invalid() -> io::Error {
 /// synthetic supervisor input, not a production power adapter or DB capability.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct VersionedTestPowerSample {
+pub struct VersionedTestPowerSample {
     pub version: u8,
     pub sequence: u64,
     pub previous_sha256: Option<String>,

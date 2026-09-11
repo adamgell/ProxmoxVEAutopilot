@@ -15,6 +15,30 @@ fn unchanged(
 }
 
 impl Scheduler {
+    /// Join a supervisor request to the committed dispatch under current lease
+    /// and cancellation checks. Caller-supplied duplicate bytes are not evidence
+    /// that a request was committed in PostgreSQL.
+    pub async fn validate_fixture_stop_request(
+        &self,
+        grant: &LeaseGrant,
+        request: &pve_port::fixture_ipc::FixtureStageRequest,
+    ) -> Result<(), Error> {
+        if !self.fixture_credential_delivery {
+            return Err(Error::CapabilityUnavailable);
+        }
+        let mut tx = self.store.pool().begin().await?;
+        authority(self, &mut tx).await?;
+        let snapshot = locked_execution(&mut tx, grant.operation_id()).await?;
+        wire::require(
+            snapshot.plan().stage() == OsDeployStage::PeEnsureStopped && !snapshot.cancelled(),
+        )?;
+        current_grant(&mut tx, self, grant, &snapshot).await?;
+        let dispatch = snapshot.dispatch().ok_or(Error::CapabilityUnavailable)?;
+        wire::require(dispatch.request() == request.request())?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Revalidate ownership and cancellation after obtaining a scoped power
     /// sample, without replacing the preparation clock embedded in that sample.
     /// This is a point-in-time database check, not an admission or send permit.

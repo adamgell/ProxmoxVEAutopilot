@@ -999,6 +999,22 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                             .await
                             .unwrap();
                         let authority = replacement.fixture_stop_authority(&stop).await.unwrap();
+                        let wire_stop = pve_port::fixture_ipc::FixtureStageRequest::new(
+                            uuid::Uuid::now_v7(),
+                            request.clone(),
+                        )
+                        .unwrap();
+                        replacement
+                            .validate_fixture_stop_request(&stop, &wire_stop)
+                            .await
+                            .unwrap();
+                        assert!(
+                            s.db.scheduler()
+                                .with_fixture_credential_delivery()
+                                .validate_fixture_stop_request(&stop, &wire_stop)
+                                .await
+                                .is_err()
+                        );
                         assert_eq!(authority.grace_operation, grace.as_uuid());
                         assert_eq!(authority.evidence_fence, request.binding().evidence_fence());
                         assert_eq!(authority.grace_due_unix_ms, due.timestamp_millis() as u64);

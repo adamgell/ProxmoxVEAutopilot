@@ -13,6 +13,107 @@ use uuid::Uuid;
 pub enum CheckpointPoint {
     DispatchCommitted,
 }
+
+#[cfg(test)]
+mod stop_transport_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn sample() -> super::super::VersionedTestPowerSample {
+        use super::super::*;
+        let identity = FixtureStageIdentity {
+            operation: Uuid::now_v7(),
+            stage: FixtureLedgerStage::StartPe,
+            attempt: Uuid::now_v7(),
+            generation: Uuid::now_v7(),
+            owner: Uuid::now_v7(),
+            request_sha256: "a".repeat(64),
+        };
+        VersionedTestPowerSample {
+            version: 2,
+            sequence: 1,
+            previous_sha256: None,
+            stop: FixtureStageIdentity {
+                stage: FixtureLedgerStage::PeEnsureStopped,
+                operation: Uuid::now_v7(),
+                ..identity.clone()
+            },
+            authority: FixtureStopAuthorityV1 {
+                version: 1,
+                grace_operation: Uuid::now_v7(),
+                decision_event: Uuid::now_v7(),
+                evidence_fence: 1,
+                grace_due_unix_ms: 90,
+                decision_unix_ms: 95,
+                lease_checked_unix_ms: 99,
+                lease_expires_unix_ms: 6000,
+                original_deadline_unix_ms: 7000,
+            },
+            sample: TestPowerSample {
+                version: 1,
+                identity,
+                vmid: 109,
+                daemon_generation: Uuid::now_v7(),
+                observed_unix_ms: 100,
+                lease_expires_unix_ms: 6000,
+                power: SeedPower {
+                    power: crate::PowerState::Running,
+                    locked: false,
+                },
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_power_transport_binds_reply_and_refuses_missing_or_malformed_source() {
+        let directory = std::env::temp_dir().join(format!("stop-client-{}", Uuid::now_v7()));
+        fs::create_dir(&directory).unwrap();
+        let socket = directory.join("s");
+        let client =
+            FixtureCheckpointClient::new(socket.clone(), Duration::from_millis(100)).unwrap();
+        let sample = sample();
+        assert!(client.consume_versioned_stop_power(&sample).await.is_err());
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        for case in 0..7 {
+            let expected = sample.clone();
+            let serve = async {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let size = stream.read_u32().await.unwrap() as usize;
+                let mut bytes = vec![0; size];
+                stream.read_exact(&mut bytes).await.unwrap();
+                let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(request["command"], "consume_versioned_stop_current_power");
+                assert_eq!(request["sample"], serde_json::to_value(&expected).unwrap());
+                let mut reply = serde_json::json!({"ok":true,
+                    "source":"versioned_explicit_test_power", "sample":expected,
+                    "running_publication":{}});
+                match case {
+                    1 => reply["sample"]["sequence"] = 2.into(),
+                    2 => reply["ok"] = false.into(),
+                    3 => reply["source"] = "cached".into(),
+                    4 => reply["running_publication"] = serde_json::Value::Null,
+                    5 => {
+                        stream.write_u32(32_769).await.unwrap();
+                        return;
+                    }
+                    6 => {
+                        tokio::time::sleep(Duration::from_millis(150)).await;
+                        return;
+                    }
+                    _ => {}
+                }
+                let reply = serde_json::to_vec(&reply).unwrap();
+                stream.write_u32(reply.len() as u32).await.unwrap();
+                stream.write_all(&reply).await.unwrap();
+            };
+            let (result, ()) = tokio::join!(client.consume_versioned_stop_power(&sample), serve);
+            assert_eq!(result.is_ok(), case == 0);
+        }
+        drop(listener);
+        fs::remove_file(socket).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+}
 impl From<crate::FakeControllerCheckpoint> for CheckpointPoint {
     fn from(value: crate::FakeControllerCheckpoint) -> Self {
         match value {
@@ -279,6 +380,51 @@ pub struct FixtureCheckpointClient {
     timeout: Duration,
 }
 impl FixtureCheckpointClient {
+    /// Consume an already installed, independently sampled fixture power value.
+    /// This never installs a source, refreshes its clock, or releases a barrier.
+    pub async fn consume_versioned_stop_power(
+        &self,
+        sample: &super::VersionedTestPowerSample,
+    ) -> io::Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Reply {
+            ok: bool,
+            source: String,
+            sample: super::VersionedTestPowerSample,
+            running_publication: serde_json::Value,
+        }
+        tokio::time::timeout(self.timeout, async {
+            let mut stream = tokio::net::UnixStream::connect(&self.socket).await?;
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "command":"consume_versioned_stop_current_power", "sample":sample
+            }))?;
+            if payload.len() > 16_384 {
+                return Err(invalid());
+            }
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(&payload).await?;
+            let size = stream.read_u32().await? as usize;
+            if size == 0 || size > 32_768 {
+                return Err(invalid());
+            }
+            let mut bytes = vec![0; size];
+            stream.read_exact(&mut bytes).await?;
+            let reply: Reply = serde_json::from_slice(&bytes)?;
+            if !reply.ok
+                || reply.source != "versioned_explicit_test_power"
+                || serde_json::to_vec(&reply.sample)? != serde_json::to_vec(sample)?
+                || !reply.running_publication.is_object()
+            {
+                return Err(invalid());
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "stop power deadline"))?
+    }
+
     pub async fn stage_request(
         &self,
         request: super::StageCheckpointRequest,

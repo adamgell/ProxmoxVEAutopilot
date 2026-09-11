@@ -52,6 +52,7 @@ mod test_power_source;
 pub use post_dispatch_publication::{
     FixturePostDispatchPublication, FixtureSynchronousPublication,
 };
+pub use test_power_source::{TestPowerSample, VersionedTestPowerSample};
 mod read_client;
 mod task;
 pub use clone_mutation::{FixtureCloneSeed, FixtureMutationClient};

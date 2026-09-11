@@ -86,6 +86,83 @@ struct FixtureDeliveryConfig {
     sink: postgres_store::FixtureCredentialSink,
 }
 impl OsDeployController {
+    /// Prepare database authority, obtain independent fixture power, then
+    /// revalidate ownership/cancellation before supervisor stop admission.
+    /// The admitted barrier remains parked; this is never a stop-send permit.
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn admit_fixture_stop<F, Fut>(
+        &self,
+        grant: &LeaseGrant,
+        supervisor: &pve_port::fixture_support::FixtureCheckpointClient,
+        sample_after_preparation: F,
+    ) -> Result<(), Error>
+    where
+        F: FnOnce(pve_port::fixture_support::FixtureStopAuthorityV1) -> Fut,
+        Fut: Future<
+            Output = Result<
+                (
+                    pve_port::fixture_support::StageCheckpointRequest,
+                    pve_port::fixture_support::VersionedTestPowerSample,
+                ),
+                Error,
+            >,
+        >,
+    {
+        use pve_port::fixture_support::{CheckpointPhase, StageCheckpointRequest};
+        timeout_at(Instant::now() + COLLECTION_BOUND, async {
+            let prepared = self.scheduler.fixture_stop_authority(grant).await?;
+            let (request, sample) = sample_after_preparation(prepared.clone()).await?;
+            let StageCheckpointRequest::AdmitStop {
+                identity,
+                predecessor,
+                authority,
+                request: request_bytes,
+                committed_request,
+                ..
+            } = &request
+            else {
+                return Err(Error::Validation);
+            };
+            if identity.operation != grant.operation_id().as_uuid()
+                || identity.attempt != grant.attempt_id().as_uuid()
+                || request_bytes != committed_request
+                || authority != &prepared
+                || sample.authority != prepared
+                || sample.stop != *identity
+                || sample.sample.identity != *predecessor
+            {
+                return Err(Error::Validation);
+            }
+            let decoded = pve_port::fixture_ipc::FixtureStageRequest::decode(request_bytes)
+                .map_err(|_| Error::Validation)?;
+            let identity = identity.clone();
+            supervisor
+                .consume_versioned_stop_power(&sample)
+                .await
+                .map_err(|_| Error::CapabilityUnavailable)?;
+            self.scheduler
+                .revalidate_fixture_stop_authority(grant, &prepared)
+                .await?;
+            self.scheduler
+                .validate_fixture_stop_request(grant, &decoded)
+                .await?;
+            let reply = supervisor
+                .stage_request(request)
+                .await
+                .map_err(|_| Error::CapabilityUnavailable)?;
+            if !reply.ok
+                || reply.identity.as_ref() != Some(&identity)
+                || reply.generation != identity.generation
+                || reply.phase != CheckpointPhase::Entered
+            {
+                return Err(Error::Validation);
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| Error::TimedOut)?
+    }
+
     /// Explicitly opt into local fixture credential delivery. No signing key or
     /// private sink is inferred from environment variables or production config.
     #[cfg(feature = "fixture-ipc")]
