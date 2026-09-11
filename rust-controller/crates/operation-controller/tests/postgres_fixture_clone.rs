@@ -12,6 +12,19 @@ use osdeploy_execution_support::Scenario;
 use pve_port::{fixture_ipc::*, fixture_support::*, *};
 use sqlx::ConnectOptions;
 use std::{fs, os::unix::fs::PermissionsExt, sync::Arc, time::Duration};
+mod fixture_prefix_process;
+
+#[tokio::test]
+#[ignore = "owned prefix worker subprocess entry point"]
+async fn fixture_prefix_worker() {
+    fixture_prefix_process::run().await;
+}
+
+#[tokio::test]
+#[ignore = "owned prefix recovery subprocess entry point"]
+async fn fixture_prefix_recovery_worker() {
+    fixture_prefix_process::run_recovery().await;
+}
 
 fn retime_outcome(value: &mut serde_json::Value, at: u64) {
     use serde_json::{Value, json};
@@ -149,20 +162,34 @@ async fn publish_clone_outcome(
 /// Only the supervisor observes the committed request and releases its exact digest.
 #[tokio::test]
 async fn fresh_controller_late_clone_records_exact_durable_receipt() {
-    fresh_controller_clone(false, false).await;
+    fresh_controller_clone(false, false, None).await;
 }
 
 #[tokio::test]
 async fn fresh_controller_clone_reaches_satisfied_from_supervisor_publication() {
-    fresh_controller_clone(true, false).await;
+    fresh_controller_clone(true, false, None).await;
 }
 
 #[tokio::test]
 async fn fresh_controller_clone_then_disk_capacity_then_configure_pe_reaches_satisfied() {
-    fresh_controller_clone(true, true).await;
+    fresh_controller_clone(true, true, None).await;
 }
 
-async fn fresh_controller_clone(publish_outcome: bool, resize_after: bool) {
+#[tokio::test]
+async fn configure_worker_death_before_publication_preserves_prefix_and_uncertainty() {
+    fresh_controller_clone(true, true, Some(false)).await;
+}
+
+#[tokio::test]
+async fn configure_worker_death_after_publication_preserves_prefix_and_uncertainty() {
+    fresh_controller_clone(true, true, Some(true)).await;
+}
+
+async fn fresh_controller_clone(
+    publish_outcome: bool,
+    resize_after: bool,
+    crash_configure: Option<bool>,
+) {
     let s = Scenario::new(300, true).await;
     let operation = s.ids.operation(osdeploy_adapter::OsDeployStage::Clone);
     let fixture_id = controller_domain::RunId::new().as_uuid();
@@ -341,10 +368,12 @@ async fn fresh_controller_clone(publish_outcome: bool, resize_after: bool) {
         .unwrap(),
     );
     controller.open_send_admission().await.unwrap();
-    let worker = tokio::spawn({
-        let controller = controller.clone();
-        async move { controller.run_osdeploy_once(operation).await }
-    });
+    let worker = fixture_prefix_process::spawn(
+        &directory,
+        s.db.pool.connect_options().to_url_lossy().to_string(),
+        identity.clone(),
+        fixture_prefix_process::Setup::Clone(binding),
+    );
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     let entered = loop {
         let state = supervisor
@@ -520,10 +549,36 @@ async fn fresh_controller_clone(publish_outcome: bool, resize_after: bool) {
             &reads,
             &infrastructure,
             &source,
+            crash_configure,
         )
         .await;
     }
     daemon.join().unwrap();
+    if crash_configure.is_some() {
+        // The original daemon thread has terminated. Reopen its durable ledger
+        // in a fresh daemon and independently verify the full prefix survived.
+        fs::remove_file(directory.join("client.sock")).unwrap();
+        fs::remove_file(directory.join("supervisor.sock")).unwrap();
+        let daemon_path = directory.clone();
+        let recovered =
+            std::thread::spawn(move || run(&daemon_path, Duration::from_secs(2)).unwrap());
+        let restored_reader =
+            FixtureReadClient::new(directory.join("client.sock"), Duration::from_secs(1)).unwrap();
+        let status = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(status) = restored_reader.status().await {
+                    break status;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!((status.attempts, status.effects), (3, 3));
+        recovered.join().unwrap();
+        eprintln!("owned_prefix_recovery_ledger {}", directory.display());
+        return;
+    }
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -537,6 +592,7 @@ async fn fresh_resize_after_clone(
     reads: &FixtureProvisioningReadsV2,
     infrastructure: &FixtureCloneReads,
     source: &ProvisioningVmConfigV1,
+    crash_configure: Option<bool>,
 ) {
     use serde_json::json;
     let operation = s
@@ -582,10 +638,23 @@ async fn fresh_resize_after_clone(
         .unwrap(),
     );
     controller.open_send_admission().await.unwrap();
-    let worker = tokio::spawn({
-        let controller = controller.clone();
-        async move { controller.run_osdeploy_once(operation).await }
-    });
+    let worker = fixture_prefix_process::spawn(
+        directory,
+        s.db.pool.connect_options().to_url_lossy().to_string(),
+        FixtureReadIdentity {
+            fixture_id,
+            operation: operation.as_uuid(),
+            node: "node-a".into(),
+            source_vmid: 900,
+            target_vmid: 901,
+        },
+        fixture_prefix_process::Setup::Resize {
+            generation,
+            owner,
+            predecessor: predecessor.encode().unwrap(),
+            receipt: original_receipt.to_vec(),
+        },
+    );
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     let committed = loop {
         let operation = s.db.other.load_osdeploy_operation(operation).await.unwrap();
@@ -760,6 +829,7 @@ async fn fresh_resize_after_clone(
         &request,
         &receipt_bytes,
         &observation,
+        crash_configure,
     )
     .await;
 }
@@ -773,6 +843,7 @@ async fn fresh_configure_after_resize(
     predecessor: &FixtureStageRequest,
     original_receipt: &[u8],
     previous_observation: &serde_json::Value,
+    crash_configure: Option<bool>,
 ) {
     use serde_json::json;
     let operation = s
@@ -819,10 +890,24 @@ async fn fresh_configure_after_resize(
         .unwrap(),
     );
     controller.open_send_admission().await.unwrap();
-    let worker = tokio::spawn({
-        let controller = controller.clone();
-        async move { controller.run_osdeploy_once(operation).await }
-    });
+    let worker = fixture_prefix_process::spawn(
+        directory,
+        s.db.pool.connect_options().to_url_lossy().to_string(),
+        FixtureReadIdentity {
+            fixture_id,
+            operation: operation.as_uuid(),
+            node: "node-a".into(),
+            source_vmid: 900,
+            target_vmid: 901,
+        },
+        fixture_prefix_process::Setup::Configure {
+            generation,
+            owner,
+            predecessor_identity: predecessor_identity.clone(),
+            predecessor: predecessor.encode().unwrap(),
+            receipt: original_receipt.to_vec(),
+        },
+    );
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let committed = loop {
         let operation = s.db.other.load_osdeploy_operation(operation).await.unwrap();
@@ -979,8 +1064,59 @@ async fn fresh_configure_after_resize(
         &mut observation,
         chrono::Utc::now().timestamp_millis() as u64,
     );
-    let publication = exchange(&directory.join("supervisor.sock"), json!({"command":"publish_synchronous_stage","identity":identity,"request":serde_json::from_slice::<serde_json::Value>(&request.encode().unwrap()).unwrap(),"observation":observation})).await;
-    assert!(publication["daemon_generation"].is_string());
+    if crash_configure != Some(false) {
+        let publication = exchange(&directory.join("supervisor.sock"), json!({"command":"publish_synchronous_stage","identity":identity,"request":serde_json::from_slice::<serde_json::Value>(&request.encode().unwrap()).unwrap(),"observation":observation})).await;
+        assert!(publication["daemon_generation"].is_string());
+    }
+    if crash_configure.is_some() {
+        // The independent effect read and PostgreSQL lock wait establish the
+        // window. The killed process has no opportunity to persist its receipt.
+        assert!(
+            s.db.other
+                .load_osdeploy_operation(operation)
+                .await
+                .unwrap()
+                .receipt()
+                .is_none()
+        );
+        fs::write(
+            directory.join(format!("worker-{}.kill", operation.as_uuid())),
+            b"kill owned worker",
+        )
+        .unwrap();
+        assert!(worker.await.unwrap().is_err());
+        tx.rollback().await.unwrap();
+        let status = reader.status().await.unwrap();
+        assert_eq!((status.attempts, status.effects), (3, 3));
+        fixture_prefix_process::recover(
+            directory,
+            s.db.pool.connect_options().to_url_lossy().to_string(),
+            operation,
+        )
+        .await;
+        for stage in [
+            osdeploy_adapter::OsDeployStage::Clone,
+            osdeploy_adapter::OsDeployStage::DiskCapacity,
+        ] {
+            assert_eq!(
+                s.db.other
+                    .load_osdeploy_operation(s.ids.operation(stage))
+                    .await
+                    .unwrap()
+                    .state(),
+                controller_domain::ExecutionState::Satisfied
+            );
+        }
+        assert_eq!(
+            s.db.other
+                .load_osdeploy_operation(operation)
+                .await
+                .unwrap()
+                .state(),
+            controller_domain::ExecutionState::Unknown
+        );
+        return;
+    }
     tx.commit().await.unwrap();
     assert_eq!(
         worker.await.unwrap().unwrap(),
