@@ -64,6 +64,48 @@ impl MaterializedPePackageSemanticsV1 {
 }
 
 impl OsDeployRegistrationV1 {
+    /// Materializes the native fixture completion protocol definition together
+    /// with its registered package. This is an opt-in schema; existing v1
+    /// delivery digests remain unchanged. It does not accept a completion report.
+    #[cfg(feature = "fixture-ipc")]
+    pub fn materialize_fixture_completion_package(
+        &self,
+    ) -> Result<MaterializedPePackageSemanticsV1, OsDeployStoreError> {
+        let identity = self.pe_package_semantics()?;
+        let requirement = serde_json::json!({
+            "schema": "fixture_pe_completion_requirement_v1",
+            "package_semantic_sha256": identity.semantic_sha256(),
+            "completion_operation_id": self.ids.operation(OsDeployStage::PeComplete),
+            "milestones": [{
+                "id": "boot-files-staged.v1",
+                "required": true,
+                "result_schema": "fixture_boot_files_staged_result_v1",
+                "required_fields": ["image_applied", "boot_files_staged", "boot_files_verified"],
+                "field_type": "boolean",
+                "success": "all_required_fields_true",
+                "failure": "any_required_field_false",
+                "unknown_fields": "reject",
+                "missing_fields": "reject",
+            }],
+        });
+        let definition_sha256 = event_journal::payload_digest(&requirement)
+            .map_err(|_| OsDeployStoreError::Validation)?;
+        let envelope = serde_json::json!({
+            "schema": "materialized_fixture_pe_completion_package_v1",
+            "identity": identity,
+            "plan": self.plan,
+            "completion_requirement": requirement,
+            "completion_definition_sha256": definition_sha256,
+        });
+        Ok(MaterializedPePackageSemanticsV1 {
+            identity,
+            canonical_bytes: event_journal::canonical_json_bytes(&envelope)
+                .map_err(|_| OsDeployStoreError::Validation)?,
+            envelope_sha256: event_journal::payload_digest(&envelope)
+                .map_err(|_| OsDeployStoreError::Validation)?,
+        })
+    }
+
     /// Materializes immutable semantic bytes without accepting replacement fields.
     /// The complete admitted plan preserves VM, role, artifact and profile provenance.
     pub fn materialize_pe_package_semantics(
@@ -148,6 +190,74 @@ mod tests {
             stages: stage::plans(&plan).unwrap(),
             plan,
         }
+    }
+    #[cfg(feature = "fixture-ipc")]
+    #[test]
+    fn fixture_completion_definition_is_package_bound_and_explicit() {
+        let registered = registration();
+        let legacy = registered.materialize_pe_package_semantics().unwrap();
+        let package = registered.materialize_fixture_completion_package().unwrap();
+        assert_eq!(
+            package,
+            registered
+                .clone()
+                .materialize_fixture_completion_package()
+                .unwrap()
+        );
+        let value: serde_json::Value = serde_json::from_slice(package.canonical_bytes()).unwrap();
+        let requirement = &value["completion_requirement"];
+        assert_eq!(
+            value["schema"],
+            "materialized_fixture_pe_completion_package_v1"
+        );
+        assert_eq!(
+            requirement["package_semantic_sha256"],
+            package.identity().semantic_sha256()
+        );
+        assert_eq!(
+            requirement["completion_operation_id"],
+            serde_json::to_value(registered.ids.operation(OsDeployStage::PeComplete)).unwrap()
+        );
+        assert_eq!(
+            requirement["milestones"],
+            serde_json::json!([{
+                "id": "boot-files-staged.v1", "required": true,
+                "result_schema": "fixture_boot_files_staged_result_v1",
+                "required_fields": ["image_applied", "boot_files_staged", "boot_files_verified"],
+                "field_type": "boolean", "success": "all_required_fields_true",
+                "failure": "any_required_field_false", "unknown_fields": "reject", "missing_fields": "reject"
+            }])
+        );
+        assert_eq!(
+            value["completion_definition_sha256"],
+            event_journal::payload_digest(requirement).unwrap()
+        );
+        assert_eq!(
+            package.envelope_sha256(),
+            event_journal::payload_digest(&value).unwrap()
+        );
+        assert_ne!(package.envelope_sha256(), legacy.envelope_sha256());
+        assert_eq!(
+            legacy,
+            registered.materialize_pe_package_semantics().unwrap()
+        );
+        for stage in [OsDeployStage::StartPe, OsDeployStage::PeComplete] {
+            let mut changed = registered.clone();
+            changed.ids.operations[ordinal(stage)] = OperationId::new();
+            let changed = changed.materialize_fixture_completion_package().unwrap();
+            let changed: serde_json::Value =
+                serde_json::from_slice(changed.canonical_bytes()).unwrap();
+            assert_ne!(
+                value["completion_definition_sha256"],
+                changed["completion_definition_sha256"]
+            );
+        }
+        let mut changed = registered.clone();
+        changed.ids.workflow_sha256 = "0".repeat(64);
+        assert_eq!(
+            changed.materialize_fixture_completion_package(),
+            Err(OsDeployStoreError::Validation)
+        );
     }
     #[test]
     fn semantic_identity_binds_run_operation_and_complete_plan() {

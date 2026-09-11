@@ -383,6 +383,21 @@ specified by `next-durable-schema-proposal.md:49-51`; a grace-only placeholder
 would not close this prerequisite. This source audit enabled no accepting API
 and claims no new runtime tests.
 
+Subsequent source progress: the `fixture-ipc` feature now exposes explicit
+`materialize_fixture_completion_package()`. Its separate canonical package
+schema includes the registered plan/identity and a definition digest binding
+the package semantic identity, PeComplete operation, and stable
+`boot-files-staged.v1` milestone. The fixture result definition requires boolean
+`image_applied`, `boot_files_staged`, and `boot_files_verified`; all must be true,
+false reports failure, and absent or extra fields must be rejected. This defines
+reported fixture evidence, not independent verification of guest disk contents.
+Focused tests verify determinism, exact canonical digest, changed operation
+bindings, rejection of a changed unregistered plan fingerprint, and preservation
+of the existing materialization bytes. Delivery still uses its existing schema;
+adopting this explicit schema, validating reports, and the atomic grace
+transaction remain unimplemented. No callback acceptance is enabled by producing
+the package.
+
 - Complete sixteen-stage OSDeploy service execution, including callback, guest-agent, host-side QGA, media, firmware, disk-growth, and terminal/recovery behavior.
 - Independent-process restart, crash, restore, rollback, and response-loss behavior across the complete service workflow.
 - Compatibility with every retained Python/Ansible ingress and callback contract under a real dual-executor handoff.
