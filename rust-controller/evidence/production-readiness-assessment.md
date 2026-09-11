@@ -46,6 +46,7 @@ Production and `192.168.2.4`: read-only throughout
 - Commit `0f9e1180` integrates exact v2 anchor comparison into the opt-in diagnostic probe while retaining witness-unavailable/expired refusal. The durable-row/schema runtime test is still ignored; no session, dispatch, satisfaction, or production readiness is claimed.
 - Commit `d5602ab4` defines typed fail-closed PeRegister witness binding and refusal semantics. It does not provide an authenticated verifier, HTTP policy, persistence, dispatch, crash proof, or production readiness.
 - Commit `47d13f24` adds pure authority/fence descriptor checks with refusal-only outcomes. It does not provide authenticated witness handling, store-derived fencing, persistence, API routes, dispatch, crash proof, or production readiness.
+- Commit `c204c6c0` adds a refusal-only result transaction contract with Docker-free fence/conflict/expiry tests. It does not execute SQL rollback/CAS, authenticate replay, recover commit-to-response crashes, dispatch, or establish production readiness.
 
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
 - Commit `7f556bfd` records a newer exact-source Linux/amd64 image for `6f582095` with all Dockerfile runtime gates and 254 verified source blobs. The owned fixture run did not start because image inspection timed out and Docker later stalled; no fixture runtime qualification is claimed.
