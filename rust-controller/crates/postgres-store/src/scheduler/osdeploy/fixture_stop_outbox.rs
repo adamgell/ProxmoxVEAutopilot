@@ -60,7 +60,7 @@ impl Scheduler {
         wire::require(sequence > 0)?;
         validate_consumed_proposal(consumed, proposal)?;
         let mut tx = self.store.pool().begin().await?;
-        let row = sqlx::query("SELECT attempt_id,lease_token,generation,provenance_sha256,supervisor_generation FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
+        let row = sqlx::query("SELECT attempt_id,lease_token,generation,request_sha256,provenance_sha256,supervisor_generation FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
             .bind(consumed.operation_id)
             .fetch_one(&mut *tx)
             .await?;
@@ -68,6 +68,8 @@ impl Scheduler {
             row.try_get::<Uuid, _>("attempt_id")? == consumed.attempt_id
                 && row.try_get::<Uuid, _>("lease_token")? == consumed.lease_token
                 && row.try_get::<i64, _>("generation")? == consumed.generation
+                && required_request_sha256(row.try_get("request_sha256")?)?
+                    == consumed.request_sha256
                 && row
                     .try_get::<Option<String>, _>("provenance_sha256")?
                     .as_deref()
