@@ -12,7 +12,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `4f8bd980`: this branch and PR #65 contain an accumulated
+Current scope at `eb917e71`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -83,7 +83,12 @@ Commit `4f8bd980` adds the durable fixture-IPC typed stop envelope, exact
 StartPe physical-predecessor binding, qmstop-only receipt validation, and
 restart/refusal proofs with zero attempts/effects. Supervisor release and
 generic mutation submission remain closed, so the external fixture ledger still
-lacks independently recoverable stop acceptance and process-death proof. The generic callback
+lacks independently recoverable stop acceptance. Commit `eb917e71` adds the
+independent-process refusal proof: a killed/reaped stop worker, including after
+daemon restart, cannot release or submit and leaves zero attempts/effects;
+stale owner/generation is rejected. This is refusal evidence only. Durable stop
+admission, stop receipt/power publication, restoration/fencing, and controller
+dispatch/recovery after an accepted stop remain open. The generic callback
 mapping table below remains intentionally pending for legacy action/result
 surfaces. This fixture-only slice is not full callback compatibility or the
 entire port.
