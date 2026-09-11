@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `3c59f835`: this branch and PR #65 contain an accumulated
+Current scope at `0c76f5f2`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -44,6 +44,12 @@ The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
 identity/digests and classifies transport loss as ambiguous; it does not connect
 physical stop dispatch or authorize a production release.
+
+At `0c76f5f2`, three serial fixture registration integration tests also pass.
+They pin fail-closed rejection for substituted VM UUID/MAC/agent identity,
+wrong signing secret, expired signed bearer, competing selection, replay,
+rollback, reclaim, and original-deadline behavior. The expired-bearer case is
+not treated as an isolated expiry proof because it also uses an unknown alias.
 
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
