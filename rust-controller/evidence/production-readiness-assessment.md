@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `3e49604c`: this branch and PR #65 contain an accumulated
+Current scope at `b89e6e43`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -48,6 +48,13 @@ The post-build memory guard measured about 11.32 GiB available versus 12 GiB,
 so the owned PostgreSQL runtime lane was refused and the launcher was not
 retargeted. This is a current-source build pass and explicit runtime gate, not
 Linux runtime qualification.
+
+Commit `b89e6e43` adds an explicit supervisor-only fixture test power source:
+one immutable Running/Stopped sample per StartPe identity, bound to receipt,
+VM, daemon generation, expiry, and observation clock. Eight focused tests cover
+install, consume, publication, reload, and stale/worker-origin/torn/conflicting
+sample refusal. This source is test-only and does not replace PostgreSQL lease
+authority or prove current EnsureStopped ownership.
 
 At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires
