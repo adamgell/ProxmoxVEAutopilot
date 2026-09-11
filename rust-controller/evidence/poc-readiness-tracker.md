@@ -28,9 +28,20 @@ still open. Authenticated callbacks, PeRegister, production legacy-run import,
 later workflow stages, and production-candidate acceptance remain incomplete.
 Historical milestone sections below describe their named revisions; statements
 that alias ownership was absent at those revisions do not describe current code.
-The current PR head is `4d483dbfdb86b5a81aa7b5e9fcbe05edfdb47016` (verified 2026-09-11). GitHub reports the
+The current PR head is `6c2091fe853a899ff6e709a21097b08c69f0fd99` (verified 2026-09-11). GitHub reports the
 duplicated Linux and macOS-arm64 checks as queued, with no completed
 qualification conclusion; no readiness claim is inferred from that snapshot.
+
+### Latest stop-release evidence binding (commit `6c2091fe`)
+
+`prepare_fixture_stop_release` now rebinds the consumed admission and sample
+digests to the immutable values persisted in the selected stop-outbox row. The
+path decodes the stored power sample and recomputes its canonical digest, then
+refuses substituted admission/sample values and malformed stored samples before
+preparing a release. Two focused fixture-outbox tests passed, including
+canonicalized stored JSON and explicit legacy-null request-digest refusal. This
+closes an evidence-substitution gap in release preparation; it does not create
+the authentic full StartPe-to-stop-outcome chain or authorize physical stop.
 
 ### Operation-scoped fixture resolution (commit `029555f1`)
 
