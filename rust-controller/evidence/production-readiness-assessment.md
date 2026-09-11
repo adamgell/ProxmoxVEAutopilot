@@ -116,6 +116,16 @@ broad all-feature workspace invocation is not a valid qualification result
 under concurrent subprocess load; the affected `fixture_post_dispatch` and
 `postgres_native` targets pass when rerun serially with one test thread.
 
+The immediate unreached gate is the supervisor-owned physical-stop continuation.
+`Scheduler::consume_fixture_stop_outbox` currently provides one-use exposure
+bookkeeping, while `StageCheckpointRequest::AuthorizeRelease` intentionally
+refuses `EnsureStopped`. The next implementation must consume a successful
+outbox marker, validate `FixtureStopReleaseProposalV1` against independently
+recomputed digests, then perform explicit supervisor release/submit ordering.
+It must persist an accepted `qmstop` receipt or an `Ambiguous` transport outcome;
+neither result is a stopped-power claim. No release/send path is currently
+connected, and production remains read-only.
+
 The follow-on fixture IPC contract `FixtureStopReleaseProposalV1` binds the
 operation, attempt, lease owner, generation, request/receipt/sample digests,
 and sealed provenance for a future supervisor release/send step. It requires
