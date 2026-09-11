@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `957ada1a`: this branch and PR #65 contain an accumulated
+Current scope at `127cd54c`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -74,6 +74,15 @@ branches for awaiting-reboot failures, required reboot success, skipped and
 explicit reboot states, and the inclusive retry boundary. Five callback-contract
 tests pass; no controller caller, database write, retry authority, or service
 recovery behavior is enabled by this classifier.
+
+At `127cd54c`, an exact-source Linux AMD64 frozen archive at `e0bb5f10` built
+successfully in 948.555 seconds (exit 0, clean child-group reap) with release
+compilation, all-feature test compilation, and focused Dockerfile test layers
+passing. The verified image is
+`sha256:76c55d9151bc43a71cd24a57d334257e872ecd6d9086b652c53099a3c8e50cb0`.
+Because two `api-compat` callback files changed after that archived source,
+this is not current-HEAD qualification; launcher repinning and full PostgreSQL
+runtime qualification remain open.
 
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
