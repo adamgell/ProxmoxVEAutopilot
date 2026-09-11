@@ -8,6 +8,8 @@ use sqlx::Row;
 
 mod decision;
 mod discovery;
+#[cfg(feature = "fixture-ipc")]
+mod fixture_credential;
 mod lifecycle;
 mod pve;
 mod receipt;

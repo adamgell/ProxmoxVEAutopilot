@@ -16,6 +16,8 @@ const EXPECTED_TABLES: &[&str] = &[
     "fixture_osdeploy_origins",
     #[cfg(feature = "fixture-ipc")]
     "fixture_pe_boot_sessions",
+    #[cfg(feature = "fixture-ipc")]
+    "fixture_pe_credential_aliases",
     "journal_events",
     "native_decisions",
     "native_dispatches",

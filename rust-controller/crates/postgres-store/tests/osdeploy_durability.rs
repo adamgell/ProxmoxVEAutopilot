@@ -7,6 +7,213 @@ mod osdeploy_support;
 
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
+async fn fixture_credential_aliases_replay_renew_rollback_and_reopen() {
+    use osdeploy_adapter::OsDeployStage;
+    use postgres_store::{ExecutorKind, OsDeployExecutionError, Scheduler};
+    use pve_port::ProvisioningEvaluationModeV1;
+    let s = osdeploy_execution_support::Scenario::fixture_owned().await;
+    for stage in [
+        OsDeployStage::Clone,
+        OsDeployStage::DiskCapacity,
+        OsDeployStage::ConfigurePe,
+    ] {
+        assert_eq!(
+            s.finish_stage(stage).await,
+            controller_domain::ExecutionState::Satisfied
+        );
+    }
+    let scheduler = s.db.scheduler().with_fixture_start_pe();
+    let op = s.ids.operation(OsDeployStage::StartPe);
+    let grant = scheduler
+        .claim_osdeploy_bound(op, s.ids.workflow_sha256(), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    scheduler
+        .start_osdeploy_bound(&grant, s.ids.workflow_sha256())
+        .await
+        .unwrap();
+    let expiry = chrono::Utc::now().timestamp() + 600;
+    let secret = b"fixture-only-test-signing-secret";
+    // Registration alone has no session and cannot yield a credential.
+    assert!(
+        scheduler
+            .issue_fixture_pe_credential(&grant, expiry, secret)
+            .await
+            .is_err()
+    );
+    let snapshot = s.db.store.load_osdeploy_operation(op).await.unwrap();
+    let context =
+        s.db.store
+            .load_osdeploy_pve_context(
+                op,
+                snapshot.revision(),
+                ProvisioningEvaluationModeV1::Preflight,
+            )
+            .await
+            .unwrap();
+    let evidence = s.collect(&context).await;
+    let event =
+        s.db.store
+            .record_osdeploy_pve_evidence(op, grant.attempt_id(), snapshot.revision(), &evidence)
+            .await
+            .unwrap();
+    let revision =
+        s.db.store
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .revision();
+    let request =
+        s.db.store
+            .prepare_osdeploy_pve_request(op, revision, event)
+            .await
+            .unwrap();
+    let _dispatch = scheduler
+        .begin_osdeploy_pve_dispatch(&grant, revision, event, &request)
+        .await
+        .unwrap();
+    let original: (uuid::Uuid, String, chrono::DateTime<chrono::Utc>) = sqlx::query_as("SELECT attempt_id,package_sha256,registration_deadline FROM rust_controller.fixture_pe_boot_sessions WHERE operation_id=$1").bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    // An AFTER INSERT failure proves the alias write and returned credential
+    // cannot escape a rolled back transaction.
+    sqlx::raw_sql("CREATE FUNCTION rust_controller.reject_fixture_alias() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected alias failure'; END $$; CREATE TRIGGER reject_fixture_alias AFTER INSERT ON rust_controller.fixture_pe_credential_aliases FOR EACH ROW EXECUTE FUNCTION rust_controller.reject_fixture_alias();").execute(&s.db.pool).await.unwrap();
+    assert!(
+        scheduler
+            .issue_fixture_pe_credential(&grant, expiry, secret)
+            .await
+            .is_err()
+    );
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rust_controller.fixture_pe_credential_aliases")
+            .fetch_one(&s.db.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+    sqlx::raw_sql("DROP TRIGGER reject_fixture_alias ON rust_controller.fixture_pe_credential_aliases; DROP FUNCTION rust_controller.reject_fixture_alias();").execute(&s.db.pool).await.unwrap();
+    let (a, b) = tokio::join!(
+        scheduler.issue_fixture_pe_credential(&grant, expiry, secret),
+        scheduler.issue_fixture_pe_credential(&grant, expiry, secret)
+    );
+    let a = a.unwrap();
+    let b = b.unwrap();
+    assert_eq!(a.expose_for_delivery(), b.expose_for_delivery());
+    assert!(!format!("{a:?}").contains(a.expose_for_delivery()));
+    let reopened = Scheduler::new(s.db.other.clone(), ExecutorKind::Rust, 1, "osdeploy-worker")
+        .unwrap()
+        .with_fixture_start_pe();
+    let replay = reopened
+        .issue_fixture_pe_credential(&grant, expiry, secret)
+        .await
+        .unwrap();
+    assert_eq!(a.expose_for_delivery(), replay.expose_for_delivery());
+    let renewal = reopened
+        .issue_fixture_pe_credential(&grant, expiry + 60, secret)
+        .await
+        .unwrap();
+    assert_ne!(a.expose_for_delivery(), renewal.expose_for_delivery());
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rust_controller.fixture_pe_credential_aliases")
+            .fetch_one(&s.db.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 2);
+    let retained: (uuid::Uuid, String, chrono::DateTime<chrono::Utc>) = sqlx::query_as("SELECT attempt_id,package_sha256,registration_deadline FROM rust_controller.fixture_pe_boot_sessions WHERE operation_id=$1").bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(retained, original);
+    assert!(
+        s.db.scheduler()
+            .issue_fixture_pe_credential(&grant, expiry, secret)
+            .await
+            .is_err()
+    );
+    let stale = Scheduler::new(s.db.other.clone(), ExecutorKind::Rust, 2, "osdeploy-worker")
+        .unwrap()
+        .with_fixture_start_pe();
+    assert!(matches!(
+        stale
+            .issue_fixture_pe_credential(&grant, expiry, secret)
+            .await,
+        Err(OsDeployExecutionError::FenceLost)
+    ));
+    assert!(
+        reopened
+            .issue_fixture_pe_credential(&grant, 1, secret)
+            .await
+            .is_err()
+    );
+    assert!(
+        reopened
+            .issue_fixture_pe_credential(&grant, expiry, b"")
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("DELETE FROM rust_controller.fixture_pe_credential_aliases")
+            .execute(&s.db.pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query(
+            "UPDATE rust_controller.fixture_pe_credential_aliases SET expires_at=expires_at+1"
+        )
+        .execute(&s.db.pool)
+        .await
+        .is_err()
+    );
+    assert!(
+        sqlx::query("TRUNCATE rust_controller.fixture_pe_credential_aliases")
+            .execute(&s.db.pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("DELETE FROM rust_controller.fixture_pe_boot_sessions WHERE operation_id=$1")
+            .bind(op.as_uuid())
+            .execute(&s.db.pool)
+            .await
+            .is_err()
+    );
+    // Adversarial historical-owner fixture: occupy a future credential digest
+    // with another existing operation/attempt. This is SQL test setup only;
+    // the scheduler has no API that can create this substituted boot session.
+    let other = s.ids.operation(OsDeployStage::ConfigurePe);
+    sqlx::query("INSERT INTO rust_controller.fixture_pe_boot_sessions(operation_id,run_id,attempt_id,dispatch_event_id,package_sha256,package_canonical_bytes,original_generation,worker_id,lease_acquisition_event_id,opened_at,registration_deadline) SELECT d.operation_id,d.run_id,d.attempt_id,d.dispatch_event_id,s.package_sha256,s.package_canonical_bytes,d.original_generation,s.worker_id,d.lease_acquisition_event_id,s.opened_at,s.registration_deadline FROM rust_controller.osdeploy_pve_dispatches d CROSS JOIN rust_controller.fixture_pe_boot_sessions s WHERE d.operation_id=$1 AND s.operation_id=$2")
+        .bind(other.as_uuid()).bind(op.as_uuid()).execute(&s.db.pool).await.unwrap();
+    let collision = api_compat::run_bearer::issue_run_bearer(
+        api_compat::run_bearer::RunBearerIdentity::Text(&s.ids.run_id().as_uuid().to_string()),
+        expiry + 120,
+        secret,
+    )
+    .unwrap();
+    sqlx::query("INSERT INTO rust_controller.fixture_pe_credential_aliases(alias_sha256,operation_id,run_id,attempt_id,package_sha256,expires_at,created_at) SELECT $1,operation_id,run_id,attempt_id,package_sha256,$2,clock_timestamp() FROM rust_controller.fixture_pe_boot_sessions WHERE operation_id=$3")
+        .bind(collision.metadata().alias_sha256().as_slice()).bind(expiry + 120).bind(other.as_uuid()).execute(&s.db.pool).await.unwrap();
+    assert!(matches!(
+        reopened
+            .issue_fixture_pe_credential(&grant, expiry + 120, secret)
+            .await,
+        Err(OsDeployExecutionError::Conflict)
+    ));
+    let owner: uuid::Uuid = sqlx::query_scalar("SELECT operation_id FROM rust_controller.fixture_pe_credential_aliases WHERE alias_sha256=$1").bind(collision.metadata().alias_sha256().as_slice()).fetch_one(&s.db.pool).await.unwrap();
+    assert_eq!(owner, other.as_uuid());
+    scheduler.cancel_osdeploy_run(s.ids.run_id()).await.unwrap();
+    assert!(
+        reopened
+            .issue_fixture_pe_credential(&grant, expiry, secret)
+            .await
+            .is_err()
+    );
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rust_controller.fixture_pe_credential_aliases WHERE operation_id=$1",
+    )
+    .bind(op.as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 2);
+}
+
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
 async fn fixture_create_origin_is_atomic_typed_immutable_and_replayable() {
     use postgres_store::OsDeployStoreError;
     let f = osdeploy_support::Fixture::new().await;
@@ -227,6 +434,18 @@ async fn fixture_start_pe_atomic_arming_rollback_race_and_reload() {
     );
     assert_ne!(a.is_ok(), b.is_ok());
     let (permit, capture) = a.or(b).unwrap();
+    // A caller-selected run ID has no trusted fixture origin, even when its
+    // boot-arming record is valid.
+    assert!(matches!(
+        scheduler
+            .issue_fixture_pe_credential(
+                &grant,
+                chrono::Utc::now().timestamp() + 600,
+                b"fixture-only"
+            )
+            .await,
+        Err(OsDeployExecutionError::Validation)
+    ));
     let original = s.db.other.load_osdeploy_operation(op).await.unwrap();
     let session: (uuid::Uuid,uuid::Uuid,chrono::DateTime<chrono::Utc>,String) = sqlx::query_as("SELECT attempt_id,dispatch_event_id,registration_deadline,package_sha256 FROM rust_controller.fixture_pe_boot_sessions WHERE operation_id=$1").bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
     assert_eq!(session.0, grant.attempt_id().as_uuid());

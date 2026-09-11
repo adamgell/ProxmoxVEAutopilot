@@ -209,6 +209,18 @@ impl Scenario {
         Self::with_freshness(mutation_seconds, grow, mutation_seconds.min(30)).await
     }
     pub async fn with_freshness(mutation_seconds: u32, grow: bool, freshness_seconds: u32) -> Self {
+        Self::with_origin(mutation_seconds, grow, freshness_seconds, false).await
+    }
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn fixture_owned() -> Self {
+        Self::with_origin(300, true, 30, true).await
+    }
+    async fn with_origin(
+        mutation_seconds: u32,
+        grow: bool,
+        freshness_seconds: u32,
+        fixture_origin: bool,
+    ) -> Self {
         let db = osdeploy_support::Fixture::new().await;
         let node = NodeName::parse("node-a").unwrap();
         let source = ProvisioningVmConfigV1::from_wire(
@@ -276,11 +288,32 @@ impl Scenario {
                 .unwrap(),
             );
         }
-        let ids = db
-            .store
-            .enqueue_osdeploy(controller_domain::RunId::new(), &plan)
-            .await
-            .unwrap();
+        #[cfg(feature = "fixture-ipc")]
+        let owned = if fixture_origin {
+            Some(
+                db.store
+                    .create_fixture_osdeploy(uuid::Uuid::now_v7(), &plan)
+                    .await
+                    .unwrap()
+                    .ids()
+                    .clone(),
+            )
+        } else {
+            None
+        };
+        #[cfg(not(feature = "fixture-ipc"))]
+        let owned = {
+            assert!(!fixture_origin);
+            None
+        };
+        let ids = if let Some(ids) = owned {
+            ids
+        } else {
+            db.store
+                .enqueue_osdeploy(controller_domain::RunId::new(), &plan)
+                .await
+                .unwrap()
+        };
         Self { db, ids, fake }
     }
     pub async fn started(

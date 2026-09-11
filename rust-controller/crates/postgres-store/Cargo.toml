@@ -7,13 +7,14 @@ license.workspace = true
 publish = false
 
 [features]
-fixture-ipc = ["pve-port/fixture-ipc"]
+fixture-ipc = ["pve-port/fixture-ipc", "dep:api-compat"]
 
 [[test]]
 name = "postgres"
 path = "tests/postgres.rs"
 
 [dependencies]
+api-compat = { path = "../api-compat", optional = true }
 chrono.workspace = true
 controller-domain = { path = "../controller-domain" }
 event-journal = { path = "../event-journal" }
