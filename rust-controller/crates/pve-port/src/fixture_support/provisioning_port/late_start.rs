@@ -22,6 +22,34 @@ struct Bound {
     receipt: Option<Vec<u8>>,
 }
 impl FixtureProvisioningPort {
+    /// Restore the original StartPe receipt for observation only. Structural
+    /// receipt matching does not prove acceptance; every read asks the daemon
+    /// to validate its durable accepted effect and exact full publication.
+    /// Restoration consumes this adapter's send/checkpoint state permanently.
+    pub fn with_late_start_receipt(
+        self,
+        request: &ProvisioningMutationRequestV1,
+        receipt: Vec<u8>,
+    ) -> io::Result<Self> {
+        let invalid =
+            || io::Error::new(io::ErrorKind::InvalidInput, "StartPe restoration rejected");
+        let context = self.late_start.as_ref().ok_or_else(invalid)?;
+        let mut bound = context.bind(request).map_err(|_| invalid())?;
+        bound
+            .request
+            .decode_receipt(&receipt)
+            .map_err(|_| invalid())?;
+        bound.submitted = true;
+        bound.receipt = Some(receipt);
+        let mut state = context.state.lock().unwrap();
+        if state.is_some() {
+            return Err(invalid());
+        }
+        *state = Some(bound);
+        drop(state);
+        Ok(self)
+    }
+
     /// Bind the original ConfigurePe request; the daemon independently proves
     /// its acceptance and power authorization. This does not authorize sending.
     pub fn with_late_start_after_configure(

@@ -1050,6 +1050,66 @@ async fn full_start_pe_case(process_death: bool) {
                     serde_json::to_value(publication).unwrap(),
                     full_publication.clone().unwrap()
                 );
+                use pve_port::fixture_ipc::ControllerFixturePort;
+                let fresh = || {
+                    start_adapter(client.clone(), &identity, &start)
+                        .with_late_start_after_configure(
+                            FixtureCheckpointClient::new(client.clone(), Duration::from_secs(2))
+                                .unwrap(),
+                            generation,
+                            identity.owner,
+                            accepted[2].0.clone(),
+                            accepted[2].1.clone(),
+                        )
+                        .unwrap()
+                };
+                assert!(
+                    fresh()
+                        .with_late_start_receipt(start.request(), b"{}".to_vec())
+                        .is_err()
+                );
+                assert!(
+                    fresh()
+                        .with_late_start_receipt(accepted[2].1.request(), original.clone())
+                        .is_err()
+                );
+                // The accepted journal receipt is restored into a fresh adapter;
+                // no checkpoint or mutation supplies a replacement acceptance.
+                let ledger_before = fs::read(directory.join("fixture.log")).unwrap();
+                // Equal JSON claims do not substitute for the original durable
+                // response bytes. Structural restoration grants no observation.
+                let mut respelled = original.clone();
+                respelled.push(b' ');
+                let untrusted = fresh()
+                    .with_late_start_receipt(start.request(), respelled)
+                    .unwrap();
+                assert!(untrusted.validate_bound_start_pe().await.is_err());
+                let restored = fresh()
+                    .with_late_start_receipt(start.request(), original.clone())
+                    .unwrap();
+                assert_eq!(
+                    serde_json::to_value(
+                        restored.validate_bound_start_pe().await.unwrap().unwrap()
+                    )
+                    .unwrap(),
+                    full_publication.clone().unwrap()
+                );
+                assert!(
+                    restored
+                        .provisioning_checkpoint(start.request())
+                        .await
+                        .is_err()
+                );
+                assert!(restored.submit_provisioning(start.request()).await.is_err());
+                assert_eq!(
+                    fs::read(directory.join("fixture.log")).unwrap(),
+                    ledger_before
+                );
+                assert!(
+                    restored
+                        .with_late_start_receipt(start.request(), original.clone())
+                        .is_err()
+                );
             }
             if process_death {
                 let ledger = fs::read(directory.join("fixture.log")).unwrap();
