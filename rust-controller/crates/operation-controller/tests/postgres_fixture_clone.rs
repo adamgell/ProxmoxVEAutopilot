@@ -40,14 +40,32 @@ async fn fixture_start_response_reload_worker() {
         .await
         .unwrap();
     let store = postgres_store::PgStore::new(pool.clone());
+    let channel =
+        std::path::PathBuf::from(std::env::var_os("FIXTURE_START_RESPONSE_CHANNEL").unwrap());
+    let binding: CheckpointBinding =
+        serde_json::from_str(&std::env::var("FIXTURE_START_RESPONSE_BINDING").unwrap()).unwrap();
+    let client = FixtureCheckpointClient::new(channel.clone(), Duration::from_secs(2)).unwrap();
+    let route = client.shared_history_provenance(&binding).unwrap();
     let snapshot = store.load_osdeploy_operation(operation).await.unwrap();
     let stored = store
-        .load_fixture_start_pe_response(operation)
+        .load_fixture_start_pe_response_for_route(operation, &route)
         .await
         .unwrap()
         .unwrap();
     let bytes = stored.original_receipt();
-    fs::write(output, serde_json::to_vec(&serde_json::json!({"pid":std::process::id(),"revision":snapshot.revision(),"accepted_at":snapshot.receipt().unwrap().accepted_at(),"response":bytes})).unwrap()).unwrap();
+    let wrong_client = FixtureCheckpointClient::new(
+        channel.with_file_name("wrong-channel.sock"),
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    let wrong_route = wrong_client.shared_history_provenance(&binding).unwrap();
+    assert!(
+        store
+            .load_fixture_start_pe_response_for_route(operation, &wrong_route)
+            .await
+            .is_err()
+    );
+    fs::write(output, serde_json::to_vec(&serde_json::json!({"pid":std::process::id(),"revision":snapshot.revision(),"accepted_at":snapshot.receipt().unwrap().accepted_at(),"response":bytes,"route_sha256":route.sha256()})).unwrap()).unwrap();
 }
 
 fn retime_outcome(value: &mut serde_json::Value, at: u64) {
@@ -1671,6 +1689,20 @@ async fn capture_start_pe_after_genuine_prefix(
             serde_json::to_string(&op).unwrap(),
         )
         .env("FIXTURE_START_RESPONSE_OUTPUT", &output_path)
+        .env(
+            "FIXTURE_START_RESPONSE_CHANNEL",
+            directory.join("client.sock"),
+        )
+        .env(
+            "FIXTURE_START_RESPONSE_BINDING",
+            serde_json::to_string(&CheckpointBinding {
+                operation: op.as_uuid(),
+                generation,
+                owner,
+                point: CheckpointPoint::DispatchCommitted,
+            })
+            .unwrap(),
+        )
         .kill_on_drop(true)
         .output();
     let child = tokio::time::timeout(Duration::from_secs(10), child)
@@ -1681,6 +1713,10 @@ async fn capture_start_pe_after_genuine_prefix(
     let child_value: serde_json::Value =
         serde_json::from_slice(&fs::read(output_path).unwrap()).unwrap();
     assert_ne!(child_value["pid"], serde_json::json!(std::process::id()));
+    assert_eq!(
+        child_value["route_sha256"],
+        serde_json::json!(route.sha256())
+    );
     assert_eq!(child_value["revision"], serde_json::json!(first.revision()));
     assert_eq!(
         child_value["accepted_at"],
@@ -1693,6 +1729,41 @@ async fn capture_start_pe_after_genuine_prefix(
     assert_eq!(fs::read(directory.join("fixture.log")).unwrap(), ledger);
     assert!(port.submit_provisioning(&request).await.is_err());
     assert!(s.fake.recorded_provisioning_submissions().is_empty());
+    // Reconstruct the pre-0018 table shape only in this owned disposable DB.
+    // Keep the genuine IPC/SQL response; never fabricate a historical response.
+    sqlx::query(
+        "ALTER TABLE rust_controller.fixture_start_pe_responses DROP COLUMN provenance_sha256",
+    )
+    .execute(&s.db.pool)
+    .await
+    .unwrap();
+    s.db.store.migrate().await.unwrap();
+    s.db.store.migrate().await.unwrap(); // Idempotent upgrade, still no backfill.
+    let historical: Option<String> = sqlx::query_scalar("SELECT provenance_sha256 FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1")
+        .bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert!(historical.is_none());
+    assert!(
+        s.db.other
+            .load_fixture_start_pe_response_for_route(op, &route)
+            .await
+            .is_err()
+    );
+    assert!(
+        scheduler
+            .record_fixture_start_pe_receipt(&input)
+            .await
+            .is_err()
+    );
+    let unbound =
+        s.db.other
+            .load_fixture_start_pe_response(op)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(unbound.original_receipt(), original.original_receipt());
+    let unchanged = s.db.other.load_osdeploy_operation(op).await.unwrap();
+    assert_eq!(unchanged.receipt(), first.receipt());
+    assert_eq!(unchanged.revision(), first.revision());
 }
 
 /// Fresh controller admission must not convert an unseeded IPC world into
