@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `b615ab17`: this branch and PR #65 contain an accumulated
+Current scope at `9de893f2`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -86,7 +86,13 @@ power, StartPe predecessor, stop identity, authority, and original clock.
 Exact replay/reload preserves its digest and refusal responses carry no receipt.
 This is supervisor evidence, not a send capability; the durable PostgreSQL
 outbox, cancellation ordering, ambiguous-acknowledgement recovery, and physical
-stop execution remain open.
+stop execution remain open. Commit `9de893f2` adds the PostgreSQL fixture stop
+outbox reservation prerequisite: immutable receipt/sample selection and a
+single-consumption marker with guarded-grace, grant, request, cancellation,
+expiry, deadline, replay, owner, and orphan checks. Migration reapplication and
+immutability tests pass. The methods remain unconnected and yield no physical
+send capability; trusted supervisor-receipt integration, ambiguous-ack recovery,
+and accepted-stop runtime proof remain open.
 
 At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires
