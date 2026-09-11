@@ -108,9 +108,9 @@ impl OsDeployController {
         sample: &pve_port::fixture_support::VersionedTestPowerSample,
         receipt: &pve_port::fixture_support::FixtureStopAdmissionReceiptV1,
     ) -> Result<(), Error> {
-        self.require_fixture_shared_history(grant.operation_id())?;
+        let provenance = self.require_fixture_shared_history(grant.operation_id())?;
         self.scheduler
-            .select_fixture_stop_outbox(grant, request, sample, receipt)
+            .select_fixture_stop_outbox(grant, request, sample, receipt, &provenance.sha256())
             .await
             .map_err(Into::into)
     }
@@ -127,6 +127,21 @@ impl OsDeployController {
         self.require_fixture_shared_history(grant.operation_id())?;
         self.scheduler
             .consume_fixture_stop_outbox(grant, receipt)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Return the immutable consumed envelope after the one-use marker is
+    /// committed. This is bookkeeping only and grants no release authority.
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn consume_fixture_stop_outbox_envelope(
+        &self,
+        grant: &LeaseGrant,
+        receipt: &pve_port::fixture_support::FixtureStopAdmissionReceiptV1,
+    ) -> Result<Option<postgres_store::FixtureStopOutboxConsumedV1>, Error> {
+        self.require_fixture_shared_history(grant.operation_id())?;
+        self.scheduler
+            .consume_fixture_stop_outbox_envelope(grant, receipt)
             .await
             .map_err(Into::into)
     }

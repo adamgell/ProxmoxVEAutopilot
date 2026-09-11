@@ -18,6 +18,16 @@ length-delimited canonical encoding; it is never fabricated from admission or
 sample JSON. The focused proposal test proves stability for the same sealed
 identity and separation when the channel changes.
 
+The consumed-outbox prerequisite now persists that sealed digest on the
+selected outbox row. `select_fixture_stop_outbox` requires the canonical digest
+from the controller's verified shared-history bridge and rejects replay when
+the digest, lease token, generation, or selected evidence differs. The new
+`consume_fixture_stop_outbox_envelope` returns the exact operation, attempt,
+lease token, generation, admission digest, canonical sample digest, and sealed
+provenance digest only after the one-use consumption marker commits. The
+existing boolean method remains a compatibility wrapper; neither method grants
+release or submit authority.
+
 ## Durable outcome record
 
 Add migration `0016_fixture_stop_release_outcomes.sql` with an immutable,
