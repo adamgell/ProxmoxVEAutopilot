@@ -1,7 +1,11 @@
 //! Pure OSDeploy stage and validated input contract.
 
 mod guest_action;
+mod pe_register_authority;
 mod pe_register_callback;
+pub use pe_register_authority::{
+    PeRegisterAuthorityFenceV1, PeRegisterVerifierContractV1, PeRegisterVerifierRefusal,
+};
 pub use pe_register_callback::{
     PeRegisterCallbackCandidateV1, PeRegisterCallbackRefusal, PeRegisterRequestIdentityV1,
     PeRegisterResultIdentityV1,

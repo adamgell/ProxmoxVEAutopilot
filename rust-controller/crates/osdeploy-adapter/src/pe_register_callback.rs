@@ -12,6 +12,18 @@ pub struct PeRegisterRequestIdentityV1 {
     pub request_sha256: String,
     pub session_revision: u64,
 }
+impl PeRegisterRequestIdentityV1 {
+    pub(crate) fn validate(&self) -> Result<(), StartPeArmingError> {
+        if self.request_id.is_nil()
+            || self.session_revision == 0
+            || self.session_revision > i64::MAX as u64
+            || !hash(&self.request_sha256)
+        {
+            return Err(StartPeArmingError);
+        }
+        Ok(())
+    }
+}
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PeRegisterResultIdentityV1 {
@@ -50,6 +62,7 @@ impl PeRegisterCallbackCandidateV1 {
         result: PeRegisterResultIdentityV1,
     ) -> Result<Self, StartPeArmingError> {
         context.validate()?;
+        request.validate()?;
         if context.start_operation != anchor.start_operation()
             || request.request_id.is_nil()
             || result.result_id.is_nil()
