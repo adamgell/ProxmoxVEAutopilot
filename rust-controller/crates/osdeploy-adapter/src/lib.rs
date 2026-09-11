@@ -1,6 +1,11 @@
 //! Pure OSDeploy stage and validated input contract.
 
 mod guest_action;
+mod pe_complete_boundary;
+pub use pe_complete_boundary::{
+    PeCompleteRefusal, PeCompleteReportV1, PeCompleteScopeV1, PeCompleteStepStateV1,
+    PeRegisterPrerequisiteV1,
+};
 mod pe_register_authority;
 mod pe_register_callback;
 pub use pe_register_authority::{
