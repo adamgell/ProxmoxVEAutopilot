@@ -84,6 +84,14 @@ the Linux launcher), while the storage, budget, and process helper tests pass in
 the Linux run. A targeted sealed Linux execution with direct worker output is
 required before classifying the remaining failure or changing source.
 
+Commit `c9e1ca5a` adds a bounded recovery-only Linux lane for the two
+operation-controller worker-recovery tests. Its first sealed attempt was
+refused before container creation because Docker image inspection exceeded the
+three-second child deadline (`ValueError: child deadline`). This attempt is
+therefore an infrastructure/API-responsiveness blocker, not a recovery result;
+it must be retried with a fresh evidence directory after Docker responds within
+the existing bound.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.

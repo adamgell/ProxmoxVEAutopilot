@@ -87,6 +87,15 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   run of those tests with direct worker stdout/stderr capture; no source change
   or weakened assertion is justified until that evidence exists.
 
+- Commit `c9e1ca5a` adds a bounded `--mode recovery` lane selecting only the two
+  operation-controller worker-recovery tests, with a 300-second bound and the
+  existing owned-v1 safety gates. Its first sealed attempt in
+  `requalification-a0e36390-recovery-2/` was refused before container creation
+  because Docker image inspection exceeded the three-second child deadline
+  (`ValueError: child deadline`). This is an infrastructure/API responsiveness
+  blocker, not a recovery pass or source failure; retry requires a fresh
+  evidence directory after Docker responsiveness is restored.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)
