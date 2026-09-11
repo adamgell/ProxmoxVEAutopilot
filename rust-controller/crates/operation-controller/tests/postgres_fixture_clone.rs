@@ -1576,6 +1576,51 @@ async fn capture_start_pe_after_genuine_prefix(
     .unwrap();
     assert_eq!(count, 0);
     sqlx::raw_sql("DROP TRIGGER reject_original_fixture_response ON rust_controller.fixture_start_pe_responses; DROP FUNCTION rust_controller.reject_original_fixture_response();").execute(&s.db.pool).await.unwrap();
+    // Terminate only the identified PostgreSQL backend of this owned fixture's
+    // blocked original-response INSERT. This proves connection-loss rollback,
+    // not controller-process death (the closed capture remains in this process).
+    let mut write_hold = s.db.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(68123001)")
+        .execute(&mut *write_hold)
+        .await
+        .unwrap();
+    sqlx::raw_sql("CREATE FUNCTION rust_controller.hold_original_fixture_response() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(68123001); RETURN NEW; END $$; CREATE TRIGGER hold_original_fixture_response AFTER INSERT ON rust_controller.fixture_start_pe_responses FOR EACH ROW EXECUTE FUNCTION rust_controller.hold_original_fixture_response();").execute(&s.db.pool).await.unwrap();
+    let terminate_exact_backend = async {
+        let pid: i32 = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let pid: Option<i32> = sqlx::query_scalar("SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND usename=current_user AND wait_event='advisory' AND query LIKE 'INSERT INTO rust_controller.fixture_start_pe_responses%' AND pid<>pg_backend_pid()")
+                    .fetch_optional(&s.db.pool).await.unwrap();
+                if let Some(pid) = pid { break pid; }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.expect("original-response backend did not reach write barrier");
+        let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=$1 AND datname=current_database() AND usename=current_user AND wait_event='advisory' AND query LIKE 'INSERT INTO rust_controller.fixture_start_pe_responses%'")
+            .bind(pid).fetch_one(&s.db.pool).await.unwrap();
+        assert!(killed);
+    };
+    let (interrupted, ()) = tokio::join!(
+        scheduler.record_fixture_start_pe_receipt(&input),
+        terminate_exact_backend
+    );
+    assert!(interrupted.is_err());
+    write_hold.rollback().await.unwrap();
+    assert!(
+        s.db.other
+            .load_osdeploy_operation(op)
+            .await
+            .unwrap()
+            .receipt()
+            .is_none()
+    );
+    let retained: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1",
+    )
+    .bind(op.as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(retained, 0);
+    sqlx::raw_sql("DROP TRIGGER hold_original_fixture_response ON rust_controller.fixture_start_pe_responses; DROP FUNCTION rust_controller.hold_original_fixture_response();").execute(&s.db.pool).await.unwrap();
     let other = s.db.other_scheduler().with_fixture_start_pe();
     let (a, b) = tokio::join!(
         scheduler.record_fixture_start_pe_receipt(&input),
