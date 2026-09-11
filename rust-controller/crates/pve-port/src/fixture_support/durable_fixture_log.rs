@@ -20,6 +20,7 @@ pub enum FixtureLedgerStage {
     Clone,
     DiskCapacity,
     ConfigurePe,
+    StartPe,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

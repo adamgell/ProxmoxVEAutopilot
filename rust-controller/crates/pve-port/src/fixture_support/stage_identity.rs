@@ -37,6 +37,7 @@ impl FixtureStageIdentity {
             ProvisioningActionV1::Clone => FixtureLedgerStage::Clone,
             ProvisioningActionV1::EnsureCapacity => FixtureLedgerStage::DiskCapacity,
             ProvisioningActionV1::ConfigurePe => FixtureLedgerStage::ConfigurePe,
+            ProvisioningActionV1::StartPe => FixtureLedgerStage::StartPe,
             _ => return Err(invalid()),
         };
         if self.operation != request.request().binding().operation_id().as_uuid()

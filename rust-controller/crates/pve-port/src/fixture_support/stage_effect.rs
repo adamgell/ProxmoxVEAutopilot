@@ -232,6 +232,25 @@ pub(crate) fn submit(
             }
             None
         }
+        ProvisioningMutationRequestV1::Start(_)
+            if request.request().plan().action() == crate::ProvisioningActionV1::StartPe =>
+        {
+            let (prior_identity, prior) = predecessor.ok_or_else(invalid)?;
+            prior_identity.validate_request(prior)?;
+            let effect = log
+                .accepted_stage_effect(
+                    prior_identity.operation,
+                    &prior_identity.request_sha256,
+                    prior_identity.ledger_binding(),
+                )?
+                .ok_or_else(invalid)?;
+            request
+                .validate_start_pe_predecessor(prior, effect.receipt().ok_or_else(invalid)?)
+                .map_err(|_| invalid())?;
+            // Disk/PE flags cannot establish a durable running power transition.
+            // Preserve authorization and the existing world until that contract exists.
+            return Err(invalid());
+        }
         _ => return Err(invalid()),
     };
     consume()?;

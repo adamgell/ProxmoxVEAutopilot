@@ -1,5 +1,5 @@
-//! Message validation for the first three provisioning stages. This module
-//! grants no dispatch authority and is not connected to the fixture daemon.
+//! Message validation through StartPe. StartPe remains dispatch-gated until the
+//! fixture can durably represent and recover its physical power transition.
 use super::{InvalidFixtureClone, ReceiptWire, decode, encode};
 use crate::{MutationReceipt, ProvisioningActionV1, ProvisioningMutationRequestV1};
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ impl FixtureStageRequest {
         if fixture_id.is_nil()
             || !matches!(
                 request.plan().action(),
-                Clone | EnsureCapacity | ConfigurePe
+                Clone | EnsureCapacity | ConfigurePe | StartPe
             )
         {
             return Err(InvalidFixtureClone);
@@ -49,6 +49,39 @@ impl FixtureStageRequest {
     }
     pub fn request(&self) -> &ProvisioningMutationRequestV1 {
         &self.request
+    }
+    /// Validate the exact ConfigurePe predecessor carried by a StartPe request.
+    /// Receipt decoding is structural; the daemon must independently establish
+    /// durable acceptance before any future power transition can be authorized.
+    pub fn validate_start_pe_predecessor(
+        &self,
+        predecessor: &Self,
+        receipt: &[u8],
+    ) -> Result<(), InvalidFixtureClone> {
+        let ProvisioningMutationRequestV1::Start(start) = &self.request else {
+            return Err(InvalidFixtureClone);
+        };
+        let ProvisioningMutationRequestV1::Configure(configure) = predecessor.request() else {
+            return Err(InvalidFixtureClone);
+        };
+        if self.request.plan().action() != crate::ProvisioningActionV1::StartPe
+            || predecessor.request.plan().action() != crate::ProvisioningActionV1::ConfigurePe
+            || self.fixture_id != predecessor.fixture_id
+            || !predecessor
+                .request
+                .binding()
+                .same_operation_attempt(start.predecessor_binding())
+            || predecessor.request.plan() != start.predecessor_plan()
+            || !configure
+                .clone_binding()
+                .same_operation_attempt(start.clone_binding())
+            || predecessor.request.plan().expected() != self.request.plan().expected()
+            || predecessor.decode_receipt(receipt)?.receipt()
+                != &MutationReceipt::SynchronousAccepted
+        {
+            return Err(InvalidFixtureClone);
+        }
+        Ok(())
     }
     fn wire(&self) -> StageWire {
         StageWire {
@@ -83,11 +116,13 @@ impl FixtureStageRequest {
         let vm = self.request.plan().expected().vm();
         match (action, receipt) {
             (ConfigurePe, MutationReceipt::SynchronousAccepted) => Ok(()),
-            (Clone | EnsureCapacity, MutationReceipt::Task(upid)) => {
+            (Clone | EnsureCapacity | StartPe, MutationReceipt::Task(upid)) => {
                 let (kind, vmid) = if action == Clone {
                     ("qmclone", vm.source_vmid())
-                } else {
+                } else if action == EnsureCapacity {
                     ("resize", vm.target_vmid())
+                } else {
+                    ("qmstart", vm.target_vmid())
                 };
                 if upid.node() == vm.node()
                     && upid.worker_type() == kind

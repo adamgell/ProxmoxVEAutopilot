@@ -84,13 +84,13 @@ async fn stage_transport_rejects_without_attempts_or_effects_across_restart() {
 }
 
 #[test]
-fn first_three_stages_bind_exact_request_and_receipt_kind() {
+fn first_four_stage_contracts_bind_exact_request_and_receipt_kind() {
     let episodes = chain();
     let fixture = controller_domain::RunId::new().as_uuid();
     let mut receipts: Vec<Vec<u8>> = Vec::new();
     for (i, episode) in episodes.iter().enumerate() {
         let envelope = FixtureStageRequest::new(fixture, episode.request.clone());
-        if i > 2 {
+        if i > 3 {
             assert!(envelope.is_err());
             continue;
         }
@@ -108,7 +108,11 @@ fn first_three_stages_bind_exact_request_and_receipt_kind() {
                 Upid::parse("UPID:pve-test:00000001:00000001:00000001:resize:101:fake@pve:")
                     .unwrap(),
             ),
-            _ => MutationReceipt::SynchronousAccepted,
+            2 => MutationReceipt::SynchronousAccepted,
+            _ => MutationReceipt::Task(
+                Upid::parse("UPID:pve-test:00000001:00000001:00000001:qmstart:101:fake@pve:")
+                    .unwrap(),
+            ),
         };
         assert!(envelope.encode_receipt(0, receipt.clone()).is_err());
         let bytes = envelope.encode_receipt(1, receipt.clone()).unwrap();
@@ -140,7 +144,7 @@ fn first_three_stages_bind_exact_request_and_receipt_kind() {
             "UPID:pve-test:00000001:00000001:00000001:resize:900:fake@pve:",
             "UPID:other:00000001:00000001:00000001:resize:101:fake@pve:",
             "UPID:pve-test:00000001:00000001:00000001:resize:101:other@pve:",
-            "UPID:pve-test:00000001:00000001:00000001:qmstart:101:fake@pve:",
+            "UPID:pve-test:00000001:00000001:00000001:qmstop:101:fake@pve:",
         ] {
             assert!(
                 envelope
@@ -148,7 +152,7 @@ fn first_three_stages_bind_exact_request_and_receipt_kind() {
                     .is_err()
             );
         }
-        if i < 2 {
+        if i != 2 {
             assert!(
                 envelope
                     .encode_receipt(1, MutationReceipt::SynchronousAccepted)
@@ -156,5 +160,49 @@ fn first_three_stages_bind_exact_request_and_receipt_kind() {
             );
         }
         assert!(FixtureStageRequest::new(uuid::Uuid::nil(), episode.request.clone()).is_err());
+    }
+}
+
+#[test]
+fn start_pe_requires_exact_configure_predecessor_and_target_start_receipt() {
+    let episodes = chain();
+    let fixture = uuid::Uuid::now_v7();
+    let configure = FixtureStageRequest::new(fixture, episodes[2].request.clone()).unwrap();
+    let start = FixtureStageRequest::new(fixture, episodes[3].request.clone()).unwrap();
+    let receipt = configure
+        .encode_receipt(3, MutationReceipt::SynchronousAccepted)
+        .unwrap();
+    start
+        .validate_start_pe_predecessor(&configure, &receipt)
+        .unwrap();
+    let foreign =
+        FixtureStageRequest::new(uuid::Uuid::now_v7(), episodes[2].request.clone()).unwrap();
+    assert!(
+        start
+            .validate_start_pe_predecessor(&foreign, &receipt)
+            .is_err()
+    );
+    let resize = FixtureStageRequest::new(fixture, episodes[1].request.clone()).unwrap();
+    assert!(
+        start
+            .validate_start_pe_predecessor(&resize, &receipt)
+            .is_err()
+    );
+    let mut altered: serde_json::Value = serde_json::from_slice(&receipt).unwrap();
+    altered["request_sha256"] = serde_json::json!("f".repeat(64));
+    assert!(
+        start
+            .validate_start_pe_predecessor(&configure, &serde_json::to_vec(&altered).unwrap())
+            .is_err()
+    );
+    for upid in [
+        "UPID:pve-test:00000001:00000001:00000001:qmstart:900:fake@pve:",
+        "UPID:pve-test:00000001:00000001:00000001:resize:101:fake@pve:",
+    ] {
+        assert!(
+            start
+                .encode_receipt(4, MutationReceipt::Task(Upid::parse(upid).unwrap()))
+                .is_err()
+        );
     }
 }

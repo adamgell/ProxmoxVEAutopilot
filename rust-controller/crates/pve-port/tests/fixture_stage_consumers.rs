@@ -291,6 +291,89 @@ async fn durable_clone_resize_configure_requires_exact_accepted_predecessor() {
     let status = send(&client, serde_json::json!({"command":"status"})).await;
     assert_eq!(status["attempts"], 3);
     assert_eq!(status["effects"], 3);
+    // StartPe has an exact typed contract but cannot manufacture power state
+    // from the existing disk-capacity/PE-configured world representation.
+    let start = FixtureStageRequest::new(fixture, episodes[3].request.clone()).unwrap();
+    let start_identity = FixtureStageIdentity {
+        operation: start.request().binding().operation_id().as_uuid(),
+        stage: FixtureLedgerStage::StartPe,
+        attempt: start.request().binding().attempt_id().as_uuid(),
+        generation,
+        owner: Uuid::now_v7(),
+        request_sha256: start.request_sha256(),
+    };
+    start_identity.validate_request(&start).unwrap();
+    assert!(
+        checkpoint(
+            &supervisor,
+            StageCheckpointRequest::Arm {
+                identity: start_identity.clone(),
+                timeout_ms: 5000
+            }
+        )
+        .await
+        .ok
+    );
+    assert!(
+        checkpoint(
+            &client,
+            StageCheckpointRequest::Enter {
+                identity: start_identity.clone()
+            }
+        )
+        .await
+        .ok
+    );
+    assert!(
+        checkpoint(
+            &supervisor,
+            StageCheckpointRequest::AuthorizeRelease {
+                identity: start_identity.clone(),
+                request: start.encode().unwrap(),
+                committed_request: start.encode().unwrap(),
+                after: VmState {
+                    disk_bytes: 120 * provisioning_support::GIB,
+                    pe_configured: true
+                }
+            }
+        )
+        .await
+        .ok
+    );
+    let configure = FixtureStageRequest::new(fixture, episodes[2].request.clone()).unwrap();
+    let mutation = FixtureMutationClient::new(client.clone(), Duration::from_secs(1)).unwrap();
+    for _ in 0..2 {
+        assert!(
+            mutation
+                .stage_late_with_predecessor(
+                    start_identity.clone(),
+                    &start,
+                    &accepted[2].0,
+                    &configure
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            checkpoint(
+                &client,
+                StageCheckpointRequest::Poll {
+                    identity: start_identity.clone()
+                }
+            )
+            .await
+            .ok
+        );
+    }
+    let unchanged = send(&client, serde_json::json!({"command":"status"})).await;
+    assert_eq!(unchanged["attempts"], 3);
+    assert_eq!(unchanged["effects"], 3);
+    let absent = send(
+        &client,
+        serde_json::json!({"command":"accepted_stage_effect","identity":start_identity}),
+    )
+    .await;
+    assert!(absent["accepted_effect"].is_null());
     send(&supervisor, serde_json::json!({"command":"shutdown"})).await;
     daemon.join().unwrap();
 }
