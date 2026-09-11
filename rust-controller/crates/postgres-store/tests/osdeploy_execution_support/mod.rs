@@ -266,6 +266,9 @@ impl Scenario {
             v["template_config_sha256"] = json!(hash);
             v["policy"]["mutation_seconds"] = json!(mutation_seconds);
             v["policy"]["registration_seconds"] = json!(registration_seconds);
+            if completion_package {
+                v["policy"]["shutdown_grace_seconds"] = json!(30);
+            }
             v["policy"]["evidence_freshness_seconds"] = json!(freshness_seconds);
             v["disk"]["requested_gib"] = json!(if grow { 120 } else { 80 });
             v["disk"]["effective_bytes"] = json!(if grow {

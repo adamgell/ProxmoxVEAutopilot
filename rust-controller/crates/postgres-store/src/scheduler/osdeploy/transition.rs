@@ -507,19 +507,40 @@ impl OsDeployTransitionProof {
         if f.at < deadline {
             return Err(Error::FenceLost);
         }
-        // Real parked grace activation is a future callback contract. The
-        // current loader rejects it; never invent the stop-enabling reason.
-        if scope == wire::Scope::ShutdownGrace {
-            return Err(Error::Validation);
+        let grace = scope == wire::Scope::ShutdownGrace;
+        if grace {
+            #[cfg(feature = "fixture-ipc")]
+            {
+                if !s.fixture_credential_delivery {
+                    return Err(Error::CapabilityUnavailable);
+                }
+                // The elapsed timer proves only that the original grace ended.
+                // Its selected completion and parked attempt must survive reload;
+                // no worker lease or observation of a stopped VM is manufactured.
+                wire::require(
+                    !f.snapshot.cancelled()
+                        && f.snapshot.state() == ExecutionState::Waiting
+                        && f.snapshot.dispatch().is_none(),
+                )?;
+                let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.osdeploy_attempt_bindings b JOIN rust_controller.fixture_pe_completions c ON c.selected_event_id=$3 JOIN rust_controller.fixture_osdeploy_origins o ON o.run_id=b.run_id WHERE b.operation_id=$1 AND b.attempt_id=$2 AND b.activation_mode='parked' AND b.scope_key='shutdown_grace' AND b.deadline_at=$4 AND c.operation_id=$5 AND c.run_id=b.run_id AND c.succeeded AND o.completion_package AND NOT EXISTS(SELECT 1 FROM rust_controller.worker_leases l WHERE l.operation_id=b.operation_id))")
+                    .bind(op.as_uuid()).bind(attempt.as_uuid()).bind(anchor_event.as_uuid()).bind(deadline).bind(anchor.as_uuid()).fetch_one(&mut **tx).await?;
+                wire::require(valid)?;
+            }
+            #[cfg(not(feature = "fixture-ipc"))]
+            return Err(Error::CapabilityUnavailable);
         }
         let detail = wire::Detail::ActivatedScopeExpired(wire::ActivatedExpiry {
             scope_key: scope,
             anchor_operation_id: anchor,
             anchor_event_id: anchor_event,
             deadline_at: deadline,
-            pe_complete_operation_id: None,
-            pe_complete_decision_event_id: None,
-            reason: wire::Reason::PhaseDeadlineExpired,
+            pe_complete_operation_id: grace.then_some(anchor),
+            pe_complete_decision_event_id: grace.then_some(anchor_event),
+            reason: if grace {
+                wire::Reason::ShutdownGraceDeadlineExpired
+            } else {
+                wire::Reason::PhaseDeadlineExpired
+            },
         });
         Ok(Self::ActivatedScopeExpired(f.decision(
             detail,

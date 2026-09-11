@@ -51,6 +51,12 @@ async fn fixture_pecomplete_failed_report_never_opens_grace() {
     fixture_credential_delivery_reclaim_case(false, 6).await;
 }
 
+#[cfg(all(feature = "fixture-ipc", unix))]
+#[tokio::test]
+async fn fixture_grace_cancellation_before_due_prevents_elapsed_selection() {
+    fixture_credential_delivery_reclaim_case(false, 7).await;
+}
+
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
 async fn fixture_completion_package_origin_is_immutable_and_replayable() {
@@ -650,7 +656,7 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                     result: postgres_store::FixtureBootFilesStagedResult {
                         image_applied: true,
                         boot_files_staged: true,
-                        boot_files_verified: register == 5,
+                        boot_files_verified: register != 6,
                     },
                 };
                 let mut wrong = report.clone();
@@ -752,7 +758,7 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                 let (left, right) = (left.unwrap(), right.unwrap());
                 assert_ne!(left.replayed(), right.replayed());
                 assert_eq!(left.selected_event_id(), right.selected_event_id());
-                let expected = if register == 5 {
+                let expected = if register != 6 {
                     ExecutionState::Satisfied
                 } else {
                     ExecutionState::Failed
@@ -794,12 +800,9 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                     expected
                 );
                 let parked = s.db.other.load_osdeploy_operation(grace).await.unwrap();
-                if register == 5 {
+                if register != 6 {
                     assert_eq!(parked.state(), ExecutionState::Waiting);
-                    let due = selected_at
-                        + chrono::Duration::seconds(i64::from(
-                            osdeploy_support::plan().policy().shutdown_grace_seconds(),
-                        ));
+                    let due = selected_at + chrono::Duration::seconds(30);
                     assert_eq!(parked.deadline_at(), Some(due));
                     assert_eq!(parked.next_check_at(), Some(due));
                     let leases: i64 = sqlx::query_scalar(
@@ -827,6 +830,112 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                             .next_check_at(),
                         Some(due)
                     );
+                    let mut expiry = postgres_store::OsDeployExpiryCursor::default();
+                    let before = s.db.snapshot().await;
+                    assert_eq!(
+                        replacement
+                            .expire_osdeploy_scopes(&mut expiry)
+                            .await
+                            .unwrap()
+                            .changed(),
+                        0
+                    );
+                    assert_eq!(s.db.snapshot().await, before);
+                    if register == 7 {
+                        replacement
+                            .cancel_osdeploy_run(s.ids.run_id())
+                            .await
+                            .unwrap();
+                        s.wait_until(due).await;
+                        assert_eq!(
+                            replacement
+                                .expire_osdeploy_scopes(&mut expiry)
+                                .await
+                                .unwrap()
+                                .changed(),
+                            0
+                        );
+                        assert_eq!(
+                            s.db.other
+                                .load_osdeploy_operation(grace)
+                                .await
+                                .unwrap()
+                                .state(),
+                            ExecutionState::Blocked
+                        );
+                    } else {
+                        s.wait_until(due).await;
+                        let before = s.db.snapshot().await;
+                        let refused =
+                            s.db.scheduler()
+                                .expire_osdeploy_scopes(&mut expiry)
+                                .await
+                                .unwrap();
+                        assert_eq!(refused.changed(), 0);
+                        assert_eq!(refused.rejected(), 1);
+                        assert_eq!(s.db.snapshot().await, before);
+                        sqlx::raw_sql("CREATE FUNCTION rust_controller.reject_grace_expiry() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='activated_scope_expired' THEN RAISE EXCEPTION 'fixture rollback'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_grace_expiry BEFORE INSERT ON rust_controller.osdeploy_decisions FOR EACH ROW EXECUTE FUNCTION rust_controller.reject_grace_expiry();").execute(&s.db.pool).await.unwrap();
+                        let before = s.db.snapshot().await;
+                        assert!(
+                            replacement
+                                .expire_osdeploy_scopes(&mut expiry)
+                                .await
+                                .is_err()
+                        );
+                        assert_eq!(s.db.snapshot().await, before);
+                        sqlx::raw_sql("DROP TRIGGER reject_grace_expiry ON rust_controller.osdeploy_decisions; DROP FUNCTION rust_controller.reject_grace_expiry();").execute(&s.db.pool).await.unwrap();
+                        let contender = s.db.other_scheduler().with_fixture_credential_delivery();
+                        let mut other_cursor = postgres_store::OsDeployExpiryCursor::default();
+                        let (a, b) = tokio::join!(
+                            replacement.expire_osdeploy_scopes(&mut expiry),
+                            contender.expire_osdeploy_scopes(&mut other_cursor)
+                        );
+                        assert_eq!(a.unwrap().changed() + b.unwrap().changed(), 1);
+                        let elapsed = s.db.other.load_osdeploy_operation(grace).await.unwrap();
+                        assert_eq!(elapsed.state(), ExecutionState::Unknown);
+                        assert_eq!(elapsed.attempt_id(), parked.attempt_id());
+                        assert_eq!(elapsed.deadline_at(), Some(due));
+                        assert_eq!(elapsed.next_check_at(), None);
+                        let detail: serde_json::Value = sqlx::query_scalar("SELECT payload_canonical_json::jsonb->'detail' FROM rust_controller.osdeploy_decisions WHERE operation_id=$1 AND action='activated_scope_expired'").bind(grace.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+                        assert_eq!(detail["reason"], "shutdown_grace_deadline_expired");
+                        assert_eq!(
+                            detail["pe_complete_operation_id"],
+                            complete.as_uuid().to_string()
+                        );
+                        assert_eq!(
+                            detail["pe_complete_decision_event_id"],
+                            left.selected_event_id().as_uuid().to_string()
+                        );
+                        assert_eq!(
+                            replacement
+                                .expire_osdeploy_scopes(&mut expiry)
+                                .await
+                                .unwrap()
+                                .changed(),
+                            0
+                        );
+                        assert!(
+                            replacement
+                                .claim_osdeploy_bound(
+                                    s.ids.operation(OsDeployStage::PeEnsureStopped),
+                                    s.ids.workflow_sha256(),
+                                    1
+                                )
+                                .await
+                                .is_err()
+                        );
+                        let leases: i64 = sqlx::query_scalar("SELECT count(*) FROM rust_controller.worker_leases WHERE operation_id=$1").bind(grace.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+                        assert_eq!(leases, 0);
+                        s.db.store.migrate().await.unwrap();
+                        assert_eq!(
+                            s.db.other
+                                .load_osdeploy_operation(grace)
+                                .await
+                                .unwrap()
+                                .state(),
+                            ExecutionState::Unknown
+                        );
+                    }
                 } else {
                     assert_eq!(parked.state(), ExecutionState::Pending);
                     assert!(parked.attempt_id().is_none());
