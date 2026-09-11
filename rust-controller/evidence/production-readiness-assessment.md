@@ -98,6 +98,14 @@ owned PostgreSQL fixture returned `local_database_unavailable: local_process_tim
 The same session's read-only Docker API probe exceeded four seconds. This is
 retained as fixture admission failure and does not justify a Rust source change.
 
+After Docker responsiveness returned, the bounded recovery-only Linux lane was
+rerun successfully. The sealed evidence in
+`requalification-c9e1ca5a-recovery-3/` shows both
+`configure_worker_death_after_*` tests passing (2/2 in 84.01 seconds), with
+owned PostgreSQL, cgroup2 limits, and zero OOM events. This closes the targeted
+Linux recovery gate for the sealed source, but not the broader full Linux
+qualification or production-readiness gates.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.

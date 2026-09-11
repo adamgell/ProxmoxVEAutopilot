@@ -103,6 +103,15 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   `recovery-macos-docker-unavailable-20260911.md` and is classified as fixture
   admission failure, not a source recovery result.
 
+- The bounded recovery-only Linux lane from `c9e1ca5a` was rerun successfully
+  once Docker responsiveness returned. In
+  `requalification-c9e1ca5a-recovery-3/`, both
+  `configure_worker_death_after_*` tests passed (2/2, 84.01 seconds) with the
+  exact-source image, owned PostgreSQL, cgroup2 limits, and zero OOM events.
+  This closes the targeted Linux recovery lane for the sealed source. The
+  broader full lane remains incomplete and still requires separate
+  qualification evidence.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)

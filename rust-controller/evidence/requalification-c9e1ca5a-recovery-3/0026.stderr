@@ -1,0 +1,9 @@
+   Compiling pve-port v0.1.0 (/workspace/rust-controller/crates/pve-port)
+   Compiling osdeploy-adapter v0.1.0 (/workspace/rust-controller/crates/osdeploy-adapter)
+   Compiling postgres-store v0.1.0 (/workspace/rust-controller/crates/postgres-store)
+   Compiling scheduler v0.1.0 (/workspace/rust-controller/crates/scheduler)
+   Compiling operation-controller v0.1.0 (/workspace/rust-controller/crates/operation-controller)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 20.92s
+     Running tests/postgres_fixture_clone.rs (target/debug/deps/postgres_fixture_clone-7be94896a4dae465)
+owned_prefix_recovery_ledger /tmp/pglate-01a08f45-f0ed-7dc0-a07c-ce3a4b96a729
+owned_prefix_recovery_ledger /tmp/pglate-01a08f46-7f40-7153-94c5-440b5653ed95
