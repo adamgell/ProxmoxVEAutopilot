@@ -246,9 +246,15 @@ async fn configure_worker_death_after_publication_preserves_prefix_and_uncertain
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ConfigureCrash {
+    StartAtWrite,
     BeforePublication,
     AfterPublication,
     AfterReceipt,
+}
+
+#[tokio::test]
+async fn start_pe_controller_death_during_write_rolls_back_original_response() {
+    fresh_controller_clone(true, true, Some(ConfigureCrash::StartAtWrite)).await;
 }
 
 #[tokio::test]
@@ -388,7 +394,9 @@ async fn fresh_controller_clone(
     )
     .unwrap();
     let daemon_path = directory.clone();
-    let daemon_lifetime = if crash_configure == Some(ConfigureCrash::AfterReceipt) {
+    let daemon_lifetime = if crash_configure == Some(ConfigureCrash::StartAtWrite) {
+        15
+    } else if crash_configure == Some(ConfigureCrash::AfterReceipt) {
         45
     } else {
         10
@@ -642,7 +650,7 @@ async fn fresh_controller_clone(
         .await;
     }
     daemon.join().unwrap();
-    if crash_configure.is_some() {
+    if crash_configure.is_some_and(|c| c != ConfigureCrash::StartAtWrite) {
         // The original daemon thread has terminated. Reopen its durable ledger
         // in a fresh daemon and independently verify the full prefix survived.
         fs::remove_file(directory.join("client.sock")).unwrap();
@@ -1275,7 +1283,7 @@ async fn fresh_configure_after_resize(
         assert_eq!((final_status.attempts, final_status.effects), (3, 3));
         return;
     }
-    if crash_configure.is_some() {
+    if crash_configure.is_some_and(|c| c != ConfigureCrash::StartAtWrite) {
         // The independent effect read and PostgreSQL lock wait establish the
         // window. The killed process has no opportunity to persist its receipt.
         assert!(
@@ -1382,6 +1390,19 @@ async fn fresh_configure_after_resize(
         .close_and_drain(Duration::from_secs(1))
         .await
         .unwrap();
+    if crash_configure == Some(ConfigureCrash::StartAtWrite) {
+        start_pe_controller_death(
+            s,
+            directory,
+            fixture_id,
+            &identity,
+            &request,
+            &receipt_bytes,
+            &restored,
+        )
+        .await;
+        return;
+    }
     capture_start_pe_after_genuine_prefix(
         s,
         directory,
@@ -1392,6 +1413,173 @@ async fn fresh_configure_after_resize(
         &restored,
     )
     .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_pe_controller_death(
+    s: &Scenario,
+    directory: &std::path::Path,
+    fixture_id: sqlx::types::Uuid,
+    predecessor_identity: &FixtureStageIdentity,
+    predecessor: &FixtureStageRequest,
+    predecessor_receipt: &[u8],
+    observer: &FixtureProvisioningPort,
+) {
+    let op = s.ids.operation(osdeploy_adapter::OsDeployStage::StartPe);
+    let supervisor =
+        FixtureCheckpointClient::new(directory.join("supervisor.sock"), Duration::from_secs(2))
+            .unwrap();
+    let generation = supervisor
+        .stage_request(StageCheckpointRequest::Status)
+        .await
+        .unwrap()
+        .generation;
+    let owner = sqlx::types::Uuid::now_v7();
+    let mut hold = s.db.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(68123002)")
+        .execute(&mut *hold)
+        .await
+        .unwrap();
+    sqlx::raw_sql("CREATE FUNCTION rust_controller.hold_start_child_response() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(68123002); RETURN NEW; END $$; CREATE TRIGGER hold_start_child_response AFTER INSERT ON rust_controller.fixture_start_pe_responses FOR EACH ROW EXECUTE FUNCTION rust_controller.hold_start_child_response();").execute(&s.db.pool).await.unwrap();
+    let worker = fixture_prefix_process::spawn(
+        directory,
+        s.db.pool.connect_options().to_url_lossy().to_string(),
+        FixtureReadIdentity {
+            fixture_id,
+            operation: op.as_uuid(),
+            node: "node-a".into(),
+            source_vmid: 900,
+            target_vmid: 901,
+        },
+        fixture_prefix_process::Setup::Start {
+            generation,
+            owner,
+            predecessor_identity: predecessor_identity.clone(),
+            predecessor: predecessor.encode().unwrap(),
+            receipt: predecessor_receipt.to_vec(),
+        },
+    );
+    let committed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let snapshot = s.db.other.load_osdeploy_operation(op).await.unwrap();
+            if snapshot.dispatch().is_some() {
+                break snapshot;
+            }
+            assert!(
+                !worker.is_finished(),
+                "StartPe worker ended before dispatch"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("StartPe controller did not reach dispatch");
+    let request =
+        FixtureStageRequest::new(fixture_id, committed.dispatch().unwrap().request().clone())
+            .unwrap();
+    let identity = FixtureStageIdentity {
+        operation: op.as_uuid(),
+        stage: FixtureLedgerStage::StartPe,
+        attempt: committed.attempt_id().unwrap().as_uuid(),
+        generation,
+        owner,
+        request_sha256: request.request_sha256(),
+    };
+    assert!(
+        supervisor
+            .stage_request(StageCheckpointRequest::Arm {
+                identity: identity.clone(),
+                timeout_ms: 3000
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if supervisor
+                .stage_request(StageCheckpointRequest::Status)
+                .await
+                .unwrap()
+                .phase
+                == CheckpointPhase::Entered
+            {
+                break;
+            }
+            assert!(!worker.is_finished());
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let power = observer
+        .vm_status(&NodeName::parse("node-a").unwrap(), Vmid::new(901).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(power.power(), PowerState::Stopped);
+    assert_eq!(power.locked(), Some(false));
+    assert!(
+        supervisor
+            .stage_request(StageCheckpointRequest::AuthorizeStartPe {
+                identity: identity.clone(),
+                request: request.encode().unwrap(),
+                committed_request: request.encode().unwrap(),
+                power: StartPePowerAuthorizationV1 {
+                    version: 1,
+                    predecessor: predecessor_identity.clone(),
+                    predecessor_request: predecessor.encode().unwrap(),
+                    predecessor_receipt: predecessor_receipt.to_vec(),
+                    power: SeedPower {
+                        power: power.power(),
+                        locked: power.locked().unwrap()
+                    }
+                },
+            })
+            .await
+            .unwrap()
+            .ok
+    );
+    let backend = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let waiting: Option<i32> = sqlx::query_scalar("SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND usename=current_user AND wait_event='advisory' AND query LIKE 'INSERT INTO rust_controller.fixture_start_pe_responses%'").fetch_optional(&s.db.pool).await.unwrap();
+            if let Some(pid) = waiting { break pid; }
+            assert!(!worker.is_finished(), "StartPe worker ended before original response write");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }).await.expect("StartPe original-response write barrier not reached");
+    let ledger = fs::read(directory.join("fixture.log")).unwrap();
+    fs::write(
+        directory.join(format!("worker-{}.kill", op.as_uuid())),
+        b"kill owned StartPe worker at response transaction",
+    )
+    .unwrap();
+    assert!(worker.await.unwrap().is_err());
+    hold.rollback().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND datname=current_database())").bind(backend).fetch_one(&s.db.pool).await.unwrap();
+            if !exists { break; }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }).await.expect("killed controller backend did not close");
+    let restored = s.db.other.load_osdeploy_operation(op).await.unwrap();
+    assert!(restored.receipt().is_none());
+    assert_eq!(restored.state(), controller_domain::ExecutionState::Running);
+    assert_eq!(restored.dispatch(), committed.dispatch());
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1",
+    )
+    .bind(op.as_uuid())
+    .fetch_one(&s.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, 0);
+    assert_eq!(fs::read(directory.join("fixture.log")).unwrap(), ledger);
+    let reader =
+        FixtureReadClient::new(directory.join("client.sock"), Duration::from_secs(2)).unwrap();
+    let status = reader.status().await.unwrap();
+    assert_eq!((status.attempts, status.effects), (4, 4));
+    assert!(s.fake.recorded_provisioning_submissions().is_empty());
 }
 
 #[allow(clippy::too_many_arguments)]

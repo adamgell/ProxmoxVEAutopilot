@@ -6,6 +6,13 @@ use std::{fs, path::Path, sync::Arc, time::Duration};
 
 #[derive(Serialize, Deserialize)]
 pub enum Setup {
+    Start {
+        generation: uuid::Uuid,
+        owner: uuid::Uuid,
+        predecessor_identity: FixtureStageIdentity,
+        predecessor: Vec<u8>,
+        receipt: Vec<u8>,
+    },
     Clone(CheckpointBinding),
     Resize {
         generation: uuid::Uuid,
@@ -67,6 +74,8 @@ pub fn spawn(
                     child.kill().await?;
                     let status = child.wait().await?;
                     assert!(!status.success());
+                    use std::os::unix::process::ExitStatusExt;
+                    assert_eq!(status.signal(), Some(9), "owned worker must die by SIGKILL");
                     return Ok::<_, std::io::Error>(status);
                 }
                 if let Some(status) = child.try_wait()? {
@@ -288,6 +297,7 @@ pub async fn run() {
         std::path::PathBuf::from(std::env::var_os("PVA_PREFIX_INPUT").expect("owned prefix input"));
     let directory = input.parent().unwrap();
     let Input { identity, setup } = serde_json::from_slice(&fs::read(&input).unwrap()).unwrap();
+    let start_pe = matches!(&setup, Setup::Start { .. });
     let operation: controller_domain::OperationId =
         serde_json::from_value(serde_json::to_value(identity.operation).unwrap()).unwrap();
     let port = FixtureProvisioningPort::new_late(
@@ -311,6 +321,23 @@ pub async fn run() {
         _ => None,
     };
     let port = match setup {
+        Setup::Start {
+            generation,
+            owner,
+            predecessor_identity,
+            predecessor,
+            receipt,
+        } => port
+            .with_late_start_after_configure(
+                checkpoint,
+                generation,
+                owner,
+                predecessor_identity,
+                FixtureStageRequest::decode(&predecessor).unwrap(),
+            )
+            .unwrap()
+            .with_late_start_preflight_receipt(receipt)
+            .unwrap(),
         Setup::Clone(binding) => port.with_checkpoint(checkpoint, binding).unwrap(),
         Setup::Resize {
             generation,
@@ -395,6 +422,11 @@ pub async fn run() {
         "prefix-process",
     )
     .unwrap();
+    let scheduler = if start_pe {
+        scheduler.with_fixture_start_pe()
+    } else {
+        scheduler
+    };
     let controller =
         operation_controller::OsDeployController::new_fixture(store, scheduler, Arc::new(port), 1)
             .unwrap();
