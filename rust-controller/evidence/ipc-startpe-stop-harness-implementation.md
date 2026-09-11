@@ -3,6 +3,17 @@
 Source inspected: `ea0f7866`. This note specifies the missing implementation;
 it does not claim a connected StartPe/stop outcome test exists.
 
+## Current-status correction (2026-09-11)
+
+The source-specific blocker below is historical and no longer describes the
+entire current tree. Subsequent work added the controller-bound StartPe adapter,
+original daemon-response capture, sealed route provenance, and PostgreSQL
+response persistence/reload proofs. The remaining connected-harness gap is
+narrower: the owned StartPe subprocess path does not yet configure the private
+fixture credential-delivery sink, so it cannot continue a delivery-registered
+operation through authenticated callbacks and the full stop-outcome chain.
+Those later capabilities remain unimplemented and production remains read-only.
+
 ## Exact blocker
 
 Adding `Setup::StartPe` to
