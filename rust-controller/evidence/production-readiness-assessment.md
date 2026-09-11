@@ -133,6 +133,13 @@ generation UUID in addition to the scheduler generation and lease token. The
 schema requires this field, and the migration constraint test passes; this
 closes a dual-authority persistence gap without adding release authority.
 
+The positive PostgreSQL outcome-matrix gate remains the connected IPC harness:
+existing `Scenario` tests use `NativeFakePve`, while authentic stop receipts
+come from the FixtureLog daemon. The current harness covers only Clone/Resize/
+Configure and has a bounded daemon lifetime, so it cannot legitimately produce
+the StartPe-to-callback/grace envelope yet. Synthetic rows or copied receipts
+would not prove shared-history authority and are intentionally not used.
+
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
 focused Dockerfile layers passed in 885.14 seconds as image
