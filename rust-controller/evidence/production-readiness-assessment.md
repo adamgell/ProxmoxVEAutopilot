@@ -12,7 +12,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `617f5b0b`: this branch and PR #65 contain an accumulated
+Current scope at `3bfcd11c`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -63,7 +63,11 @@ progress and macOS queued; this is not completed CI evidence. No exact-source
 Linux runtime qualification is recorded for this current source. Historical
 sections below retain the limits at their named revisions.
 
-The generic callback mapping table below remains intentionally pending for the
+Commit `3bfcd11c` binds the fixture delivery path to an immutable selected
+completion-package schema, preserving historical origins while making the
+canonical `boot-files-staged.v1` definition available to arming, issuance and
+reload. PeComplete report adjudication and truthful grace activation remain
+closed. The generic callback mapping table below remains intentionally pending for the
 legacy action/result surfaces. It does not negate the fixture-only PeRegister
 transaction and focused proof added in `e47ece9b` and exposed through the
 controller in `617f5b0b`.
