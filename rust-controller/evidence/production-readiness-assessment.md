@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `cca20d5e`: this branch and PR #65 contain an accumulated
+Current scope at `8f3d1608`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -39,6 +39,14 @@ server-created fixture origins and durable fixture credential alias ownership
 are implemented. The transaction-local alias helper at `724b6101` retains exact
 ownership and the original timestamp on replay without independent commit or
 dispatch authority.
+
+At `8f3d1608`, the fixture-only adapter binds StartPe dispatch to the
+ConfigurePe predecessor, permits one checkpoint-controlled genuine IPC send,
+retains the actual daemon receipt, and validates explicit full readback. The
+focused subprocess and 12-test regression suite pass with Clippy warnings
+denied. Generic evaluator mapping, durable receipt restoration, Setup/DB
+callback integration, and the authentic stop outcome matrix remain open. This
+is still a bounded PoC increment, not the entire port.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
