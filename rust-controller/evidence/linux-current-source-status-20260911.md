@@ -8,38 +8,34 @@ does not claim a Linux runtime pass.
 The worktree revision audited was:
 
 ```text
-a5f3fc503fa8cb6f333ea4ad6cdacc900e088c37
+1450a556e1ad037472b49319c5f98a5b23cdec87
 ```
 
 The latest retained exact-source Linux/amd64 runner image was built from:
 
 ```text
-f92a62872b554a664df96e05d041876e7371cb8d
-sha256:5f5ddae5dd93381cc02d944d8ae397bb0b1a085f65623499122fb0f798b1caa6
+a607861f24cac19cad4565365df2a29b58a33e0b
+sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9
 ```
 
-The two revisions are not interchangeable. A read-only comparison of the
-`rust-controller` runtime tree reports material differences, including changes
-to controller, PostgreSQL store, fixture IPC, migrations, scheduler, and
-owned-Linux launcher code. Therefore
-the retained `f92a6287` image cannot be relabeled or reused as evidence for
-`a5f3fc50`; changing only `CONTROLLER_GIT_SHA` would be an invalid source seal.
+The image source and embedded `CONTROLLER_GIT_SHA` match the exact archive
+used for its build. The launcher is pinned to this image/source pair. The
+older `f92a6287` image remains historical and is not interchangeable with the
+current source; it is neither relabeled nor reused.
 
 ## Gate status
 
 | Gate | Evidence | Status |
 | --- | --- | --- |
-| Exact archive/image build | `linux-fixture-f92a6287-build-1/` | Proven for `f92a6287` only |
-| Current-source image build | No retained image for `a5f3fc50` | Open |
-| Current-source owned Linux runtime | Cannot run before the current-source image is resealed | Open |
+| Exact archive/image build | `linux-fixture-a607861f-build/` | Proven; image/source seal matches |
+| Current-source image build | `sha256:7178...eaaef9` with embedded `a607861f` | Proven |
+| Current-source owned Linux runtime | `requalification-1450a556-fixture-1/` passed memory admission but runner create hit the bounded child deadline | Open |
 | Linux production-candidate qualification | Depends on the preceding gates and broader compatibility/recovery gates | Open |
 
-The required next step is a fresh build from an exact Git archive of the
-intended current revision, with the matching `CONTROLLER_GIT_SHA`, immutable
-image inspection, and source-tree verification before any owned fixture is
-created. The launcher must then be pinned to that image and source pair in a
-separate committed change. Existing failed and successful historical evidence
-must remain preserved rather than rewritten.
+The next safe step is diagnosis or an explicitly bounded retry of the runner
+creation path with a longer child deadline, using a new evidence directory and
+the same immutable image/source pair. Existing failed and successful
+historical evidence must remain preserved rather than rewritten.
 
 All checks in this record are local and read-only. No production controller,
 `192.168.2.4`, or real Proxmox state was changed.
