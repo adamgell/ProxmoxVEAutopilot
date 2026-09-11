@@ -21,6 +21,27 @@ pub struct FixtureStopReleaseProposalV1 {
     provenance: crate::fixture_ipc::FixtureSharedHistoryProvenanceV1,
 }
 
+/// Outcome classification for the future supervisor release/send boundary.
+/// `Ambiguous` must be reconciled before retry; it is never a success claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FixtureStopReleaseDispositionV1 {
+    Accepted,
+    Refused,
+    Ambiguous,
+}
+
+impl FixtureStopReleaseDispositionV1 {
+    pub fn from_checkpoint_result(result: Result<bool, super::CheckpointError>) -> Self {
+        match result {
+            Ok(true) => Self::Accepted,
+            Ok(false) | Err(super::CheckpointError::Rejected) => Self::Refused,
+            Err(super::CheckpointError::Unavailable | super::CheckpointError::TimedOut) => {
+                Self::Ambiguous
+            }
+        }
+    }
+}
+
 impl FixtureStopReleaseProposalV1 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -162,6 +183,29 @@ mod stop_release_proposal_tests {
                     provenance,
                 )
                 .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn checkpoint_outcomes_keep_transport_loss_ambiguous() {
+        use crate::fixture_ipc::CheckpointError;
+        assert_eq!(
+            FixtureStopReleaseDispositionV1::from_checkpoint_result(Ok(true)),
+            FixtureStopReleaseDispositionV1::Accepted
+        );
+        assert_eq!(
+            FixtureStopReleaseDispositionV1::from_checkpoint_result(Ok(false)),
+            FixtureStopReleaseDispositionV1::Refused
+        );
+        assert_eq!(
+            FixtureStopReleaseDispositionV1::from_checkpoint_result(Err(CheckpointError::Rejected)),
+            FixtureStopReleaseDispositionV1::Refused
+        );
+        for error in [CheckpointError::Unavailable, CheckpointError::TimedOut] {
+            assert_eq!(
+                FixtureStopReleaseDispositionV1::from_checkpoint_result(Err(error)),
+                FixtureStopReleaseDispositionV1::Ambiguous
             );
         }
     }
