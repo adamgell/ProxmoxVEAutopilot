@@ -60,10 +60,16 @@ impl Scheduler {
         wire::require(sequence > 0)?;
         validate_consumed_proposal(consumed, proposal)?;
         let mut tx = self.store.pool().begin().await?;
-        let row = sqlx::query("SELECT attempt_id,lease_token,generation,request_sha256,provenance_sha256,supervisor_generation FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
+        let row = sqlx::query("SELECT attempt_id,lease_token,generation,request_sha256,admission_sha256,sample_json,provenance_sha256,supervisor_generation FROM rust_controller.fixture_stop_outbox WHERE operation_id=$1")
             .bind(consumed.operation_id)
             .fetch_one(&mut *tx)
             .await?;
+        validate_persisted_evidence(
+            &consumed.admission_sha256,
+            &consumed.sample_sha256,
+            &row.try_get::<String, _>("admission_sha256")?,
+            &row.try_get::<String, _>("sample_json")?,
+        )?;
         wire::require(
             row.try_get::<Uuid, _>("attempt_id")? == consumed.attempt_id
                 && row.try_get::<Uuid, _>("lease_token")? == consumed.lease_token
@@ -323,6 +329,25 @@ fn required_request_sha256(value: Option<String>) -> Result<String, Error> {
     value.ok_or(Error::CapabilityUnavailable)
 }
 
+/// The public consumed envelope is a claim about the immutable outbox row.
+/// Rebind its evidence before accepting a matching release proposal: matching
+/// two caller-held values alone does not establish their persisted origin.
+fn validate_persisted_evidence(
+    admission_sha256: &str,
+    sample_sha256: &str,
+    selected_admission_sha256: &str,
+    selected_sample_json: &str,
+) -> Result<(), Error> {
+    let sample: VersionedTestPowerSample =
+        serde_json::from_str(selected_sample_json).map_err(|_| Error::Validation)?;
+    let value = serde_json::to_value(sample).map_err(|_| Error::Validation)?;
+    let selected_sample_sha256 =
+        event_journal::payload_digest(&value).map_err(|_| Error::Validation)?;
+    wire::require(
+        admission_sha256 == selected_admission_sha256 && sample_sha256 == selected_sample_sha256,
+    )
+}
+
 fn validate_consumed_proposal(
     consumed: &FixtureStopOutboxConsumedV1,
     proposal: &pve_port::fixture_ipc::FixtureStopReleaseProposalV1,
@@ -342,6 +367,75 @@ fn validate_consumed_proposal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_evidence_must_match_persisted_selection() {
+        use pve_port::fixture_support::*;
+        let identity = FixtureStageIdentity {
+            operation: Uuid::now_v7(),
+            stage: FixtureLedgerStage::StartPe,
+            attempt: Uuid::now_v7(),
+            generation: Uuid::now_v7(),
+            owner: Uuid::now_v7(),
+            request_sha256: "a".repeat(64),
+        };
+        let sample = VersionedTestPowerSample {
+            version: 2,
+            sequence: 1,
+            previous_sha256: None,
+            stop: FixtureStageIdentity {
+                stage: FixtureLedgerStage::PeEnsureStopped,
+                operation: Uuid::now_v7(),
+                ..identity.clone()
+            },
+            authority: FixtureStopAuthorityV1 {
+                version: 1,
+                grace_operation: Uuid::now_v7(),
+                decision_event: Uuid::now_v7(),
+                evidence_fence: 1,
+                grace_due_unix_ms: 90,
+                decision_unix_ms: 95,
+                lease_checked_unix_ms: 99,
+                lease_expires_unix_ms: 6000,
+                original_deadline_unix_ms: 7000,
+            },
+            sample: TestPowerSample {
+                version: 1,
+                identity,
+                vmid: 109,
+                daemon_generation: Uuid::now_v7(),
+                observed_unix_ms: 100,
+                lease_expires_unix_ms: 6000,
+                power: SeedPower {
+                    power: pve_port::PowerState::Running,
+                    locked: false,
+                },
+            },
+        };
+        let value = serde_json::to_value(sample).unwrap();
+        let digest = event_journal::payload_digest(&value).unwrap();
+        let stored = serde_json::to_string_pretty(&value).unwrap();
+        let admission = "b".repeat(64);
+        assert!(validate_persisted_evidence(&admission, &digest, &admission, &stored).is_ok());
+        for (claimed_admission, claimed_sample) in [
+            ("c".repeat(64), digest.clone()),
+            (admission.clone(), "d".repeat(64)),
+        ] {
+            assert!(matches!(
+                validate_persisted_evidence(
+                    &claimed_admission,
+                    &claimed_sample,
+                    &admission,
+                    &stored
+                ),
+                Err(Error::Validation)
+            ));
+        }
+        assert!(matches!(
+            validate_persisted_evidence(&admission, &digest, &admission, "{}"),
+            Err(Error::Validation)
+        ));
+    }
 
     #[test]
     fn legacy_null_request_digest_is_explicitly_unavailable() {
