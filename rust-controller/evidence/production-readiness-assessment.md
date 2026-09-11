@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `d1d8c354`: this branch and PR #65 contain an accumulated
+Current scope at `c81e69ff`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -123,7 +123,10 @@ canonical lowercase 64-character SHA-256 digests and rejects malformed or
 operation-mismatched inputs. It is non-authorizing and validated independently;
 no physical stop or stopped-power claim follows from constructing it. Checkpoint
 transport outcomes are classified as accepted, refused, or ambiguous;
-timeout/unavailable remains ambiguous and cannot authorize resend.
+timeout/unavailable remains ambiguous and cannot authorize resend. The proposal
+also exposes a pure evidence-digest join that must match independently
+recomputed request, receipt, and sample digests; tampering is rejected without
+any release or send side effect.
 
 At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires
