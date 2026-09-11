@@ -36,6 +36,7 @@ impl FixtureStopReleaseOutcomeStateV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FixtureStopReleaseOutcomeV1 {
     pub operation_id: Uuid,
+    pub supervisor_generation: Uuid,
     pub sequence: i64,
     pub state: FixtureStopReleaseOutcomeStateV1,
     pub receipt_sha256: Option<String>,
@@ -103,30 +104,34 @@ impl Scheduler {
             (_, None) => None,
         };
         let mut tx = self.store.pool().begin().await?;
-        let existing = sqlx::query("SELECT submit_sequence,state,receipt_sha256 FROM rust_controller.fixture_stop_release_outcomes WHERE operation_id=$1")
+        let existing = sqlx::query("SELECT supervisor_generation,submit_sequence,state,receipt_sha256 FROM rust_controller.fixture_stop_release_outcomes WHERE operation_id=$1")
             .bind(consumed.operation_id).fetch_optional(&mut *tx).await?;
         if let Some(row) = existing {
             wire::require(
-                row.try_get::<i64, _>("submit_sequence")? == sequence
+                row.try_get::<Uuid, _>("supervisor_generation")? == consumed.supervisor_generation
+                    && row.try_get::<i64, _>("submit_sequence")? == sequence
                     && row.try_get::<String, _>("state")? == state.as_str()
                     && row.try_get::<Option<String>, _>("receipt_sha256")? == receipt_sha256,
             )?;
             tx.rollback().await?;
             return Ok(FixtureStopReleaseOutcomeV1 {
                 operation_id: consumed.operation_id,
+                supervisor_generation: consumed.supervisor_generation,
                 sequence,
                 state,
                 receipt_sha256,
             });
         }
-        sqlx::query("INSERT INTO rust_controller.fixture_stop_release_outcomes(operation_id,attempt_id,lease_owner,generation,request_sha256,admission_sha256,sample_sha256,provenance_sha256,state,submit_sequence,receipt_json,receipt_sha256,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,clock_timestamp())")
+        sqlx::query("INSERT INTO rust_controller.fixture_stop_release_outcomes(operation_id,attempt_id,lease_owner,generation,supervisor_generation,request_sha256,admission_sha256,sample_sha256,provenance_sha256,state,submit_sequence,receipt_json,receipt_sha256,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,clock_timestamp())")
             .bind(consumed.operation_id).bind(consumed.attempt_id).bind(consumed.lease_token)
-            .bind(consumed.generation).bind(proposal.request_sha256()).bind(proposal.receipt_sha256())
+            .bind(consumed.generation).bind(consumed.supervisor_generation)
+            .bind(proposal.request_sha256()).bind(proposal.receipt_sha256())
             .bind(proposal.sample_sha256()).bind(&consumed.provenance_sha256).bind(state.as_str())
             .bind(sequence).bind(receipt).bind(&receipt_sha256).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(FixtureStopReleaseOutcomeV1 {
             operation_id: consumed.operation_id,
+            supervisor_generation: consumed.supervisor_generation,
             sequence,
             state,
             receipt_sha256,

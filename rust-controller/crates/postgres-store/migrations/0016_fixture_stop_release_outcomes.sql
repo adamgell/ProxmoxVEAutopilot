@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS rust_controller.fixture_stop_release_outcomes (
     attempt_id uuid NOT NULL,
     lease_owner uuid NOT NULL,
     generation bigint NOT NULL CHECK(generation > 0),
+    supervisor_generation uuid NOT NULL,
     request_sha256 text NOT NULL CHECK(request_sha256 ~ '^[0-9a-f]{64}$'),
     admission_sha256 text NOT NULL CHECK(admission_sha256 ~ '^[0-9a-f]{64}$'),
     sample_sha256 text NOT NULL CHECK(sample_sha256 ~ '^[0-9a-f]{64}$'),
