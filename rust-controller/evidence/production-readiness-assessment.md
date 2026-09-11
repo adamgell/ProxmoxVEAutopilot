@@ -75,6 +75,15 @@ detached before it could write its final state. This narrows the remaining Linux
 blocker to controller-fixture recovery under the full workload; it does not
 establish Linux qualification or production readiness.
 
+Astra's diagnosis does not currently support a production Rust defect: the two
+failed parent tests are supervised fixture-worker recovery cases, and the
+retained parent log lacks the worker's direct stderr needed to distinguish
+`BrokenPipe`, `Storage`, and `Elapsed` as controller defects. Both recovery tests
+pass in the focused macOS lane with `RUST_MIN_STACK=16777216` (already set by
+the Linux launcher), while the storage, budget, and process helper tests pass in
+the Linux run. A targeted sealed Linux execution with direct worker output is
+required before classifying the remaining failure or changing source.
+
 ## Decision
 
 **Not production-ready and not approved for cutover.** The Rust controller is a strong local proof-of-concept candidate, but the evidence does not yet establish a safe replacement for the production controller or Ansible execution path.

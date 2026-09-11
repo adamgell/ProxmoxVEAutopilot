@@ -77,6 +77,16 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
   compile-fail doctests or DSN-only tests are broken, and Linux qualification
   remains incomplete.
 
+- Astra's follow-up diagnosis found no demonstrated production Rust defect in
+  that run. The two failing parent tests are supervised fixture-worker recovery
+  cases; the retained parent output reports `BrokenPipe`, `Storage`, and
+  `Elapsed`, but does not include the child worker's direct stderr. The same
+  recovery tests pass in the focused macOS lane with `RUST_MIN_STACK=16777216`,
+  which the Linux launcher already sets. Storage, elapsed-budget, and process
+  lifecycle helper tests also pass. The next gate is a targeted sealed Linux
+  run of those tests with direct worker stdout/stderr capture; no source change
+  or weakened assertion is justified until that evidence exists.
+
 ## Restarted verification checkpoint (2026-09-10)
 
 ### Stage-aware publication/readback seam (2026-09-10)
