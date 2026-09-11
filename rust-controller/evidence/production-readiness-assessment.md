@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `c1d9965b`: this branch and PR #65 contain an accumulated
+Current scope at `6c3912a7`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -162,6 +162,12 @@ while the closed fixture response is available only on the concrete adapter.
 Adding StartPe to a killable worker without this boundary change would not
 exercise atomic response/provenance persistence, so the owned-child SIGKILL
 proof remains open.
+
+At `6c3912a7`, the controller boundary now exposes one closed original capture
+after successful StartPe submission and selects the atomic fixture writer in
+the bounded retry loop. Missing or restored captures fail closed without
+semantic-only fallback. Genuine composition, missing-capture, and retry tests
+pass; owned-controller subprocess/SIGKILL proof remains open.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
