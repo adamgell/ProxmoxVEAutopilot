@@ -1,6 +1,8 @@
 //! Pure OSDeploy stage and validated input contract.
 
 mod guest_action;
+mod pe_registration_precision;
+pub use pe_registration_precision::PeRegistrationAnchorV2;
 mod input_values;
 mod plan;
 mod provisioning;

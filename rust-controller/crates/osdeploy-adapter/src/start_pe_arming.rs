@@ -86,6 +86,9 @@ impl PeRegistrationAnchorV1 {
     pub fn dispatch_event(&self) -> Uuid {
         self.dispatch_event
     }
+    pub fn start_operation(&self) -> Uuid {
+        self.start_operation
+    }
     pub fn opened_unix_ms(&self) -> u64 {
         self.opened_unix_ms
     }
