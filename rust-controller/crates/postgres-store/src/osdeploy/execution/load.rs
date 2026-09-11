@@ -293,6 +293,53 @@ pub(super) async fn load_records(
             )?;
         }
     }
+    #[cfg(not(feature = "fixture-ipc"))]
+    require(
+        !own.iter()
+            .any(|d| matches!(d.value.detail, Detail::FixturePeRegistered(_))),
+    )?;
+    #[cfg(feature = "fixture-ipc")]
+    {
+        let selected: Vec<_> = own
+            .iter()
+            .filter(|d| matches!(d.value.detail, Detail::FixturePeRegistered(_)))
+            .collect();
+        let rows = sqlx::query("SELECT r.*,d.alias_sha256 AS delivered_alias,d.dispatch_event_id,d.package_sha256 FROM rust_controller.fixture_pe_registrations r JOIN rust_controller.fixture_pe_deliveries d ON d.operation_id=r.start_operation_id WHERE r.operation_id=$1")
+            .bind(operation.as_uuid()).fetch_all(&mut **tx).await?;
+        require(selected.len() <= 1 && rows.len() == selected.len())?;
+        if let (Some(d), Some(row)) = (selected.first(), rows.first()) {
+            let Detail::FixturePeRegistered(value) = &d.value.detail else {
+                return Err(Error::Validation);
+            };
+            let identity = crate::FixturePeRegistrationIdentity::expected(&registration);
+            let completion = scopes.get("pe_completion").ok_or(Error::Validation)?;
+            require(
+                plan.stage() == OsDeployStage::PeRegister
+                    && current == ExecutionState::Satisfied
+                    && row.try_get::<Uuid, _>("run_id")? == run
+                    && Some(id::<AttemptId>(row.try_get("attempt_id")?)?) == attempt
+                    && row.try_get::<Uuid, _>("selected_event_id")? == d.event.as_uuid()
+                    && row.try_get::<DateTime<Utc>, _>("selected_at")? == d.value.evaluated_at
+                    && row.try_get::<String, _>("identity_canonical_json")?
+                        == canonical(&identity)?
+                    && row.try_get::<String, _>("identity_sha256")? == digest(&identity)?
+                    && value.identity_sha256 == digest(&identity)?
+                    && row.try_get::<Vec<u8>, _>("alias_sha256")?
+                        == row.try_get::<Vec<u8>, _>("delivered_alias")?
+                    && row.try_get::<Uuid, _>("start_operation_id")?
+                        == value.start_operation_id.as_uuid()
+                    && value.start_operation_id
+                        == registration.ids().operation(OsDeployStage::StartPe)
+                    && row.try_get::<Uuid, _>("dispatch_event_id")?
+                        == value.dispatch_event_id.as_uuid()
+                    && row.try_get::<String, _>("package_sha256")? == value.package_sha256
+                    && completion.anchor == d.event
+                    && completion.anchor_op == operation
+                    && completion.opened == d.value.evaluated_at,
+            )?;
+            require_fixture_registration_origin(tx, &registration, d.value.evaluated_at).await?;
+        }
+    }
     let own = own.into_iter().cloned().collect();
     let snapshot = OsDeployOperationSnapshot {
         operation_id: operation,
@@ -1068,6 +1115,14 @@ fn validate_decision_links(
     for d in own {
         match &d.value.detail {
             Detail::StageActivated(_) | Detail::RunCancelled(_) => {}
+            Detail::FixturePeRegistered(a) => {
+                let e = epoch(a.lease_acquisition_event_id, d)?;
+                require(
+                    e.generation == d.value.generation
+                        && Some(a.registration_deadline) == deadline
+                        && d.value.evaluated_at < a.registration_deadline,
+                )?;
+            }
             Detail::LeaseAcquired(a) => {
                 if a.purpose == Purpose::ReclaimedCredentialDelivery {
                     let prior = own
@@ -1294,6 +1349,7 @@ fn state_for(d: &Decision) -> Result<ExecutionState, Error> {
 fn legal_state_edge(from: ExecutionState, to: ExecutionState, d: &Decision) -> bool {
     use ExecutionState::*;
     match &d.value.detail {
+        Detail::FixturePeRegistered(_) => from == Running && to == Satisfied,
         Detail::LeaseAcquired(a) => {
             from == Pending
                 && if a.purpose == Purpose::ReclaimedCredentialDelivery {
@@ -1332,6 +1388,7 @@ fn legal_state_edge(from: ExecutionState, to: ExecutionState, d: &Decision) -> b
 fn admits_decision_in(state: ExecutionState, detail: &Detail) -> bool {
     use ExecutionState::*;
     match detail {
+        Detail::FixturePeRegistered(_) => state == Running,
         Detail::StageActivated(_) => state == Pending,
         Detail::LeaseAcquired(a) => {
             if a.purpose == Purpose::ResumeEvaluation {

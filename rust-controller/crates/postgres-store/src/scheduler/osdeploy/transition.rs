@@ -25,6 +25,8 @@ pub(super) enum OsDeployTransitionProof {
     ReclaimedCredentialLease(LifecycleTransition),
     FirstStart(LifecycleTransition),
     ResumedStart(LifecycleTransition),
+    #[cfg(feature = "fixture-ipc")]
+    FixtureRegistered(LifecycleTransition),
     UnactivatedScopeExpired(ExceptionalTransition),
     ActivatedScopeExpired(ExceptionalTransition),
     ExpiredUnstartedSameAttempt(ExceptionalTransition),
@@ -187,6 +189,26 @@ impl ExceptionalFacts {
 }
 
 impl OsDeployTransitionProof {
+    #[cfg(feature = "fixture-ipc")]
+    pub(super) async fn fixture_registered(
+        tx: &mut Transaction<'_, Postgres>,
+        event: EventId,
+    ) -> Result<Self, Error> {
+        let (proof, value) = lifecycle_facts(tx, event, false).await?;
+        let wire::Detail::FixturePeRegistered(selected) = value.detail else {
+            return Err(Error::Validation);
+        };
+        let row: Option<(Uuid, String)> = sqlx::query_as("SELECT attempt_id,identity_sha256 FROM rust_controller.fixture_pe_registrations WHERE operation_id=$1 AND selected_event_id=$2")
+            .bind(proof.operation.as_uuid()).bind(event.as_uuid()).fetch_optional(&mut **tx).await?;
+        wire::require(
+            proof.current == ExecutionState::Running
+                && row == Some((proof.attempt.as_uuid(), selected.identity_sha256)),
+        )?;
+        Ok(Self::FixtureRegistered(LifecycleTransition {
+            target: ExecutionState::Satisfied,
+            ..proof
+        }))
+    }
     pub(super) async fn original_dispatch_reconciliation(
         s: &Scheduler,
         tx: &mut Transaction<'_, Postgres>,
@@ -741,10 +763,15 @@ async fn lifecycle_facts(
     let matches_epoch = match &d.detail {
         wire::Detail::LeaseAcquired(a) => a.acquisition_event_id == epoch,
         wire::Detail::EvaluationStarted(a) => a.lease_acquisition_event_id == epoch,
+        wire::Detail::FixturePeRegistered(a) => a.lease_acquisition_event_id == epoch,
         _ => false,
     };
     if !matches_epoch
-        || d.resolution.is_some()
+        || if matches!(d.detail, wire::Detail::FixturePeRegistered(_)) {
+            d.resolution != Some(pve_port::NativeDecision::Satisfied)
+        } else {
+            d.resolution.is_some()
+        }
         || attempt.as_uuid() != row.try_get::<Uuid, _>("attempt_id")?
         || d.before_revision.checked_add(1) != Some(row.try_get("revision")?)
         || row.try_get::<i64, _>("decision_revision")? != row.try_get::<i64, _>("revision")?
@@ -777,6 +804,8 @@ pub(super) async fn append_osdeploy_transition(
         TransitionPolicy::Domain
     };
     let p = match proof {
+        #[cfg(feature = "fixture-ipc")]
+        OsDeployTransitionProof::FixtureRegistered(p) => p,
         OsDeployTransitionProof::InitialLease(p)
         | OsDeployTransitionProof::ReclaimedLease(p)
         | OsDeployTransitionProof::ReclaimedCredentialLease(p)

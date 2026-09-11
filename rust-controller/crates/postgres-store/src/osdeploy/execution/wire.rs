@@ -98,6 +98,14 @@ closed!(Activation {
     #[serde(deserialize_with="required_nullable")] predecessor_operation_id: Option<OperationId>,
     #[serde(deserialize_with="required_nullable")] predecessor_decision_event_id: Option<EventId>,
 });
+closed!(FixtureRegistration {
+    lease_acquisition_event_id: EventId,
+    start_operation_id: OperationId,
+    dispatch_event_id: EventId,
+    identity_sha256: String,
+    package_sha256: String,
+    registration_deadline: DateTime<Utc>,
+});
 closed!(Acquisition {
     purpose: Purpose, acquisition_event_id: EventId, token_sha256: String, worker_id: String,
     acquired_at: DateTime<Utc>, expires_at: DateTime<Utc>, deadline_at: DateTime<Utc>,
@@ -158,6 +166,7 @@ pub(crate) enum Detail {
     LeaseRenewed(Renewed),
     PveDispatchCommitted(Dispatch),
     PveEvaluated(Evaluated),
+    FixturePeRegistered(FixtureRegistration),
     LeaseReclaimedSameAttempt(Reclaimed),
     CredentialDeliveryReclaimed(Reclaimed),
     EvaluationReparked(Reparked),
@@ -244,6 +253,7 @@ impl DecisionEnvelope {
             Detail::LeaseRenewed(_) => "lease_renewed",
             Detail::PveDispatchCommitted(_) => "pve_dispatch_committed",
             Detail::PveEvaluated(_) => "pve_evaluated",
+            Detail::FixturePeRegistered(_) => "fixture_pe_registered",
             Detail::LeaseReclaimedSameAttempt(_) => "lease_reclaimed_same_attempt",
             Detail::CredentialDeliveryReclaimed(_) => "credential_delivery_reclaimed",
             Detail::EvaluationReparked(_) => "evaluation_reparked",
@@ -276,6 +286,14 @@ impl DecisionEnvelope {
         )?;
         let expected =
             match &self.detail {
+                FixturePeRegistered(d) => {
+                    require(
+                        hash_valid(&d.identity_sha256)
+                            && hash_valid(&d.package_sha256)
+                            && self.evaluated_at < d.registration_deadline,
+                    )?;
+                    Some(NativeDecision::Satisfied)
+                }
                 StageActivated(d) => {
                     require(
                         (1..=86400).contains(&d.budget_seconds)

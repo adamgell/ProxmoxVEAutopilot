@@ -199,7 +199,11 @@ pub(super) fn envelope(
         generation,
         before_revision: revision,
         evaluated_at: at,
-        resolution: None,
+        resolution: if matches!(detail, wire::Detail::FixturePeRegistered(_)) {
+            Some(pve_port::NativeDecision::Satisfied)
+        } else {
+            None
+        },
         detail,
     })
 }

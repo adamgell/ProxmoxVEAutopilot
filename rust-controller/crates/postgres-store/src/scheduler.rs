@@ -22,6 +22,7 @@ pub use lease::{LeaseGrant, ReapSummary};
 #[cfg(feature = "fixture-ipc")]
 pub use osdeploy::{
     FixtureCredentialEnvelope, FixtureCredentialSink, FixtureDeliveryAck, FixtureDeliveryRecovery,
+    FixturePeRegistrationIdentity, FixturePeRegistrationResult,
 };
 pub use osdeploy::{
     OsDeployDispatchPermit, OsDeployLeaseStatus, OsDeployMaintenanceSummary,

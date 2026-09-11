@@ -30,6 +30,12 @@ async fn fixture_peregister_original_deadline_expires_after_recovery() {
 }
 
 #[cfg(all(feature = "fixture-ipc", unix))]
+#[tokio::test]
+async fn fixture_peregister_authenticated_selection_replay_and_rollback() {
+    fixture_credential_delivery_reclaim_case(false, 3).await;
+}
+
+#[cfg(all(feature = "fixture-ipc", unix))]
 async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register: u8) {
     use controller_domain::ExecutionState;
     use osdeploy_adapter::OsDeployStage;
@@ -401,7 +407,173 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                 .await
                 .is_err()
         );
-        if register == 2 {
+        if register == 3 {
+            replacement
+                .start_osdeploy_bound(&next, s.ids.workflow_sha256())
+                .await
+                .unwrap();
+            let expected = osdeploy_support::plan();
+            let identity = postgres_store::FixturePeRegistrationIdentity {
+                vm_uuid: expected.vm().uuid().to_string(),
+                mac: expected.vm().mac().to_string(),
+                agent_id: expected.names().expected_agent_id().to_owned(),
+            };
+            let authorization = format!("Bearer {}", accepted.lines().last().unwrap());
+            let mut wrong = identity.clone();
+            wrong.agent_id.push_str("-other");
+            assert!(
+                replacement
+                    .accept_fixture_pe_registration(&next, &authorization, secret, &wrong)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                replacement
+                    .accept_fixture_pe_registration(
+                        &registration_grant,
+                        &authorization,
+                        secret,
+                        &identity
+                    )
+                    .await
+                    .is_err()
+            );
+            let unknown = api_compat::run_bearer::issue_run_bearer(
+                api_compat::run_bearer::RunBearerIdentity::Text(
+                    &s.ids.run_id().as_uuid().to_string(),
+                ),
+                deadline.timestamp() - 1,
+                secret,
+            )
+            .unwrap();
+            assert!(
+                replacement
+                    .accept_fixture_pe_registration(
+                        &next,
+                        &format!("Bearer {}", unknown.expose_for_delivery()),
+                        secret,
+                        &identity
+                    )
+                    .await
+                    .is_err()
+            );
+            let before =
+                s.db.store
+                    .load_osdeploy_operation(registration)
+                    .await
+                    .unwrap();
+            for (table, condition) in [
+                ("osdeploy_decisions", "NEW.action='fixture_pe_registered'"),
+                ("fixture_pe_registrations", "true"),
+                ("osdeploy_deadlines", "NEW.scope_key='pe_completion'"),
+                (
+                    "journal_events",
+                    "NEW.event_kind='execution_state_changed' AND NEW.execution_state='satisfied'",
+                ),
+            ] {
+                sqlx::raw_sql("CREATE OR REPLACE FUNCTION rust_controller.reject_registration() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected registration rollback'; END $$;").execute(&s.db.pool).await.unwrap();
+                sqlx::raw_sql(&format!("CREATE TRIGGER reject_registration AFTER INSERT ON rust_controller.{table} FOR EACH ROW WHEN ({condition}) EXECUTE FUNCTION rust_controller.reject_registration();")).execute(&s.db.pool).await.unwrap();
+                assert!(
+                    replacement
+                        .accept_fixture_pe_registration(&next, &authorization, secret, &identity)
+                        .await
+                        .is_err()
+                );
+                sqlx::raw_sql(&format!(
+                    "DROP TRIGGER reject_registration ON rust_controller.{table}"
+                ))
+                .execute(&s.db.pool)
+                .await
+                .unwrap();
+                let restored =
+                    s.db.other
+                        .load_osdeploy_operation(registration)
+                        .await
+                        .unwrap();
+                assert_eq!(restored.state(), ExecutionState::Running);
+                assert_eq!(restored.revision(), before.revision());
+                let partial: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM rust_controller.fixture_pe_registrations)+(SELECT count(*) FROM rust_controller.osdeploy_deadlines WHERE scope_key='pe_completion')").fetch_one(&s.db.pool).await.unwrap();
+                assert_eq!(partial, 0);
+            }
+            let (left, right) = tokio::join!(
+                replacement.accept_fixture_pe_registration(
+                    &next,
+                    &authorization,
+                    secret,
+                    &identity
+                ),
+                replacement.accept_fixture_pe_registration(
+                    &next,
+                    &authorization,
+                    secret,
+                    &identity
+                )
+            );
+            let (left, right) = (left.unwrap(), right.unwrap());
+            assert_ne!(left.replayed(), right.replayed());
+            assert_eq!(left.selected_event_id(), right.selected_event_id());
+            let selected = if left.replayed() { right } else { left };
+            assert!(!selected.replayed());
+            assert_eq!(selected.attempt_id(), next.attempt_id());
+            let replay = replacement
+                .accept_fixture_pe_registration(&next, &authorization, secret, &identity)
+                .await
+                .unwrap();
+            assert!(replay.replayed());
+            assert_eq!(replay.selected_event_id(), selected.selected_event_id());
+            assert_eq!(replay.selected_at(), selected.selected_at());
+            assert!(
+                replacement
+                    .accept_fixture_pe_registration(&next, &authorization, secret, &wrong)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                s.db.other
+                    .load_osdeploy_operation(registration)
+                    .await
+                    .unwrap()
+                    .state(),
+                ExecutionState::Satisfied
+            );
+            let scope: (uuid::Uuid, chrono::DateTime<chrono::Utc>) = sqlx::query_as("SELECT anchor_event_id,opened_at FROM rust_controller.osdeploy_deadlines WHERE scope_key='pe_completion'").fetch_one(&s.db.pool).await.unwrap();
+            assert_eq!(
+                scope,
+                (
+                    selected.selected_event_id().as_uuid(),
+                    selected.selected_at()
+                )
+            );
+            assert!(
+                replacement
+                    .claim_osdeploy_bound(
+                        s.ids.operation(OsDeployStage::PeComplete),
+                        s.ids.workflow_sha256(),
+                        1
+                    )
+                    .await
+                    .is_err()
+            );
+            s.db.store.migrate().await.unwrap();
+            assert_eq!(
+                s.db.other
+                    .load_osdeploy_operation(registration)
+                    .await
+                    .unwrap()
+                    .state(),
+                ExecutionState::Satisfied
+            );
+            replacement
+                .cancel_osdeploy_run(s.ids.run_id())
+                .await
+                .unwrap();
+            assert!(
+                replacement
+                    .accept_fixture_pe_registration(&next, &authorization, secret, &identity)
+                    .await
+                    .is_err()
+            );
+        } else if register == 2 {
             s.wait_until(deadline).await;
             replacement.reap_osdeploy_expired().await.unwrap();
             let expired =

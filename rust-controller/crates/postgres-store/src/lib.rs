@@ -17,6 +17,7 @@ pub use health::StoreHealthSnapshot;
 #[cfg(feature = "fixture-ipc")]
 pub use scheduler::{
     FixtureCredentialEnvelope, FixtureCredentialSink, FixtureDeliveryAck, FixtureDeliveryRecovery,
+    FixturePeRegistrationIdentity, FixturePeRegistrationResult,
 };
 pub mod native;
 mod osdeploy;
