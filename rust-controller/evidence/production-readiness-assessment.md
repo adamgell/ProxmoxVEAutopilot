@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `cc22ab86`: this branch and PR #65 contain an accumulated
+Current scope at `56e95c3e`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -40,7 +40,7 @@ are implemented. The transaction-local alias helper at `724b6101` retains exact
 ownership and the original timestamp on replay without independent commit or
 dispatch authority.
 
-The current PR head is `cc22ab86` (verified 2026-09-11). GitHub reports the
+The current PR head is `56e95c3e` (verified 2026-09-11). GitHub reports the
 duplicated Linux and macOS-arm64 checks as queued, with no completed
 qualification conclusion; the draft PR remains open. The StartPe provisioning
 fact mapping added at `db84526f`/`01b2baee`, followed by the closed-response
@@ -56,6 +56,16 @@ audit at `4dae0ae9`/`c1d9965b` and controller capture integration at
 `6c3912a7`/`dee3cd1a`, followed by the preflight observation-gap proof at
 `e7d9575b`/`02a4f69e` and preflight observation binding at
 `a1430b30`/`8ca992d6`, are evidence for the validated fact
+
+The authority-preserving recovered-observation checkpoint at `56e95c3e` keeps
+StartPe recovery quarantined when original route evidence is lost or when only
+an accepted daemon effect survives without an independently published completion
+bundle. Accepted effect is not completion: it cannot produce `Satisfied`, a
+receipt, or resend authority. The proposed typed observation is read-only,
+append-only reconciliation evidence and cannot be converted into a receipt,
+dispatch permit, or release proposal. This is a design gate, not runtime
+implementation or production-readiness evidence; see
+`startpe-recovered-observation-contract.md`.
 representation only and does not close the authentic PostgreSQL stop-outcome
 matrix or make the controller production-ready.
 
