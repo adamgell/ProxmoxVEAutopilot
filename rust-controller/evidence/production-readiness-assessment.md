@@ -12,7 +12,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `72a3ec61`: this branch and PR #65 contain an accumulated
+Current scope at `d236dedb`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -26,17 +26,26 @@ are implemented. The transaction-local alias helper at `724b6101` retains exact
 ownership and the original timestamp on replay without independent commit or
 dispatch authority.
 
-At `72a3ec61`, trusted origins persist immutable `credential_sink_id` policy:
+At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires
-credential delivery. Replay must match that policy. All current StartPe
-scheduler paths check it under the shared authority/run/operation/attempt/lease
-locks and refuse credential-required origins until cohesive delivery exists.
-The focused proof covers concurrent registration, two-scheduler refusal,
-immutability, replay mismatch, migration replay, and store reopen. See
-`fixture-origin-delivery-policy.md`; it does not prove physical-send races.
+credential delivery. Replay must match that policy. Commits `9357287b` and
+`7fea7ed2` now provide atomic session/alias/dispatch preparation, a private
+fixture sink, closed acknowledgement, one-time exposure, and explicit
+operation-controller routing. Commit `d236dedb` adds a dedicated
+unacknowledged-delivery reclaim after real lease expiry, preserving the
+original dispatch and fencing the old worker; exposed expiry remains
+conservatively `Unknown`. The focused proofs cover concurrent registration,
+two-scheduler refusal, immutable policy, exact-byte delivery replay,
+acknowledgement/exposure ordering, controller single-send behavior, replacement
+claim races, cancellation, and exposed-expiry refusal. See
+`fixture-origin-delivery-policy.md` and `fixture-credential-delivery-store.md`.
 
-Atomic session/alias/dispatch preparation integrated with private delivery,
-acknowledgement, one-time exposure, and process-death recovery remains open.
+Production-candidate acceptance remains open. The private fixture sink performs
+synchronous filesystem writes/fsync inside the owned future and needs bounded
+ownership before production use. Broader process-death qualification across
+all required stages, authenticated callbacks, PeRegister, production
+legacy-run import, later stages, service wiring, operator handoff/rollback,
+and current-source Linux runtime qualification remain open.
 Authenticated callbacks, PeRegister, and production legacy-run import remain
 unimplemented. GitHub checks observed for `72a3ec61` on 2026-09-11 had Linux in
 progress and macOS queued; this is not completed CI evidence. No exact-source

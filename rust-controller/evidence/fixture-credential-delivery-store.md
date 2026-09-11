@@ -40,13 +40,15 @@ reconciliation.
 `recover_fixture_start_pe` reconstructs the exact original credential and checks
 its digest before redelivery. Changed signing material fails. Acknowledged state
 requires no new sink delivery, and exposed state never regenerates a permit.
-This is currently recovery with an existing live grant, including a reopened
-store handle. It is **not replacement-worker process-death recovery**: the
-generic reaper still interprets a dispatch as uncertain and can move an expired
-attempt to Unknown. A dedicated unexposed reclaim transition, its journal/history
-validation and controller routing remain required. The operation-controller
-also needs explicit sink/secret configuration before these APIs are reachable
-from its execution loop. No secret defaults were added.
+This supports recovery with an existing live grant, including a reopened store
+handle. Commits `d236dedb` and `039bf818` additionally cover the dedicated
+unacknowledged-delivery replacement-worker path after real lease expiry: the
+original dispatch, attempt and deadline are retained, the old grant is fenced,
+and a replacement controller resumes delivery and exposes exactly once.
+Exposed expiry remains conservative `Unknown`; broader process-death coverage
+for other stages and service-level recovery are still open. The
+operation-controller requires explicit sink/secret configuration; no secret
+defaults were added.
 
 Focused local proof `fixture_credential_delivery_atomic_recovery_and_single_exposure`
 covers the real Clone/Capacity/ConfigurePe prefix, ordinary admission refusal,
@@ -62,5 +64,6 @@ generation refusals, passed in 8.97 seconds. All 31 store compile-fail doc tests
 passed. `cargo clippy -p postgres-store --all-targets --features fixture-ipc --
 -D warnings`, default-feature `cargo check -p postgres-store`, formatting and
 `git diff --check` passed.
-Current-source Linux qualification, process kill checkpoints, replacement-worker
-reclaim, service wiring and production acceptance remain separate open gates.
+Current-source Linux qualification, process-kill checkpoints beyond the tested
+credential-reclaim path, bounded production sink ownership, service wiring and
+production acceptance remain separate open gates.
