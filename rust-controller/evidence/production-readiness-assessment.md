@@ -58,6 +58,7 @@ Production and `192.168.2.4`: read-only throughout
 - Commit `ed76e78` adds fail-closed InstallAgent artifact identity binding. It does not verify artifact bytes/signatures, enroll the agent, prove service state, install, dispatch, or establish production readiness.
 - Commit `c9aa2f6` adds fail-closed AgentHeartbeat identity/freshness/sequence binding. It does not authenticate the agent, verify trusted timestamps, persist sequence CAS, accept heartbeats, dispatch, or establish production readiness.
 - Commit `8ef7f77` adds fail-closed VerifyOperational aggregate validation. Its booleans remain descriptive claims, not independently verified service/package/postcondition evidence; authenticated observations, durable results, fences, integration, and production readiness remain open.
+- Commit `5b59621` adds fail-closed export hash and rollback-window integrity checks. It does not prove signatures, manifest provenance, restore safety, database rollback compatibility, deployment, or production readiness.
 
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
 - Commit `7f556bfd` records a newer exact-source Linux/amd64 image for `6f582095` with all Dockerfile runtime gates and 254 verified source blobs. The owned fixture run did not start because image inspection timed out and Docker later stalled; no fixture runtime qualification is claimed.
