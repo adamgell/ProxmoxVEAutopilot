@@ -6,6 +6,87 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 
+/// Preserve the legacy JSON claim type. Numeric identities must not be silently
+/// converted to text because that changes the deterministic credential bytes.
+pub enum RunBearerIdentity<'a> {
+    Text(&'a str),
+    Integer(i64),
+}
+
+/// A server-issued credential. Explicit exposure is required for delivery;
+/// debug output never contains the bearer. This grants no session authority.
+///
+/// ```compile_fail
+/// let _: api_compat::run_bearer::IssuedRunBearer = serde_json::from_str("{}").unwrap();
+/// ```
+/// ```compile_fail
+/// let _ = api_compat::run_bearer::IssuedRunBearer { token: String::new() };
+/// ```
+pub struct IssuedRunBearer {
+    token: String,
+}
+
+impl std::fmt::Debug for IssuedRunBearer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IssuedRunBearer([REDACTED])")
+    }
+}
+
+impl IssuedRunBearer {
+    pub fn expose_for_delivery(&self) -> &str {
+        &self.token
+    }
+}
+
+/// Issue the canonical Python bearer using server-selected identity and absolute
+/// Unix expiry. Reissuing identical inputs returns identical bytes; it does not
+/// create or renew a session or its registration deadline. Text identities are
+/// bounded and control-free; integer identities must be positive.
+pub fn issue_run_bearer(
+    identity: RunBearerIdentity<'_>,
+    expires_at: i64,
+    secret: &[u8],
+) -> Result<IssuedRunBearer, BearerError> {
+    if secret.is_empty() {
+        return Err(BearerError::SecretUnavailable);
+    }
+    if expires_at <= 0 {
+        return Err(BearerError::Invalid);
+    }
+    let run = match identity {
+        RunBearerIdentity::Integer(n) if n > 0 => n.to_string(),
+        RunBearerIdentity::Text(s)
+            if !s.trim().is_empty() && s.len() <= 256 && !s.chars().any(char::is_control) =>
+        {
+            let json = serde_json::to_string(s).map_err(|_| BearerError::Invalid)?;
+            // Python json.dumps defaults to ensure_ascii=True, including UTF-16
+            // surrogate pairs for supplementary code points.
+            let mut ascii = String::new();
+            for c in json.chars() {
+                if c.is_ascii() {
+                    ascii.push(c);
+                } else {
+                    use std::fmt::Write;
+                    for unit in c.encode_utf16(&mut [0; 2]) {
+                        write!(ascii, "\\u{unit:04x}").map_err(|_| BearerError::Invalid)?;
+                    }
+                }
+            }
+            ascii
+        }
+        _ => return Err(BearerError::Invalid),
+    };
+    let head = URL_SAFE_NO_PAD.encode(format!("{{\"exp\":{expires_at},\"run_id\":{run}}}"));
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret).map_err(|_| BearerError::Invalid)?;
+    mac.update(head.as_bytes());
+    Ok(IssuedRunBearer {
+        token: format!(
+            "{head}.{}",
+            URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+        ),
+    })
+}
+
 /// Verified claims cannot be constructed from callback JSON.
 ///
 /// ```compile_fail
@@ -116,6 +197,87 @@ mod tests {
     // Independently generated with Python stdlib hmac/base64, synthetic secret.
     const TOKEN: &str = "Bearer eyJleHAiOjEwMDAsInJ1bl9pZCI6InJ1bi1maXh0dXJlIn0.TXZ1Og7YaNK55xMZq8Bl1tBozdZC-qau6PYS_hc_Rjk";
     const SECRET: &[u8] = b"synthetic-test-secret";
+
+    #[test]
+    fn issuer_matches_python_vectors_and_deterministic_reissue() {
+        for (identity, expected, run) in [
+            (
+                RunBearerIdentity::Text("run-fixture"),
+                TOKEN.strip_prefix("Bearer ").unwrap(),
+                "run-fixture",
+            ),
+            (
+                RunBearerIdentity::Integer(42),
+                "eyJleHAiOjEwMDAsInJ1bl9pZCI6NDJ9.vu1tRnERuHkmqXm0yghUsBIeeT35Ilf0RMf_k8FdUPw",
+                "42",
+            ),
+        ] {
+            let issued = issue_run_bearer(identity, 1000, SECRET).unwrap();
+            assert_eq!(issued.expose_for_delivery(), expected);
+            let authorization = format!("Bearer {}", issued.expose_for_delivery());
+            assert_eq!(
+                verify_run_bearer(Some(&authorization), SECRET, run, 1000)
+                    .unwrap()
+                    .expires_at(),
+                1000
+            );
+            assert_eq!(format!("{issued:?}"), "IssuedRunBearer([REDACTED])");
+        }
+        let issue =
+            || issue_run_bearer(RunBearerIdentity::Text("run-fixture"), 1000, SECRET).unwrap();
+        assert_eq!(issue().expose_for_delivery(), issue().expose_for_delivery());
+        assert_ne!(
+            issue().expose_for_delivery(),
+            issue_run_bearer(RunBearerIdentity::Text("run-fixture"), 1001, SECRET)
+                .unwrap()
+                .expose_for_delivery()
+        );
+    }
+
+    #[test]
+    fn issuer_preserves_python_ascii_json_escaping() {
+        let issued = issue_run_bearer(RunBearerIdentity::Text("é🚀\"\\"), 1000, SECRET).unwrap();
+        let head = issued.expose_for_delivery().split('.').next().unwrap();
+        assert_eq!(
+            String::from_utf8(URL_SAFE_NO_PAD.decode(head).unwrap()).unwrap(),
+            r#"{"exp":1000,"run_id":"\u00e9\ud83d\ude80\"\\"}"#
+        );
+        let header = format!("Bearer {}", issued.expose_for_delivery());
+        assert_eq!(
+            verify_run_bearer(Some(&header), SECRET, "é🚀\"\\", 999)
+                .unwrap()
+                .run_id(),
+            "é🚀\"\\"
+        );
+    }
+
+    #[test]
+    fn issuer_refuses_invalid_server_inputs() {
+        for run in ["", " ", "bad\nrun"] {
+            assert_eq!(
+                issue_run_bearer(RunBearerIdentity::Text(run), 1000, SECRET).unwrap_err(),
+                BearerError::Invalid
+            );
+        }
+        for n in [0, -1] {
+            assert_eq!(
+                issue_run_bearer(RunBearerIdentity::Integer(n), 1000, SECRET).unwrap_err(),
+                BearerError::Invalid
+            );
+            assert_eq!(
+                issue_run_bearer(RunBearerIdentity::Integer(42), n, SECRET).unwrap_err(),
+                BearerError::Invalid
+            );
+        }
+        assert_eq!(
+            issue_run_bearer(RunBearerIdentity::Text(&"a".repeat(257)), 1000, SECRET).unwrap_err(),
+            BearerError::Invalid
+        );
+        assert_eq!(
+            issue_run_bearer(RunBearerIdentity::Integer(42), 1000, b"").unwrap_err(),
+            BearerError::SecretUnavailable
+        );
+    }
 
     #[test]
     fn python_vector_preserves_expiry_boundary_and_run_scope() {
