@@ -28,7 +28,7 @@ still open. Authenticated callbacks, PeRegister, production legacy-run import,
 later workflow stages, and production-candidate acceptance remain incomplete.
 Historical milestone sections below describe their named revisions; statements
 that alias ownership was absent at those revisions do not describe current code.
-The current PR head is `e62f1fd6f587ff7d1072c4d78a087687011f5fbe` (verified 2026-09-11). GitHub reports the
+The current PR head is `3eae426391f8a2017a9f4ff3dff2e421ebde72de` (verified 2026-09-11). GitHub reports the
 duplicated Linux and macOS-arm64 checks as queued, with no completed
 qualification conclusion; no readiness claim is inferred from that snapshot.
 
