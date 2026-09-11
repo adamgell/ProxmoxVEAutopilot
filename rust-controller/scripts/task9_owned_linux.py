@@ -17,8 +17,8 @@ import time
 import uuid
 
 PG_IMAGE = "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
-RUNNER_IMAGE = "sha256:d615e6c8b3270ae13dc9ca95cf49aea549192b6775c1d0f1aa711457f5927f94"
-IMAGE_SOURCE = "35400bd02b9816b3a0bdff0c7df3cfd20fd6d1ee"
+RUNNER_IMAGE = "sha256:55564eb90ccd5f3773a8dbaf91b2c2e7821770972e376e21a077a60db10e668e"
+IMAGE_SOURCE = "518878d7a4c10ddccd2d21656caa7fa3a1308aeb"
 SOCKET = "unix:///Users/Adam.Gell/.orbstack/run/docker.sock"
 LABEL = "io.proxmoxveautopilot.task9-owned"
 DATA = "/var/lib/postgresql/data"
@@ -33,6 +33,7 @@ TMPFS = "rw,nosuid,nodev,size=4g,mode=0700"
 RUNTIME_PATHS = ("rust-controller/Cargo.toml", "rust-controller/Cargo.lock",
                  "rust-controller/Dockerfile.test", "rust-controller/crates")
 SMOKE = "scheduler::osdeploy::transition::tests::private_reclaim_and_repark_require_expired_exact_epoch_and_original_budget"
+START_PE = "fixture_start_pe_atomic_arming_rollback_race_and_reload"
 # These ignored entrypoints require input supplied by their supervising tests.
 # The full gate still includes intentional owned-storage qualification tests.
 SUPERVISED_CHILDREN = ("fixture_prefix_worker", "fixture_prefix_recovery_worker",
@@ -122,7 +123,7 @@ def validate_receipt(value):
 
 def profile_args(session, role, pg_id=None, receipt_path=None, script_path=None, mode="smoke"):
     require(re.fullmatch(r"[0-9a-f]{32}", session) is not None and role in CAPS)
-    require(mode in ("smoke", "full", "fixture", "recovery"))
+    require(mode in ("smoke", "full", "fixture", "recovery", "start-pe"))
     argv = ["create", "--pull=never", "--name", "task9-" + session + "-" + role,
             "--label", LABEL + ".session=" + session, "--label", LABEL + ".role=" + role,
             "--memory", str(CAPS[role]), "--memory-swap", str(CAPS[role]),
@@ -226,7 +227,7 @@ CGROUP_FILES = ["/sys/fs/cgroup/" + name for name in
 
 def workload(mode):
     """Closed test selections; fixture children are launched only by their parent tests."""
-    require(mode in ("smoke", "full", "fixture", "recovery"), "unknown workload")
+    require(mode in ("smoke", "full", "fixture", "recovery", "start-pe"), "unknown workload")
     if mode == "fixture":
         return (["cargo", "test", "--offline", "--locked", "-p", "pve-port",
                  "--features", "fixture-ipc", "--no-fail-fast", "--",
@@ -234,6 +235,9 @@ def workload(mode):
     argv = ["cargo", "test", "--offline", "--locked", "-p", "postgres-store"]
     if mode == "smoke":
         return (argv + ["--lib", SMOKE, "--", "--exact", "--nocapture", "--test-threads=1"], 180)
+    if mode == "start-pe":
+        return (argv + ["--features", "fixture-ipc", "--test", "osdeploy_durability",
+                        START_PE, "--", "--exact", "--nocapture", "--test-threads=1"], 300)
     if mode == "recovery":
         return (["cargo", "test", "--offline", "--locked", "-p", "operation-controller",
                  "--features", "fixture-ipc", "--test", "postgres_fixture_clone",
@@ -261,6 +265,9 @@ def inside(mode):
     if mode == "smoke":
         require(b"test result: ok. 1 passed; 0 failed;" in out
                 and ("test " + SMOKE + " ... ok").encode() in out, "exact smoke result missing")
+    if mode == "start-pe":
+        require(b"test result: ok. 1 passed; 0 failed;" in out
+                and ("test " + START_PE + " ... ok").encode() in out, "exact StartPe result missing")
     # The marker is forbidden for the one-test smoke proof, where it would
     # indicate that unrelated cleanup work leaked into the invocation. The
     # full suite intentionally exercises and emits that diagnostic, so its
@@ -398,10 +405,10 @@ def host(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--inside", choices=("smoke", "full", "fixture", "recovery"))
+    parser.add_argument("--inside", choices=("smoke", "full", "fixture", "recovery", "start-pe"))
     parser.add_argument("--runner-image")
     parser.add_argument("--evidence")
-    parser.add_argument("--mode", choices=("smoke", "full", "fixture", "recovery"), default="smoke")
+    parser.add_argument("--mode", choices=("smoke", "full", "fixture", "recovery", "start-pe"), default="smoke")
     args = parser.parse_args()
     if args.inside:
         return inside(args.inside)

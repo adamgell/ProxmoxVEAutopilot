@@ -21,6 +21,15 @@ class CapacityTests(unittest.TestCase):
 
 
 class ContractTests(unittest.TestCase):
+    def test_start_pe_workload_is_feature_gated_exact_and_bounded(self):
+        argv, seconds = gate.workload("start-pe")
+        self.assertEqual(seconds, 300)
+        self.assertEqual(argv, ["cargo", "test", "--offline", "--locked", "-p", "postgres-store",
+                               "--features", "fixture-ipc", "--test", "osdeploy_durability",
+                               gate.START_PE, "--", "--exact", "--nocapture", "--test-threads=1"])
+        runner = gate.profile_args("a" * 32, "runner", "b" * 64, "/receipt", "/script", "start-pe")
+        self.assertEqual(runner[-3:], [gate.SCRIPT, "--inside", "start-pe"])
+
     def test_fixture_workload_preserves_ignored_child_entrypoints(self):
         argv, seconds = gate.workload("fixture")
         self.assertEqual(argv, ["cargo", "test", "--offline", "--locked", "-p", "pve-port",
