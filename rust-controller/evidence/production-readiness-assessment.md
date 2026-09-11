@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `c78c9e9d`: this branch and PR #65 contain an accumulated
+Current scope at `7edbc7f2`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -56,6 +56,12 @@ consumer only records one-use outbox bookkeeping. No atomic supervisor-owned
 accepted/refused/ambiguous submit outcome exists yet; connecting release now
 would create a consumed/IPC-unknown split-brain retry window, so the gate
 remains intentionally closed.
+
+At `7edbc7f2`, the current-source Linux admission check refused qualification
+before Docker creation because the preserved image source was stale: 55 runtime
+files differ (8,150 additions and 114 deletions). A frozen current-source build
+and image/source reseal must precede Linux runtime qualification; no Linux pass
+is claimed from this receipt.
 
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
