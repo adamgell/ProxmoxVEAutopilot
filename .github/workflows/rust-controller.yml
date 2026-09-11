@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  # Match the owned Linux proof runner's stack budget for async integration tests.
+  RUST_MIN_STACK: "16777216"
 jobs:
   linux:
     runs-on: ubuntu-24.04
