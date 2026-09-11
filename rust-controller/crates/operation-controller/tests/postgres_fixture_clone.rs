@@ -1464,7 +1464,7 @@ async fn capture_start_pe_after_genuine_prefix(
         owner,
         request_sha256: envelope.request_sha256(),
     };
-    let port = Arc::new(
+    let build_start_port = || {
         FixtureProvisioningPort::new_late(
             directory.join("client.sock"),
             Duration::from_secs(2),
@@ -1485,7 +1485,41 @@ async fn capture_start_pe_after_genuine_prefix(
             predecessor_identity.clone(),
             predecessor.clone(),
         )
-        .unwrap(),
+        .unwrap()
+    };
+    assert!(
+        build_start_port()
+            .with_late_start_preflight_receipt(b"{}".to_vec())
+            .is_err()
+    );
+    assert!(
+        build_start_port()
+            .with_late_start_preflight_receipt(predecessor_receipt.to_vec())
+            .unwrap()
+            .with_late_start_preflight_receipt(predecessor_receipt.to_vec())
+            .is_err()
+    );
+    let port = Arc::new(
+        build_start_port()
+            .with_late_start_preflight_receipt(predecessor_receipt.to_vec())
+            .unwrap(),
+    );
+    let vm = request.plan().expected().vm();
+    let mut respelled = b" \n".to_vec();
+    respelled.extend_from_slice(predecessor_receipt);
+    assert!(
+        build_start_port()
+            .with_late_start_preflight_receipt(respelled)
+            .is_err()
+    );
+    assert_eq!(
+        port.provisioning_vm_config(vm.node(), vm.target_vmid())
+            .await
+            .unwrap(),
+        observer
+            .provisioning_vm_config(vm.node(), vm.target_vmid())
+            .await
+            .unwrap()
     );
     assert!(
         supervisor
@@ -1545,6 +1579,11 @@ async fn capture_start_pe_after_genuine_prefix(
             .ok
     );
     checkpoint.await.unwrap().unwrap();
+    assert_eq!(
+        port.provisioning_vm_config(vm.node(), vm.target_vmid())
+            .await,
+        Err(PveReadError::TransportUnavailable)
+    );
     let semantic = permit.submit_fake_once(port.as_ref()).await.unwrap();
     let original = port.captured_start_pe_response().unwrap();
     let controller_port: &dyn pve_port::fixture_ipc::ControllerFixturePort = port.as_ref();

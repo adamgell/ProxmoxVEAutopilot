@@ -48,6 +48,7 @@ impl FixtureStartPeResponseV1 {
 }
 
 pub(super) struct LateStartContext {
+    preflight_receipt: Option<Vec<u8>>,
     client: FixtureCheckpointClient,
     operation: Uuid,
     generation: Uuid,
@@ -66,6 +67,30 @@ struct Bound {
     original_response: Option<FixtureStartPeResponseV1>,
 }
 impl FixtureProvisioningPort {
+    /// Retain observation-only ConfigurePe receipt bytes. Every preflight read
+    /// validates the exact predecessor publication through this adapter's daemon.
+    /// Checkpoint binding permanently disables this predecessor-read path.
+    pub fn with_late_start_preflight_receipt(mut self, receipt: Vec<u8>) -> io::Result<Self> {
+        let invalid = || io::Error::new(io::ErrorKind::InvalidInput, "StartPe preflight rejected");
+        let context = self.late_start.as_mut().ok_or_else(invalid)?;
+        if context.preflight_receipt.is_some() || context.state.lock().unwrap().is_some() {
+            return Err(invalid());
+        }
+        let decoded = context
+            .predecessor
+            .decode_receipt(&receipt)
+            .map_err(|_| invalid())?;
+        if context
+            .predecessor
+            .encode_receipt(decoded.submission_sequence(), decoded.receipt().clone())
+            .map_err(|_| invalid())?
+            != receipt
+        {
+            return Err(invalid());
+        }
+        context.preflight_receipt = Some(receipt);
+        Ok(self)
+    }
     /// Return captured original IPC data. Restoring externally supplied receipt
     /// bytes never populates this value, even if their later readback succeeds.
     pub fn captured_start_pe_response(&self) -> Option<FixtureStartPeResponseV1> {
@@ -79,6 +104,15 @@ impl FixtureProvisioningPort {
             .clone()
     }
     pub(super) async fn start_inventory(&self) -> Result<FixtureCloneReads, PveReadError> {
+        if let Some(preflight) = self
+            .late_start
+            .as_ref()
+            .unwrap()
+            .preflight(&self.reads)
+            .await?
+        {
+            return Ok(preflight.inventory);
+        }
         let full = self
             .validate_bound_start_pe()
             .await?
@@ -199,6 +233,7 @@ impl FixtureProvisioningPort {
             ));
         }
         self.late_start = Some(LateStartContext {
+            preflight_receipt: None,
             client,
             operation: self.identity.operation,
             generation,
@@ -235,6 +270,15 @@ impl FixtureProvisioningPort {
     pub(super) async fn start_provisioning(
         &self,
     ) -> Result<FixtureProvisioningReadsV2, PveReadError> {
+        if let Some(preflight) = self
+            .late_start
+            .as_ref()
+            .unwrap()
+            .preflight(&self.reads)
+            .await?
+        {
+            return Ok(preflight.provisioning.map_identity(self.identity.clone()));
+        }
         let full = self
             .validate_bound_start_pe()
             .await?
@@ -295,6 +339,28 @@ impl FixtureProvisioningPort {
     }
 }
 impl LateStartContext {
+    async fn preflight(
+        &self,
+        reads: &FixtureReadClient,
+    ) -> Result<Option<FixtureSynchronousPostDispatchV1>, PveReadError> {
+        if self.state.lock().unwrap().is_some() {
+            return Ok(None);
+        }
+        let Some(receipt) = &self.preflight_receipt else {
+            return Ok(None);
+        };
+        let observed = reads
+            .synchronous_stage_post_dispatch(&self.predecessor_identity, &self.predecessor, receipt)
+            .await
+            .map_err(transport)?
+            .ok_or(PveReadError::TransportUnavailable)?;
+        // A checkpoint may race the read. Never return predecessor facts once
+        // this adapter has entered the StartPe dispatch state.
+        if self.state.lock().unwrap().is_some() {
+            return Err(PveReadError::TransportUnavailable);
+        }
+        Ok(Some(observed.observation))
+    }
     pub(super) fn provenance(
         &self,
     ) -> Result<crate::fixture_ipc::FixtureSharedHistoryProvenanceV1, CheckpointError> {
