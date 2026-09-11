@@ -191,6 +191,11 @@ impl PgStore {
             ))
             .execute(&mut *tx)
             .await?;
+            sqlx::raw_sql(include_str!(
+                "../migrations/0013_fixture_completion_package.sql"
+            ))
+            .execute(&mut *tx)
+            .await?;
             tx.commit().await?;
         }
         Ok(())

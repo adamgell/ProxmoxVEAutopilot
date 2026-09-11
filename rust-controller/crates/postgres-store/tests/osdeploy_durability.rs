@@ -36,6 +36,49 @@ async fn fixture_peregister_authenticated_selection_replay_and_rollback() {
 }
 
 #[cfg(all(feature = "fixture-ipc", unix))]
+#[tokio::test]
+async fn fixture_completion_package_delivery_survives_reclaim_and_reload() {
+    fixture_credential_delivery_reclaim_case(false, 4).await;
+}
+
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
+async fn fixture_completion_package_origin_is_immutable_and_replayable() {
+    let f = osdeploy_support::Fixture::new().await;
+    let plan = osdeploy_support::plan();
+    let key = uuid::Uuid::now_v7();
+    let sink = uuid::Uuid::now_v7();
+    let (a, b) = tokio::join!(
+        f.store
+            .create_fixture_osdeploy_with_completion_package(key, &plan, sink),
+        f.other
+            .create_fixture_osdeploy_with_completion_package(key, &plan, sink)
+    );
+    let created = a.unwrap();
+    assert_eq!(created, b.unwrap());
+    assert_eq!(
+        f.store
+            .create_fixture_osdeploy_with_delivery(key, &plan, sink)
+            .await
+            .unwrap_err(),
+        postgres_store::OsDeployStoreError::Conflict
+    );
+    assert!(sqlx::query("UPDATE rust_controller.fixture_osdeploy_origins SET completion_package=false WHERE create_request_id=$1").bind(key).execute(&f.pool).await.is_err());
+    let reopened = postgres_store::PgStore::new(f.pool.clone());
+    reopened.migrate().await.unwrap();
+    reopened.migrate().await.unwrap();
+    assert_eq!(
+        created,
+        reopened
+            .create_fixture_osdeploy_with_completion_package(key, &plan, sink)
+            .await
+            .unwrap()
+    );
+    let selected: bool = sqlx::query_scalar("SELECT completion_package FROM rust_controller.fixture_osdeploy_origins WHERE create_request_id=$1").bind(key).fetch_one(&f.pool).await.unwrap();
+    assert!(selected);
+}
+
+#[cfg(all(feature = "fixture-ipc", unix))]
 async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register: u8) {
     use controller_domain::ExecutionState;
     use osdeploy_adapter::OsDeployStage;
@@ -46,7 +89,9 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
     use pve_port::ProvisioningEvaluationModeV1;
     use std::os::unix::fs::DirBuilderExt;
     let sink_id = uuid::Uuid::now_v7();
-    let s = if register == 2 {
+    let s = if register == 4 {
+        osdeploy_execution_support::Scenario::fixture_completion_delivery(sink_id).await
+    } else if register == 2 {
         osdeploy_execution_support::Scenario::fixture_delivery_short_registration(sink_id).await
     } else {
         osdeploy_execution_support::Scenario::fixture_delivery(sink_id).await
@@ -302,6 +347,23 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
         .await
         .unwrap();
     s.db.store.load_osdeploy_operation(op).await.unwrap();
+    let bytes: Vec<u8> = sqlx::query_scalar("SELECT package_canonical_bytes FROM rust_controller.fixture_pe_boot_sessions WHERE operation_id=$1")
+        .bind(op.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    let package: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        package["schema"],
+        if register == 4 {
+            "materialized_fixture_pe_completion_package_v1"
+        } else {
+            "materialized_pe_package_semantics_v1"
+        }
+    );
+    if register == 4 {
+        assert_eq!(
+            package["completion_definition_sha256"],
+            event_journal::payload_digest(&package["completion_requirement"]).unwrap()
+        );
+    }
     if register != 0 {
         let mut start_grant = grant.clone();
         let mut satisfied = false;

@@ -79,7 +79,7 @@ impl Scheduler {
             #[cfg(feature = "fixture-ipc")]
             if snapshot.plan().stage() == OsDeployStage::StartPe {
                 let registration = load::load_registration(tx, snapshot.run_id()).await?;
-                let package = registration.materialize_pe_package_semantics().map_err(|_| Error::Validation)?;
+                let package = load::fixture_package(tx, &registration).await?;
                 let budget = registration.plan().policy().registration_seconds();
                 let deadline = at.checked_add_signed(chrono::Duration::seconds(i64::from(budget))).ok_or(Error::Validation)?;
                 sqlx::query("INSERT INTO rust_controller.osdeploy_deadlines(run_id,scope_key,anchor_operation_id,anchor_event_id,opened_at,budget_seconds,deadline_at) VALUES($1,'pe_registration',$2,$3,$4,$5,$6)")

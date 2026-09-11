@@ -4,10 +4,13 @@ use controller_domain::{CommandEnvelope, SemanticOperationKey, WorkflowKind};
 use osdeploy_adapter::restore_osdeploy_plan_v1;
 use uuid::Uuid;
 
+#[cfg(feature = "fixture-ipc")]
+type FixtureOriginRow = (Uuid, String, String, String, String, Option<Uuid>, bool);
+
 enum RegistrationOrigin {
     Existing(RunId),
     #[cfg(feature = "fixture-ipc")]
-    FixtureCreate(Uuid, Option<Uuid>),
+    FixtureCreate(Uuid, Option<Uuid>, bool),
 }
 
 impl PgStore {
@@ -28,7 +31,7 @@ impl PgStore {
         create_request: Uuid,
         plan: &OsDeployPlanV1,
     ) -> Result<FixtureCreatedOsDeployV1, OsDeployStoreError> {
-        self.create_fixture_osdeploy_inner(create_request, plan, None)
+        self.create_fixture_osdeploy_inner(create_request, plan, None, false)
             .await
     }
 
@@ -45,7 +48,23 @@ impl PgStore {
         if sink_id.is_nil() {
             return Err(OsDeployStoreError::Validation);
         }
-        self.create_fixture_osdeploy_inner(create_request, plan, Some(sink_id))
+        self.create_fixture_osdeploy_inner(create_request, plan, Some(sink_id), false)
+            .await
+    }
+
+    /// Opt in a new fixture origin to the immutable completion package schema.
+    /// This does not enable completion callbacks or alter existing origins.
+    #[cfg(feature = "fixture-ipc")]
+    pub async fn create_fixture_osdeploy_with_completion_package(
+        &self,
+        create_request: Uuid,
+        plan: &OsDeployPlanV1,
+        sink_id: Uuid,
+    ) -> Result<FixtureCreatedOsDeployV1, OsDeployStoreError> {
+        if sink_id.is_nil() {
+            return Err(OsDeployStoreError::Validation);
+        }
+        self.create_fixture_osdeploy_inner(create_request, plan, Some(sink_id), true)
             .await
     }
 
@@ -55,13 +74,14 @@ impl PgStore {
         create_request: Uuid,
         plan: &OsDeployPlanV1,
         sink_id: Option<Uuid>,
+        completion_package: bool,
     ) -> Result<FixtureCreatedOsDeployV1, OsDeployStoreError> {
         if create_request.is_nil() {
             return Err(OsDeployStoreError::Validation);
         }
         let ids = self
             .enqueue_osdeploy_inner(
-                RegistrationOrigin::FixtureCreate(create_request, sink_id),
+                RegistrationOrigin::FixtureCreate(create_request, sink_id, completion_package),
                 plan,
             )
             .await?;
@@ -101,20 +121,21 @@ impl PgStore {
         let run = match origin {
             RegistrationOrigin::Existing(run) => run,
             #[cfg(feature = "fixture-ipc")]
-            RegistrationOrigin::FixtureCreate(key, sink_id) => {
+            RegistrationOrigin::FixtureCreate(key, sink_id, completion_package) => {
                 sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
                     .bind(format!("fixture:create-osdeploy:{key}"))
                     .execute(&mut *tx)
                     .await?;
-                let stored: Option<(Uuid, String, String, String, String, Option<Uuid>)> = sqlx::query_as("SELECT run_id,source_namespace,claim_kind,claim_value,workflow_sha256,credential_sink_id FROM rust_controller.fixture_osdeploy_origins WHERE create_request_id=$1")
+                let stored: Option<FixtureOriginRow> = sqlx::query_as("SELECT run_id,source_namespace,claim_kind,claim_value,workflow_sha256,credential_sink_id,completion_package FROM rust_controller.fixture_osdeploy_origins WHERE create_request_id=$1")
                     .bind(key).fetch_optional(&mut *tx).await?;
                 match stored {
-                    Some((run, source, kind, value, fingerprint, stored_sink)) => {
+                    Some((run, source, kind, value, fingerprint, stored_sink, stored_package)) => {
                         if source != "rust-owned-fixture-v1"
                             || kind != "text"
                             || value != run.to_string()
                             || fingerprint != hash
                             || stored_sink != sink_id
+                            || stored_package != completion_package
                         {
                             return Err(OsDeployStoreError::Conflict);
                         }
@@ -194,9 +215,9 @@ impl PgStore {
         sqlx::query("INSERT INTO rust_controller.native_vm_reservations(cluster_key,vmid,vm_uuid,mac,run_id,plan_digest) VALUES($1,$2,$3,$4,$5,$6)").bind(vm.cluster_key().to_string()).bind(vmid).bind(uuid).bind(vm.mac().to_string()).bind(run.as_uuid()).bind(vm_digest).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO rust_controller.osdeploy_runs(run_id,contract_version,workflow_sha256,plan_canonical_json) VALUES($1,1,$2,$3)").bind(run.as_uuid()).bind(&hash).bind(canonical).execute(&mut *tx).await?;
         #[cfg(feature = "fixture-ipc")]
-        if let RegistrationOrigin::FixtureCreate(key, sink_id) = origin {
-            sqlx::query("INSERT INTO rust_controller.fixture_osdeploy_origins(create_request_id,run_id,source_namespace,claim_kind,claim_value,workflow_sha256,credential_sink_id) VALUES($1,$2,'rust-owned-fixture-v1','text',$3,$4,$5)")
-                .bind(key).bind(run.as_uuid()).bind(run.as_uuid().to_string()).bind(&hash).bind(sink_id).execute(&mut *tx).await?;
+        if let RegistrationOrigin::FixtureCreate(key, sink_id, completion_package) = origin {
+            sqlx::query("INSERT INTO rust_controller.fixture_osdeploy_origins(create_request_id,run_id,source_namespace,claim_kind,claim_value,workflow_sha256,credential_sink_id,completion_package) VALUES($1,$2,'rust-owned-fixture-v1','text',$3,$4,$5,$6)")
+                .bind(key).bind(run.as_uuid()).bind(run.as_uuid().to_string()).bind(&hash).bind(sink_id).bind(completion_package).execute(&mut *tx).await?;
         }
         sqlx::query("INSERT INTO rust_controller.osdeploy_agent_reservations(expected_agent_id,run_id) VALUES($1,$2)").bind(plan.names().expected_agent_id()).bind(run.as_uuid()).execute(&mut *tx).await?;
         let ids = OsDeployWorkflowIds {

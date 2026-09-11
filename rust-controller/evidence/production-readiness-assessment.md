@@ -398,6 +398,21 @@ adopting this explicit schema, validating reports, and the atomic grace
 transaction remain unimplemented. No callback acceptance is enabled by producing
 the package.
 
+Delivery adoption now has an explicit immutable origin selector. Migration 0013
+defaults existing origins to their original package schema; only the new
+`create_fixture_osdeploy_with_completion_package()` entry point selects the
+completion schema and requires a non-nil private sink. Replaying a create key
+with the other schema conflicts. Session arming, alias issuance, and execution
+reload all resolve bytes from this persisted selector. This preserves historical
+session/alias digests and binds newly opted-in delivery to the completion
+definition. Callback report adjudication and grace activation remain closed.
+Verification: both completion-package integration tests passed (77.17 seconds),
+covering delivery/reclaim/reload, exact schema/digest, concurrent origin creation,
+schema replay conflict, immutable selector, and repeated migration. Historical
+alias replay/renew/rollback/reopen passed (10.63 seconds); all-feature store
+library/test Clippy with warnings denied, no-feature compilation, formatting and
+whitespace checks passed.
+
 - Complete sixteen-stage OSDeploy service execution, including callback, guest-agent, host-side QGA, media, firmware, disk-growth, and terminal/recovery behavior.
 - Independent-process restart, crash, restore, rollback, and response-loss behavior across the complete service workflow.
 - Compatibility with every retained Python/Ansible ingress and callback contract under a real dual-executor handoff.

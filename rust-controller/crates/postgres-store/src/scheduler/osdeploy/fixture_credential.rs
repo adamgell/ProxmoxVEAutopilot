@@ -81,9 +81,7 @@ impl Scheduler {
                 && workflow == snapshot.plan().workflow_sha256(),
         )?;
         let registration = load::load_registration(&mut tx, snapshot.run_id()).await?;
-        let package = registration
-            .materialize_pe_package_semantics()
-            .map_err(|_| Error::Validation)?;
+        let package = load::fixture_package(&mut tx, &registration).await?;
         let session: Option<(Uuid, Uuid, String, DateTime<Utc>)> = sqlx::query_as("SELECT run_id,attempt_id,package_sha256,registration_deadline FROM rust_controller.fixture_pe_boot_sessions WHERE operation_id=$1 FOR UPDATE")
             .bind(grant.operation_id().as_uuid()).fetch_optional(&mut *tx).await?;
         let (run, attempt, digest, deadline) = session.ok_or(Error::Validation)?;

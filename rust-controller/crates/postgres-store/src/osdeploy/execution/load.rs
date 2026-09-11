@@ -15,6 +15,27 @@ use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
+/// Resolve package bytes from the immutable origin selector. Absent origins
+/// are historical physical fixtures and retain the original materialization.
+#[cfg(feature = "fixture-ipc")]
+pub(crate) async fn fixture_package(
+    tx: &mut Transaction<'_, Postgres>,
+    registration: &OsDeployRegistrationV1,
+) -> Result<crate::MaterializedPePackageSemanticsV1, Error> {
+    let completion: Option<bool> = sqlx::query_scalar(
+        "SELECT completion_package FROM rust_controller.fixture_osdeploy_origins WHERE run_id=$1",
+    )
+    .bind(registration.ids().run_id().as_uuid())
+    .fetch_optional(&mut **tx)
+    .await?;
+    if completion == Some(true) {
+        registration.materialize_fixture_completion_package()
+    } else {
+        registration.materialize_pe_package_semantics()
+    }
+    .map_err(|_| Error::Validation)
+}
+
 /// Reuse declaration validation under the scheduler's existing run lock.
 pub(crate) async fn load_registration(
     tx: &mut Transaction<'_, Postgres>,
@@ -223,9 +244,7 @@ pub(super) async fn load_records(
         require(!credential_history || delivery.is_some())?;
         if let Some(delivery) = delivery {
             let d = dispatch.as_ref().ok_or(Error::Validation)?;
-            let package = registration
-                .materialize_pe_package_semantics()
-                .map_err(|_| Error::Validation)?;
+            let package = fixture_package(tx, &registration).await?;
             let deadline = scopes
                 .get("pe_registration")
                 .ok_or(Error::Validation)?
@@ -268,9 +287,7 @@ pub(super) async fn load_records(
             }
         }
         if let (Some(s), Some(d)) = (session, dispatch.as_ref()) {
-            let package = registration
-                .materialize_pe_package_semantics()
-                .map_err(|_| Error::Validation)?;
+            let package = fixture_package(tx, &registration).await?;
             let epoch = DecisionEnvelope::decode(&s.try_get::<String, _>("epoch_json")?)?;
             let Detail::LeaseAcquired(lease) = epoch.detail else {
                 return Err(Error::Validation);
