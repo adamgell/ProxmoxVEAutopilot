@@ -38,6 +38,7 @@ Production and `192.168.2.4`: read-only throughout
 - Commit `19ea3c17` adds typed full-bundle readback with replay and forged-checksum refusal. This strengthens evidence restoration only; it does not wire general adapter satisfaction or prove PostgreSQL progression, process-death recovery, or production readiness.
 - Commit `f4b7179` adds a PostgreSQL negative admission proof: StartPe evidence is rejected before the action/scheduler/lifecycle gates, with no database mutation or dispatch. This is a safety gate, not positive four-stage acceptance or production readiness.
 - Commit `096ba407` adds a read-only adapter validation outcome for complete full StartPe evidence, with missing-evidence preservation and pre-I/O identity/context refusal. It does not integrate the PostgreSQL caller, prove worker-death recovery, or establish production readiness.
+- Commit `f2cc6d38` adds separate-process full-publication worker/daemon recovery with byte-identical replay and duplicate refusal. It does not establish PostgreSQL receipt durability, controller satisfaction, later guest stages, or production readiness.
 
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
 - The final macOS four-package regression at `557bd12` passed 665 tests, with 3 intentionally ignored, under a bounded supervisor.
