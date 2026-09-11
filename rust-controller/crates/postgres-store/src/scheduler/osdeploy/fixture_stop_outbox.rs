@@ -213,7 +213,8 @@ impl Scheduler {
                 row.try_get::<Uuid, _>("attempt_id")? == grant.attempt_id().as_uuid()
                     && row.try_get::<Uuid, _>("lease_token")? == grant.lease_token()
                     && row.try_get::<i64, _>("generation")? == grant.generation()
-                    && row.try_get::<String, _>("request_sha256")? == request.request_sha256()
+                    && required_request_sha256(row.try_get("request_sha256")?)?
+                        == request.request_sha256()
                     && row.try_get::<String, _>("admission_sha256")? == digest
                     && row.try_get::<String, _>("admission_json")? == admission
                     && row.try_get::<String, _>("sample_json")? == sample_json
@@ -270,7 +271,7 @@ impl Scheduler {
                 && row.try_get::<Uuid, _>("attempt_id")? == grant.attempt_id().as_uuid()
                 && row.try_get::<Uuid, _>("lease_token")? == grant.lease_token()
                 && row.try_get::<i64, _>("generation")? == grant.generation()
-                && row.try_get::<String, _>("request_sha256")?
+                && required_request_sha256(row.try_get("request_sha256")?)?
                     == snapshot
                         .dispatch()
                         .ok_or(Error::CapabilityUnavailable)?
@@ -285,7 +286,7 @@ impl Scheduler {
         let sample_value = serde_json::to_value(&sample).map_err(|_| Error::Validation)?;
         let sample_sha256 =
             event_journal::payload_digest(&sample_value).map_err(|_| Error::Validation)?;
-        let request_sha256 = row.try_get::<String, _>("request_sha256")?;
+        let request_sha256 = required_request_sha256(row.try_get("request_sha256")?)?;
         let provenance_sha256 = row
             .try_get::<Option<String>, _>("provenance_sha256")?
             .ok_or(Error::CapabilityUnavailable)?;
@@ -312,6 +313,14 @@ impl Scheduler {
     }
 }
 
+/// The request digest was added additively to the stop outbox. Rows selected
+/// by an older controller can therefore have NULL here. Treat that legacy
+/// row as unavailable rather than letting a driver-level NULL decode decide
+/// the error shape or accidentally treating it as a usable stop identity.
+fn required_request_sha256(value: Option<String>) -> Result<String, Error> {
+    value.ok_or(Error::CapabilityUnavailable)
+}
+
 fn validate_consumed_proposal(
     consumed: &FixtureStopOutboxConsumedV1,
     proposal: &pve_port::fixture_ipc::FixtureStopReleaseProposalV1,
@@ -326,4 +335,21 @@ fn validate_consumed_proposal(
             && consumed.sample_sha256 == proposal.sample_sha256()
             && consumed.provenance_sha256 == proposal.provenance_sha256(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_null_request_digest_is_explicitly_unavailable() {
+        assert!(matches!(
+            required_request_sha256(None),
+            Err(Error::CapabilityUnavailable)
+        ));
+        assert_eq!(
+            required_request_sha256(Some("a".repeat(64))).unwrap(),
+            "a".repeat(64)
+        );
+    }
 }
