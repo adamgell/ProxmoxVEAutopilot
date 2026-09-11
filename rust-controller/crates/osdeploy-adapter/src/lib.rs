@@ -2,6 +2,8 @@
 
 mod disk_boot_boundary;
 mod guest_action;
+mod operational_boundary;
+pub use operational_boundary::{OperationalBindingV1, OperationalRefusal, OperationalReportV1};
 mod heartbeat_boundary;
 pub use heartbeat_boundary::{HeartbeatBindingV1, HeartbeatRefusal, HeartbeatReportV1};
 mod install_agent_boundary;
