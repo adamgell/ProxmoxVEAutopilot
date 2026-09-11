@@ -1,6 +1,7 @@
 #![cfg(feature = "fixture-ipc")]
 #[allow(dead_code)]
 mod provisioning_seed_support;
+mod start_full_process;
 use provisioning_seed_support::support as provisioning_support;
 use provisioning_seed_support::support::*;
 use pve_port::{fixture_ipc::FixtureCloneRequest, fixture_support::*, *};
@@ -403,6 +404,15 @@ fn synchronous_contract_requires_configure_receipt_and_rejects_task_fields() {
 
 #[tokio::test]
 async fn synchronous_configure_publication_requires_resize_and_invalidates_on_restart() {
+    full_start_pe_case(false).await;
+}
+
+#[tokio::test]
+async fn full_start_pe_worker_death_preserves_exact_publication_and_ledger() {
+    full_start_pe_case(true).await;
+}
+
+async fn full_start_pe_case(process_death: bool) {
     use pve_port::fixture_ipc::FixtureStageRequest;
     use std::{
         fs,
@@ -421,13 +431,16 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
     let mut start_readback = None;
     let mut full_publication = None;
     let mut full_command: Option<Value> = None;
+    let mut process_durable_bytes: Option<(std::path::PathBuf, Vec<u8>, Vec<u8>)> = None;
     for restart in [false, true] {
         if restart {
             fs::remove_file(directory.join("client.sock")).unwrap();
             fs::remove_file(directory.join("supervisor.sock")).unwrap();
         }
         let path = directory.clone();
-        let daemon = std::thread::spawn(move || run(&path, Duration::from_secs(5)).unwrap());
+        let mut process = process_death.then(|| start_full_process::OwnedChild::daemon(&directory));
+        let daemon = (!process_death)
+            .then(|| std::thread::spawn(move || run(&path, Duration::from_secs(5)).unwrap()));
         let client = directory.join("client.sock");
         let control = directory.join("supervisor.sock");
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -436,6 +449,11 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         let reader = FixtureReadClient::new(client.clone(), Duration::from_secs(1)).unwrap();
+        if restart && process_death {
+            let (sidecar, bytes, ledger) = process_durable_bytes.as_ref().unwrap();
+            assert_eq!(&fs::read(sidecar).unwrap(), bytes);
+            assert_eq!(&fs::read(directory.join("fixture.log")).unwrap(), ledger);
+        }
         if restart {
             let (identity, request, receipt) = &accepted[2];
             assert!(
@@ -486,6 +504,17 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             )
             .unwrap();
             let receipt: Vec<u8> = serde_json::from_value(expected["receipt"].clone()).unwrap();
+            if process_death {
+                let replay = start_full_process::worker(
+                    &directory,
+                    identity,
+                    &restored_request,
+                    &receipt,
+                    false,
+                )
+                .await;
+                assert_eq!(replay, full_publication.clone().unwrap());
+            }
             let validated = start_adapter(client.clone(), identity, &restored_request)
                 .validate_start_pe(identity, &restored_request, &receipt)
                 .await
@@ -946,6 +975,20 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             }
             assert!(wire(&client, command.clone()).await.is_err());
             full_publication = Some(wire(&control, command.clone()).await.unwrap());
+            if process_death {
+                let ledger = fs::read(directory.join("fixture.log")).unwrap();
+                let path = directory.join(format!(
+                    "start-full-{}-{}.json",
+                    identity.operation, identity.request_sha256
+                ));
+                let sidecar = fs::read(&path).unwrap();
+                let recovered =
+                    start_full_process::worker(&directory, &identity, &start, &original, true)
+                        .await;
+                assert_eq!(recovered, full_publication.clone().unwrap());
+                assert_eq!(fs::read(&path).unwrap(), sidecar);
+                assert_eq!(fs::read(directory.join("fixture.log")).unwrap(), ledger);
+            }
             let validated = start_adapter(client.clone(), &identity, &start)
                 .validate_start_pe(&identity, &start, &original)
                 .await
@@ -1213,8 +1256,26 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             let status = reader.status().await.unwrap();
             assert_eq!((status.attempts, status.effects), (4, 4));
         }
-        wire(&control, json!({"command":"shutdown"})).await.unwrap();
-        daemon.join().unwrap();
+        if process_death && !restart {
+            let sidecar = directory.join(format!(
+                "start-full-{}-{}.json",
+                identity.operation, identity.request_sha256
+            ));
+            process_durable_bytes = Some((
+                sidecar.clone(),
+                fs::read(sidecar).unwrap(),
+                fs::read(directory.join("fixture.log")).unwrap(),
+            ));
+            process.as_mut().unwrap().kill();
+        } else {
+            wire(&control, json!({"command":"shutdown"})).await.unwrap();
+            if let Some(mut process) = process {
+                process.wait();
+            }
+            if let Some(daemon) = daemon {
+                daemon.join().unwrap();
+            }
+        }
         let ledger = std::fs::read_to_string(directory.join("fixture.log")).unwrap();
         assert_eq!(
             ledger
