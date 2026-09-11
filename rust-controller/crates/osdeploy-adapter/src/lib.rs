@@ -2,6 +2,8 @@
 
 mod disk_boot_boundary;
 mod guest_action;
+mod verify_qga_boundary;
+pub use verify_qga_boundary::{VerifyQgaBindingV1, VerifyQgaRefusal, VerifyQgaReportV1};
 mod install_qga_boundary;
 pub use disk_boot_boundary::{DiskBootEvidenceV1, DiskBootRefusal, DiskBootScopeV1};
 pub use install_qga_boundary::{HostQgaClaimV1, InstallQgaRefusal, InstallQgaScopeV1};
