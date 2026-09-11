@@ -1,6 +1,11 @@
 //! Pure OSDeploy stage and validated input contract.
 
 mod guest_action;
+mod pe_register_callback;
+pub use pe_register_callback::{
+    PeRegisterCallbackCandidateV1, PeRegisterCallbackRefusal, PeRegisterRequestIdentityV1,
+    PeRegisterResultIdentityV1,
+};
 mod pe_registration_precision;
 pub use pe_registration_precision::PeRegistrationAnchorV2;
 mod input_values;
