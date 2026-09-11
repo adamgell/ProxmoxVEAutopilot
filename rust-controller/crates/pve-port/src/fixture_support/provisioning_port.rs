@@ -445,6 +445,23 @@ impl PveReadPort for FixtureProvisioningPort {
     }
     async fn task_status(&self, node: &NodeName, upid: &Upid) -> Result<TaskStatus, PveReadError> {
         self.bind(node)?;
+        if self.late_start.is_some() {
+            let full = self
+                .validate_bound_start_pe()
+                .await?
+                .ok_or(PveReadError::TransportUnavailable)?;
+            let durable = full.observation.durable;
+            if durable.task_upid != upid.as_str() {
+                return Err(PveReadError::InvalidResponse);
+            }
+            let time = i64::try_from(durable.task_observed_unix_ms)
+                .ok()
+                .and_then(DateTime::from_timestamp_millis)
+                .ok_or(PveReadError::InvalidResponse)?;
+            // The validated full StartPe publication proves this exact task
+            // succeeded. Never infer running/failed states or refresh its time.
+            return Ok(TaskStatus::complete(upid.clone(), time));
+        }
         let task = self.post_dispatch().await?.task;
         if task.identity.upid != upid.as_str() {
             return Err(PveReadError::InvalidResponse);

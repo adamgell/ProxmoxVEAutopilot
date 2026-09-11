@@ -878,6 +878,10 @@ async fn full_start_pe_case(process_death: bool) {
                 assert!(port.submit_provisioning(start.request()).await.is_err());
                 assert!(port.validate_bound_start_pe().await.unwrap().is_none());
                 let vm = start.request().plan().expected().vm();
+                let MutationReceipt::Task(upid) = &actual else {
+                    panic!("StartPe must return its actual task receipt")
+                };
+                assert!(port.task_status(vm.node(), upid).await.is_err());
                 assert!(
                     port.provisioning_vm_config(vm.node(), vm.target_vmid())
                         .await
@@ -1116,6 +1120,20 @@ async fn full_start_pe_case(process_death: bool) {
                 // a complete bundle must not turn a missing member into a match.
                 let vm = start.request().plan().expected().vm();
                 let other_node = NodeName::parse("other-node").unwrap();
+                let task_upid = Upid::parse(&publication.observation.durable.task_upid).unwrap();
+                let task = port.task_status(vm.node(), &task_upid).await.unwrap();
+                assert_eq!(task.upid(), &task_upid);
+                assert_eq!(task.state(), TaskState::CompleteSuccess);
+                assert_eq!(
+                    task.observed_at().timestamp_millis() as u64,
+                    publication.observation.durable.task_observed_unix_ms
+                );
+                assert!(port.task_status(&other_node, &task_upid).await.is_err());
+                let wrong_upid =
+                    Upid::parse("UPID:pve-test:00000002:00000001:00000001:qmclone:900:fake@pve:")
+                        .unwrap();
+                assert_ne!(wrong_upid, task_upid);
+                assert!(port.task_status(vm.node(), &wrong_upid).await.is_err());
                 let absent = Vmid::new(777).unwrap();
                 assert!(cluster.find(absent).is_none());
                 let ledger_before_queries = fs::read(directory.join("fixture.log")).unwrap();
