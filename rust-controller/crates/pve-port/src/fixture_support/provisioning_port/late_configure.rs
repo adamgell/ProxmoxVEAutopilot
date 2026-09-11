@@ -98,6 +98,17 @@ fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "ConfigurePe binding rejected")
 }
 impl LateConfigureContext {
+    pub(super) fn shared_history_provenance(
+        &self,
+    ) -> Result<crate::fixture_ipc::FixtureSharedHistoryProvenanceV1, CheckpointError> {
+        self.client.shared_history_provenance(&CheckpointBinding {
+            operation: self.operation,
+            generation: self.generation,
+            owner: self.owner,
+            point: CheckpointPoint::DispatchCommitted,
+        })
+    }
+
     fn bind(&self, request: &ProvisioningMutationRequestV1) -> Result<Bound, CheckpointError> {
         let ProvisioningMutationRequestV1::Configure(configure) = request else {
             return Err(CheckpointError::Rejected);

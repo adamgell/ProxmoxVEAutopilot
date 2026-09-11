@@ -288,7 +288,7 @@ pub async fn run() {
         std::path::PathBuf::from(std::env::var_os("PVA_PREFIX_INPUT").expect("owned prefix input"));
     let directory = input.parent().unwrap();
     let Input { identity, setup } = serde_json::from_slice(&fs::read(&input).unwrap()).unwrap();
-    let operation =
+    let operation: controller_domain::OperationId =
         serde_json::from_value(serde_json::to_value(identity.operation).unwrap()).unwrap();
     let port = FixtureProvisioningPort::new_late(
         directory.join("client.sock"),
@@ -299,6 +299,17 @@ pub async fn run() {
     let checkpoint =
         FixtureCheckpointClient::new(directory.join("client.sock"), Duration::from_secs(2))
             .unwrap();
+    let configure_binding = match &setup {
+        Setup::Configure {
+            generation, owner, ..
+        } => Some(CheckpointBinding {
+            operation: operation.as_uuid(),
+            generation: *generation,
+            owner: *owner,
+            point: CheckpointPoint::DispatchCommitted,
+        }),
+        _ => None,
+    };
     let port = match setup {
         Setup::Clone(binding) => port.with_checkpoint(checkpoint, binding).unwrap(),
         Setup::Resize {
@@ -332,6 +343,44 @@ pub async fn run() {
             )
             .unwrap(),
     };
+    if let Some(binding) = configure_binding {
+        let client =
+            FixtureCheckpointClient::new(directory.join("client.sock"), Duration::from_secs(2))
+                .unwrap();
+        let provenance = port
+            .shared_history_provenance()
+            .expect("bound ConfigurePe provenance");
+        assert_eq!(
+            provenance,
+            client.shared_history_provenance(&binding).unwrap()
+        );
+        for changed in [
+            CheckpointBinding {
+                generation: uuid::Uuid::now_v7(),
+                ..binding
+            },
+            CheckpointBinding {
+                owner: uuid::Uuid::now_v7(),
+                ..binding
+            },
+            CheckpointBinding {
+                operation: uuid::Uuid::now_v7(),
+                ..binding
+            },
+        ] {
+            assert_ne!(
+                provenance,
+                client.shared_history_provenance(&changed).unwrap()
+            );
+        }
+        let different =
+            FixtureCheckpointClient::new(directory.join("other.sock"), Duration::from_secs(2))
+                .unwrap();
+        assert_ne!(
+            provenance,
+            different.shared_history_provenance(&binding).unwrap()
+        );
+    }
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(4)
         .acquire_timeout(Duration::from_secs(2))

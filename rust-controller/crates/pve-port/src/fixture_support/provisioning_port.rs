@@ -355,6 +355,9 @@ impl crate::fixture_ipc::ControllerFixturePort for FixtureProvisioningPort {
     fn shared_history_provenance(
         &self,
     ) -> Option<crate::fixture_ipc::FixtureSharedHistoryProvenanceV1> {
+        if let Some(configure) = &self.late_configure {
+            return configure.shared_history_provenance().ok();
+        }
         let (client, binding) = self.checkpoint.as_ref()?;
         client.shared_history_provenance(binding).ok()
     }
