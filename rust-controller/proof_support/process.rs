@@ -139,20 +139,48 @@ impl Drop for ManagedChild {
         let deadline = self
             .cleanup_deadline
             .unwrap_or_else(|| Instant::now() + REAP_GRACE);
-        let _ = self.child.kill();
-        loop {
-            if matches!(self.child.try_wait(), Ok(Some(_))) {
-                self.reaped = true;
-                return;
+        let started = Instant::now();
+        let kill_error = self
+            .child
+            .kill()
+            .err()
+            .map(|e| (e.kind(), e.raw_os_error()));
+        match reap_until(deadline, || self.child.try_wait().map(|s| s.is_some())) {
+            Ok(()) => self.reaped = true,
+            Err(wait_error) => {
+                let finished = Instant::now();
+                eprintln!(
+                    "native_fake_child_reap_unconfirmed pid={} cleanup_elapsed_us={} deadline_remaining_at_start_us={} deadline_overrun_us={} kill_error={:?} wait_error={:?}",
+                    self.child.id(),
+                    finished.duration_since(started).as_micros(),
+                    deadline.saturating_duration_since(started).as_micros(),
+                    finished.saturating_duration_since(deadline).as_micros(),
+                    kill_error,
+                    wait_error,
+                );
             }
-            if Instant::now() >= deadline {
-                eprintln!("native_fake_child_reap_unconfirmed");
-                return;
-            }
-            std::thread::sleep(
-                POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
-            );
         }
+    }
+}
+
+// Poll once even when the original deadline has expired: an already exited
+// child can still be reaped without extending the deadline. None is pending,
+// not success. Retain the last OS error without printing arbitrary error text.
+fn reap_until(
+    deadline: Instant,
+    mut poll: impl FnMut() -> io::Result<bool>,
+) -> Result<(), Option<(io::ErrorKind, Option<i32>)>> {
+    let mut wait_error = None;
+    loop {
+        match poll() {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(e) => wait_error = Some((e.kind(), e.raw_os_error())),
+        }
+        if Instant::now() >= deadline {
+            return Err(wait_error);
+        }
+        std::thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
     }
 }
 pub(super) async fn docker(args: &[&str]) -> io::Result<Output> {
@@ -440,6 +468,25 @@ pub(super) fn assert_child_reaped(pid: u32) {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn expired_reap_deadline_polls_once_without_reset_or_false_success() {
+        let deadline = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
+        let mut calls = 0;
+        assert_eq!(
+            reap_until(deadline, || {
+                calls += 1;
+                Ok(false)
+            }),
+            Err(None)
+        );
+        assert_eq!(calls, 1);
+        assert_eq!(
+            reap_until(deadline, || Err(io::Error::from_raw_os_error(10))),
+            Err(Some((io::Error::from_raw_os_error(10).kind(), Some(10))))
+        );
+        assert_eq!(reap_until(deadline, || Ok(true)), Ok(()));
+    }
 
     fn fault_child(deadline: Instant, announce: bool, overflow: bool) -> FaultChild {
         let mut command = Command::new("/usr/bin/python3");
