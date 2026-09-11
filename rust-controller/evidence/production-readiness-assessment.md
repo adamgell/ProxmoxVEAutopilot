@@ -12,17 +12,36 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `518878d7`: this branch and PR #65 contain an accumulated
+Current scope at `72a3ec61`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
-acceptance remain incomplete. The new fixture-only StartPe boot-arming
+acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
 dispatch linkage, and registration deadline atomically. Admission requires
 the `fixture-ipc` feature and `Scheduler::with_fixture_start_pe()` opt-in;
 default admission and PeRegister remain closed. The durability test covers
 rollback, racing admission, reload, and missing-session refusal. Reload is
-database consistency evidence, not a StartPe OS-worker death proof. Credential
-alias persistence and authenticated callback completion remain unimplemented.
-No exact-source Linux runtime qualification is recorded for `518878d7`.
+database consistency evidence, not a StartPe OS-worker death proof. Trusted
+server-created fixture origins and durable fixture credential alias ownership
+are implemented. The transaction-local alias helper at `724b6101` retains exact
+ownership and the original timestamp on replay without independent commit or
+dispatch authority.
+
+At `72a3ec61`, trusted origins persist immutable `credential_sink_id` policy:
+NULL retains physical-only fixture behavior; a stable non-nil sink requires
+credential delivery. Replay must match that policy. All current StartPe
+scheduler paths check it under the shared authority/run/operation/attempt/lease
+locks and refuse credential-required origins until cohesive delivery exists.
+The focused proof covers concurrent registration, two-scheduler refusal,
+immutability, replay mismatch, migration replay, and store reopen. See
+`fixture-origin-delivery-policy.md`; it does not prove physical-send races.
+
+Atomic session/alias/dispatch preparation integrated with private delivery,
+acknowledgement, one-time exposure, and process-death recovery remains open.
+Authenticated callbacks, PeRegister, and production legacy-run import remain
+unimplemented. GitHub checks observed for `72a3ec61` on 2026-09-11 had Linux in
+progress and macOS queued; this is not completed CI evidence. No exact-source
+Linux runtime qualification is recorded for this current source. Historical
+sections below retain the limits at their named revisions.
 
 Commit `029555f1` adds safe operation-scoped fixture
 port resolution. An immutable per-operation binding is retained across the
