@@ -17,12 +17,16 @@ Their client `Effect` request accepts raw before/after state; their reply has no
 receipt. `VmState` contains only disk bytes and a PE-configured flag. A wrapper
 around this protocol cannot implement truthful provisioning observations.
 
-Two additional bounds need deliberate changes with boundary tests: daemon
-lifetime currently rejects values above ten seconds, while the controller call
+At initial design, two bounds needed deliberate changes with boundary tests: daemon
+lifetime rejected values above ten seconds, while the controller call
 budget is twenty-four seconds; request framing currently accepts at most 1024
 bytes, which must be measured against a serialized typed provisioning request
 before choosing a bounded protocol size. Neither limit should be silently
 removed.
+
+The persisted-receipt process recovery proof subsequently raises the private
+fixture lifetime ceiling to 60 seconds, with exact-limit acceptance and
+limit-plus-one-nanosecond rejection tests. Controller lease policy is unchanged.
 
 ## Coherent implementation sequence
 

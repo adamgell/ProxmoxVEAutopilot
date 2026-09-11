@@ -149,7 +149,7 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
     let metadata = fs::symlink_metadata(directory)?;
     if !metadata.is_dir()
         || metadata.permissions().mode() & 0o077 != 0
-        || lifetime > Duration::from_secs(10)
+        || lifetime > Duration::from_secs(60)
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,

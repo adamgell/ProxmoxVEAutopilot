@@ -49,6 +49,23 @@ fn retime_outcome(value: &mut serde_json::Value, at: u64) {
     }
 }
 
+async fn await_database_observation_time(pool: &sqlx::PgPool) {
+    // PostgreSQL runs in an isolated Linux VM; do not stamp observations before
+    // its independently allocated receipt time when host/guest clocks differ.
+    let database_now: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while chrono::Utc::now().timestamp_millis() <= database_now.timestamp_millis() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("fixture host clock did not catch database receipt clock");
+}
+
 /// Supervisor-authored physical observations, bound to the actual accepted
 /// request. The real evaluator must establish ownership and Clone postcondition.
 fn clone_outcome_document(
@@ -177,18 +194,30 @@ async fn fresh_controller_clone_then_disk_capacity_then_configure_pe_reaches_sat
 
 #[tokio::test]
 async fn configure_worker_death_before_publication_preserves_prefix_and_uncertainty() {
-    fresh_controller_clone(true, true, Some(false)).await;
+    fresh_controller_clone(true, true, Some(ConfigureCrash::BeforePublication)).await;
 }
 
 #[tokio::test]
 async fn configure_worker_death_after_publication_preserves_prefix_and_uncertainty() {
-    fresh_controller_clone(true, true, Some(true)).await;
+    fresh_controller_clone(true, true, Some(ConfigureCrash::AfterPublication)).await;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConfigureCrash {
+    BeforePublication,
+    AfterPublication,
+    AfterReceipt,
+}
+
+#[tokio::test]
+async fn configure_worker_death_after_receipt_reconciles_exact_prefix_to_satisfied() {
+    fresh_controller_clone(true, true, Some(ConfigureCrash::AfterReceipt)).await;
 }
 
 async fn fresh_controller_clone(
     publish_outcome: bool,
     resize_after: bool,
-    crash_configure: Option<bool>,
+    crash_configure: Option<ConfigureCrash>,
 ) {
     let s = Scenario::new(300, true).await;
     let operation = s.ids.operation(osdeploy_adapter::OsDeployStage::Clone);
@@ -317,7 +346,14 @@ async fn fresh_controller_clone(
     )
     .unwrap();
     let daemon_path = directory.clone();
-    let daemon = std::thread::spawn(move || run(&daemon_path, Duration::from_secs(10)).unwrap());
+    let daemon_lifetime = if crash_configure == Some(ConfigureCrash::AfterReceipt) {
+        45
+    } else {
+        10
+    };
+    let daemon = std::thread::spawn(move || {
+        run(&daemon_path, Duration::from_secs(daemon_lifetime)).unwrap()
+    });
     let supervisor =
         FixtureCheckpointClient::new(directory.join("supervisor.sock"), Duration::from_secs(1))
             .unwrap();
@@ -492,6 +528,7 @@ async fn fresh_controller_clone(
         let MutationReceipt::Task(upid) = receipt.receipt() else {
             panic!("Clone task expected")
         };
+        await_database_observation_time(&s.db.pool).await;
         let document = clone_outcome_document(&reads, &infrastructure, &source, &envelope, upid);
         let response =
             publish_clone_outcome(&directory.join("supervisor.sock"), &envelope, document).await;
@@ -500,6 +537,15 @@ async fn fresh_controller_clone(
         tx.commit().await.unwrap();
     }
     let result = worker.await.unwrap().unwrap();
+    if publish_outcome
+        && result
+            != postgres_store::OsDeployProgress::Decided(
+                controller_domain::ExecutionState::Satisfied,
+            )
+    {
+        let rows: Vec<(serde_json::Value,)> = sqlx::query_as("SELECT payload FROM rust_controller.journal_events WHERE operation_id=$1 AND payload->>'action'='pve_evaluated'").bind(operation.as_uuid()).fetch_all(&s.db.pool).await.unwrap();
+        eprintln!("Clone evaluation diagnostic: {rows:?}");
+    }
     // Startup facts alone stay Unknown. Only the supervisor's fresh physical
     // observations allow the real controller evaluator to establish Satisfied.
     assert_eq!(
@@ -592,7 +638,7 @@ async fn fresh_resize_after_clone(
     reads: &FixtureProvisioningReadsV2,
     infrastructure: &FixtureCloneReads,
     source: &ProvisioningVmConfigV1,
-    crash_configure: Option<bool>,
+    crash_configure: Option<ConfigureCrash>,
 ) {
     use serde_json::json;
     let operation = s
@@ -800,6 +846,7 @@ async fn fresh_resize_after_clone(
     observation["task"]["identity"]["operation"] = json!(operation.as_uuid());
     observation["task"]["identity"]["request_sha256"] = json!(request.request_sha256());
     observation["task"]["identity"]["upid"] = json!(upid.to_string());
+    await_database_observation_time(&s.db.pool).await;
     retime_outcome(
         &mut observation,
         chrono::Utc::now().timestamp_millis() as u64,
@@ -843,7 +890,7 @@ async fn fresh_configure_after_resize(
     predecessor: &FixtureStageRequest,
     original_receipt: &[u8],
     previous_observation: &serde_json::Value,
-    crash_configure: Option<bool>,
+    crash_configure: Option<ConfigureCrash>,
 ) {
     use serde_json::json;
     let operation = s
@@ -974,6 +1021,19 @@ async fn fresh_configure_after_resize(
         FixtureReadClient::new(directory.join("client.sock"), Duration::from_secs(1)).unwrap();
     assert_eq!(reader.status().await.unwrap().effects, 2);
     assert!(committed.receipt().is_none());
+    let outcome_hold = if crash_configure == Some(ConfigureCrash::AfterReceipt) {
+        sqlx::raw_sql("CREATE FUNCTION rust_controller.fixture_hold_outcome() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation_id::text = TG_ARGV[0] AND NEW.payload->>'action' = 'pve_evaluated' THEN PERFORM pg_advisory_xact_lock(91722311); END IF; RETURN NEW; END $$;")
+            .execute(&s.db.pool).await.unwrap();
+        sqlx::raw_sql(&format!("CREATE TRIGGER fixture_hold_outcome BEFORE INSERT ON rust_controller.journal_events FOR EACH ROW EXECUTE FUNCTION rust_controller.fixture_hold_outcome('{}')", operation.as_uuid())).execute(&s.db.pool).await.unwrap();
+        let mut hold = s.db.pool.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(91722311)")
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        Some(hold)
+    } else {
+        None
+    };
     let mut tx = s.db.pool.begin().await.unwrap();
     sqlx::query("LOCK TABLE rust_controller.journal_events IN SHARE MODE")
         .execute(&mut *tx)
@@ -1060,13 +1120,118 @@ async fn fresh_configure_after_resize(
             vm["mac"] = json!(p.mac());
         }
     }
+    await_database_observation_time(&s.db.pool).await;
     retime_outcome(
         &mut observation,
         chrono::Utc::now().timestamp_millis() as u64,
     );
-    if crash_configure != Some(false) {
+    if !matches!(
+        crash_configure,
+        Some(ConfigureCrash::BeforePublication | ConfigureCrash::AfterReceipt)
+    ) {
         let publication = exchange(&directory.join("supervisor.sock"), json!({"command":"publish_synchronous_stage","identity":identity,"request":serde_json::from_slice::<serde_json::Value>(&request.encode().unwrap()).unwrap(),"observation":observation})).await;
         assert!(publication["daemon_generation"].is_string());
+    }
+    if crash_configure == Some(ConfigureCrash::AfterReceipt) {
+        tx.commit().await.unwrap();
+        let persisted = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let snapshot = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+                let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory')").fetch_one(&s.db.pool).await.unwrap();
+                if snapshot.receipt().is_some() && waiting { break snapshot; }
+                assert!(!worker.is_finished(), "worker ended before durable receipt death gate");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }).await.unwrap();
+        assert_eq!(
+            persisted.state(),
+            controller_domain::ExecutionState::Running
+        );
+        assert_eq!(persisted.receipt().unwrap().receipt(), receipt.receipt());
+        assert_eq!(persisted.dispatch(), committed.dispatch());
+        fs::write(
+            directory.join(format!("worker-{}.kill", operation.as_uuid())),
+            b"kill after independently observed durable receipt",
+        )
+        .unwrap();
+        assert!(worker.await.unwrap().is_err());
+        outcome_hold.unwrap().rollback().await.unwrap();
+        sqlx::raw_sql("DROP TRIGGER fixture_hold_outcome ON rust_controller.journal_events; DROP FUNCTION rust_controller.fixture_hold_outcome();").execute(&s.db.pool).await.unwrap();
+        let publish_for_recovery = async {
+            let ready = directory.join(format!("worker-{}.await-publication", operation.as_uuid()));
+            tokio::time::timeout(Duration::from_secs(40), async {
+                while !ready.exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            // New supervisor collection after lease expiry: independently verify
+            // the still-live daemon's physical state before first publication.
+            assert_eq!(
+                reader.world(901).await.unwrap(),
+                Some(VmState {
+                    disk_bytes: request
+                        .request()
+                        .plan()
+                        .expected()
+                        .effective_capacity_bytes(),
+                    pe_configured: true
+                })
+            );
+            let current = exchange(
+                &directory.join("client.sock"),
+                json!({"command":"accepted_stage_effect","identity":identity}),
+            )
+            .await;
+            let current_receipt: Vec<u8> =
+                serde_json::from_value(current["accepted_effect"]["receipt"].clone()).unwrap();
+            assert_eq!(current_receipt, receipt_bytes);
+            await_database_observation_time(&s.db.pool).await;
+            retime_outcome(
+                &mut observation,
+                chrono::Utc::now().timestamp_millis() as u64,
+            );
+            let published = exchange(&directory.join("supervisor.sock"), json!({"command":"publish_synchronous_stage","identity":identity,"request":serde_json::from_slice::<serde_json::Value>(&request.encode().unwrap()).unwrap(),"observation":observation})).await;
+            assert!(published["daemon_generation"].is_string());
+            fs::write(
+                directory.join(format!("worker-{}.publication-ready", operation.as_uuid())),
+                b"fresh supervisor observation published",
+            )
+            .unwrap();
+        };
+        let ((), ()) = tokio::join!(
+            fixture_prefix_process::recover(
+                directory,
+                s.db.pool.connect_options().to_url_lossy().to_string(),
+                operation
+            ),
+            publish_for_recovery
+        );
+        let recovered = s.db.other.load_osdeploy_operation(operation).await.unwrap();
+        assert_eq!(
+            recovered.state(),
+            controller_domain::ExecutionState::Satisfied
+        );
+        assert_eq!(recovered.attempt_id(), persisted.attempt_id());
+        assert_eq!(recovered.dispatch(), persisted.dispatch());
+        assert_eq!(recovered.receipt(), persisted.receipt());
+        for stage in [
+            osdeploy_adapter::OsDeployStage::Clone,
+            osdeploy_adapter::OsDeployStage::DiskCapacity,
+        ] {
+            assert_eq!(
+                s.db.other
+                    .load_osdeploy_operation(s.ids.operation(stage))
+                    .await
+                    .unwrap()
+                    .state(),
+                controller_domain::ExecutionState::Satisfied
+            );
+        }
+        let final_status = reader.status().await.unwrap();
+        assert_eq!((final_status.attempts, final_status.effects), (3, 3));
+        return;
     }
     if crash_configure.is_some() {
         // The independent effect read and PostgreSQL lock wait establish the

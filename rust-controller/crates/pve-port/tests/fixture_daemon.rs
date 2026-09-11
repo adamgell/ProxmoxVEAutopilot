@@ -25,6 +25,39 @@ use std::{
     time::{Duration, Instant},
 };
 use uuid::Uuid;
+
+#[test]
+fn daemon_lifetime_keeps_a_sixty_second_hard_limit() {
+    let directory = PathBuf::from("/tmp").join(format!("fixture-bound-{}", Uuid::now_v7()));
+    fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        fixture_daemon::run(
+            &directory,
+            Duration::from_secs(60) + Duration::from_nanos(1)
+        )
+        .unwrap_err()
+        .kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+    assert!(!directory.join("fixture.log").exists());
+    let path = directory.clone();
+    let worker =
+        thread::spawn(move || fixture_daemon::run(&path, Duration::from_secs(60)).unwrap());
+    let socket = directory.join("supervisor.sock");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !socket.exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+    let mut stream = UnixStream::connect(socket).unwrap();
+    let message = br#"{"command":"shutdown"}"#;
+    stream
+        .write_all(&(message.len() as u32).to_be_bytes())
+        .unwrap();
+    stream.write_all(message).unwrap();
+    worker.join().unwrap();
+}
 #[cfg(feature = "fixture-ipc")]
 mod provisioning_seed_support;
 

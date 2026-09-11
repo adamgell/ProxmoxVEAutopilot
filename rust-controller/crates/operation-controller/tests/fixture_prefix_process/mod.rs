@@ -104,7 +104,7 @@ pub async fn recover(directory: &Path, dsn: String, operation: controller_domain
         .spawn()
         .unwrap();
     assert!(
-        tokio::time::timeout(Duration::from_secs(36), child.wait())
+        tokio::time::timeout(Duration::from_secs(44), child.wait())
             .await
             .unwrap()
             .unwrap()
@@ -114,7 +114,7 @@ pub async fn recover(directory: &Path, dsn: String, operation: controller_domain
 
 pub async fn run_recovery() {
     let input = std::path::PathBuf::from(std::env::var_os("PVA_PREFIX_INPUT").unwrap());
-    let Input { identity, .. } = serde_json::from_slice(&fs::read(input).unwrap()).unwrap();
+    let Input { identity, setup } = serde_json::from_slice(&fs::read(&input).unwrap()).unwrap();
     let operation =
         serde_json::from_value(serde_json::to_value(identity.operation).unwrap()).unwrap();
     let pool = sqlx::postgres::PgPoolOptions::new()
@@ -133,7 +133,6 @@ pub async fn run_recovery() {
     let before = store.load_osdeploy_operation(operation).await.unwrap();
     assert_eq!(before.state(), controller_domain::ExecutionState::Running);
     assert!(before.dispatch().is_some());
-    assert!(before.receipt().is_none());
     tokio::time::timeout(Duration::from_secs(33), async {
         loop {
             let expired: bool = sqlx::query_scalar("SELECT lease_expires_at <= clock_timestamp() FROM rust_controller.worker_leases WHERE operation_id=$1").bind(identity.operation).fetch_one(&pool).await.unwrap();
@@ -146,7 +145,7 @@ pub async fn run_recovery() {
     assert_eq!(after.state(), controller_domain::ExecutionState::Unknown);
     assert_eq!(after.attempt_id(), before.attempt_id());
     assert_eq!(after.dispatch(), before.dispatch());
-    assert!(after.receipt().is_none());
+    assert_eq!(after.receipt(), before.receipt());
     assert!(
         scheduler
             .claim_osdeploy_bound(operation, after.plan().workflow_sha256(), 1)
@@ -161,6 +160,127 @@ pub async fn run_recovery() {
             .await
             .unwrap();
     assert_eq!(count, 1);
+    if before.receipt().is_some() {
+        let Setup::Configure {
+            generation,
+            owner,
+            predecessor_identity,
+            predecessor,
+            receipt,
+        } = setup
+        else {
+            panic!("post-receipt recovery requires ConfigurePe prefix")
+        };
+        let request = FixtureStageRequest::new(
+            identity.fixture_id,
+            before.dispatch().unwrap().request().clone(),
+        )
+        .unwrap();
+        let stage_identity = FixtureStageIdentity {
+            operation: identity.operation,
+            stage: FixtureLedgerStage::ConfigurePe,
+            attempt: before.attempt_id().unwrap().as_uuid(),
+            generation,
+            owner,
+            request_sha256: request.request_sha256(),
+        };
+        let directory = input.parent().unwrap();
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::UnixStream::connect(directory.join("client.sock"))
+            .await
+            .unwrap();
+        let message = serde_json::to_vec(
+            &serde_json::json!({"command":"accepted_stage_effect","identity":stage_identity}),
+        )
+        .unwrap();
+        stream.write_u32(message.len() as u32).await.unwrap();
+        stream.write_all(&message).await.unwrap();
+        let size = stream.read_u32().await.unwrap();
+        assert!(size < 100_000);
+        let mut bytes = vec![0; size as usize];
+        stream.read_exact(&mut bytes).await.unwrap();
+        let effect: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let exact_receipt: Vec<u8> =
+            serde_json::from_value(effect["accepted_effect"]["receipt"].clone()).unwrap();
+        assert_eq!(
+            request.decode_receipt(&exact_receipt).unwrap().receipt(),
+            before.receipt().unwrap().receipt()
+        );
+        let port = FixtureProvisioningPort::new_late(
+            directory.join("client.sock"),
+            Duration::from_secs(2),
+            identity.clone(),
+        )
+        .unwrap()
+        .with_late_configure_after_resize(
+            FixtureCheckpointClient::new(directory.join("client.sock"), Duration::from_secs(2))
+                .unwrap(),
+            generation,
+            owner,
+            predecessor_identity,
+            FixtureStageRequest::decode(&predecessor).unwrap(),
+            receipt,
+        )
+        .unwrap()
+        .with_late_configure_receipt(request.request(), exact_receipt)
+        .unwrap();
+        let due = tokio::time::timeout(Duration::from_secs(7), async {
+            loop {
+                if let Some(due) = scheduler
+                    .discover_osdeploy_due()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .find(|d| d.operation_id() == operation)
+                {
+                    break due;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let controller = operation_controller::OsDeployController::new_fixture(
+            store.clone(),
+            scheduler,
+            Arc::new(port),
+            1,
+        )
+        .unwrap();
+        fs::write(
+            input.with_extension("await-publication"),
+            b"reaped original attempt and ready for current observation",
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !input.with_extension("publication-ready").exists() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        controller.open_send_admission().await.unwrap();
+        assert_eq!(
+            controller.run_due_once(&due).await.unwrap(),
+            postgres_store::OsDeployProgress::Decided(controller_domain::ExecutionState::Satisfied)
+        );
+        let terminal = store.load_osdeploy_operation(operation).await.unwrap();
+        assert_eq!(terminal.attempt_id(), before.attempt_id());
+        assert_eq!(terminal.dispatch(), before.dispatch());
+        assert_eq!(terminal.receipt(), before.receipt());
+        let attempts: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM rust_controller.attempts WHERE operation_id=$1",
+        )
+        .bind(identity.operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(attempts, 1);
+        controller
+            .close_and_drain(Duration::from_secs(1))
+            .await
+            .unwrap();
+    }
 }
 
 pub async fn run() {

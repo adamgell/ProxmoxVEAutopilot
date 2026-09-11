@@ -24,8 +24,8 @@ retained under `/tmp/pglate-*` and printed by the test.
 
 These windows establish preserved uncertainty and no duplicate submission. They
 do not establish automatic completion after a lost receipt: publication does not
-create journal receipt authority. Earlier-stage death matrices, death after a
-persisted receipt, reconciliation through the full service, callback stages,
+create journal receipt authority. Earlier-stage death matrices,
+reconciliation through the full service, callback stages,
 production cutover and Linux execution of this source remain separate work.
 
 The macOS supervisor test needs the established `RUST_MIN_STACK=16777216` test
@@ -48,3 +48,49 @@ git diff --check
 Ignored `fixture_prefix_worker` and `fixture_prefix_recovery_worker` entrypoints
 are invoked only by their supervising tests. Broad `--include-ignored` runners
 must exclude them when no owned input protocol has been established.
+
+## Death after persisted ConfigurePe receipt
+
+`configure_worker_death_after_receipt_reconciles_exact_prefix_to_satisfied`
+complements those pre-receipt windows. Separate OS workers execute the fresh
+Clone and DiskCapacity stages to Satisfied. The ConfigurePe worker generates its
+own request, commits dispatch, and receives the exact synchronous daemon receipt.
+An isolated PostgreSQL trigger blocks only the ConfigurePe outcome decision
+insert, using a supervisor-held advisory lock. The receipt transaction remains
+able to commit. The supervisor independently observes Running state, unchanged
+dispatch, the exact durable receipt, and the blocked outcome insert before
+forcibly terminating that owned process. The trigger and lock are removed after
+death; no lease or production policy is rewritten.
+
+A new OS recovery worker waits for the actual database lease deadline, reaps it,
+and verifies Unknown with the original attempt, dispatch, and receipt. A duplicate
+claim is refused. It reconstructs the exact accepted ConfigurePe effect and
+receipt from the fixture ledger and waits for the scheduler's reconciliation due
+record. The supervisor independently rereads the live physical VM state and exact
+accepted effect before making the first ConfigurePe publication at that time.
+This avoids treating observations from before the 30-second lease wait as fresh.
+The recovery controller consumes the original receipt and new physical evidence
+through `run_due_once`, reaches Satisfied, and preserves the original attempt,
+dispatch, and receipt. Clone/DiskCapacity remain Satisfied; the fixture remains at
+three attempts and three effects. A final daemon restart also preserves that
+ledger count.
+
+The fixture daemon's explicit lifetime ceiling is now 60 seconds, allowing the
+unchanged 30-second lease plus reconciliation delay to fit inside one daemon
+lifetime. The test uses 45 seconds. A boundary test accepts exactly 60 seconds
+(then shuts down early) and rejects 60 seconds plus one nanosecond before ledger
+creation. This affects the private local fixture only.
+
+The supervisor now waits for actual host time to pass an independently sampled
+PostgreSQL clock before physical observation collection. This avoids host/Linux
+fixture clock differences putting observations before receipt time. It neither
+backdates observations nor changes freshness validation. Initial diagnostic runs
+correctly reported `observation_not_fresh`; their failures were not counted as
+successful recovery evidence.
+
+Validation uses the same explicit macOS stack setting and existing owned worker
+entrypoints. No new ignored child entrypoint was added. Strict operation-controller
+and pve-port feature all-targets Clippy, formatting, and diff checks pass.
+The full three-case ConfigurePe worker-death matrix passes concurrently: both
+pre-receipt windows remain Unknown and the persisted-receipt window reconciles
+to Satisfied. The focused new test also passed independently.
