@@ -1,9 +1,14 @@
-# Current-source Linux fixture qualification attempt
+# Sealed-source Linux fixture qualification attempt
 
 This attempt used launcher revision `d5a702aa1dbcc4251a620b01afe94a4c569b73b4`,
 the pinned amd64 image
 `sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9`,
 and image source seal `a607861f24cac19cad4565365df2a29b58a33e0b`.
+
+This seal is historical evidence, not a floating reference to the current PR
+head. The subsequent changes to PostgreSQL migration
+`0016_fixture_stop_release_outcomes.sql` and `fixture_stop_outbox.rs` are not
+covered by this image or run and require fresh Linux execution.
 
 The owned launcher completed PostgreSQL admission, runner creation, runner
 execution, and final inspection successfully. Runner creation used the

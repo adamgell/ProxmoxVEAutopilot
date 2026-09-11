@@ -28,9 +28,12 @@ still open. Authenticated callbacks, PeRegister, production legacy-run import,
 later workflow stages, and production-candidate acceptance remain incomplete.
 Historical milestone sections below describe their named revisions; statements
 that alias ownership was absent at those revisions do not describe current code.
-The current PR head is tracked by GitHub PR metadata (verified 2026-09-11). GitHub reports the
-duplicated Linux and macOS-arm64 checks as queued, with no completed
-qualification conclusion; no readiness claim is inferred from that snapshot.
+The current PR head is tracked by GitHub PR metadata. At the 2026-09-11
+snapshot for head `142387d8`, the check rollup was empty and supplied no CI
+conclusion. Retained Linux fixture success covers sealed source `a607861f`
+(364 passed tests); the stop-outbox implementation and migration have since
+changed. Current-source Linux execution remains required. See the
+[retained Linux run](requalification-d5a702aa-fixture-1/README.md).
 
 ### Latest stop-release evidence binding (commit `6c2091fe`)
 

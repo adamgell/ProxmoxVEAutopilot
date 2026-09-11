@@ -10,7 +10,7 @@ Production and `192.168.2.4`: read-only throughout
 | --- | --- | --- |
 | macOS Rust controller prefix | Local PostgreSQL and fixture proofs through guarded EnsureStopped; strict checks recorded in the linked evidence | Proven for the bounded fixture/native-fake slice |
 | Fixture-IPC stop path | Typed envelope, supervisor admission frame, PostgreSQL authority snapshot, fresh-power publication boundary, and fail-closed worker/source refusals | Contract/admission/refusal only; successful external stop remains open |
-| Exact-source Linux | Current source `a607861f24cac19cad4565365df2a29b58a33e0b` built as amd64 image `sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9`; latest attempt completed owned PostgreSQL admission, runner creation, execution, and final inspection with 364 passed test cases, while the lane still reports `qualification: INCOMPLETE` by design | Exact-source fixture execution proven; production qualification remains open |
+| Exact-source Linux | Sealed source `a607861f24cac19cad4565365df2a29b58a33e0b` built as amd64 image `sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9`; retained fixture run completed with 364 passed test cases and `qualification: INCOMPLETE` by design. Current PostgreSQL stop-outbox source and migration have since changed. | Fixture execution proven for the sealed revision; current-source Linux evidence and production qualification remain open |
 | Callback compatibility | Fixture-only PeRegister/PeComplete paths are covered; generic and legacy action/result surfaces are not | Partial fixture proof; full compatibility open |
 | Production readiness | Readiness artifacts and PR are draft; no deployment, cutover, or production mutation | Not ready / acceptance open |
 
@@ -49,7 +49,7 @@ are implemented. The transaction-local alias helper at `724b6101` retains exact
 ownership and the original timestamp on replay without independent commit or
 dispatch authority.
 
-The current PR head is tracked by GitHub PR metadata (verified 2026-09-11). The exact-source
+The current PR head is tracked by GitHub PR metadata. The retained exact-source
 amd64 image is sealed as `sha256:7178b72fa5b4d1f8cc1fc1ecf5f6896909f2a3e7eead32733e4a6be450eaaef9`
 with `CONTROLLER_GIT_SHA=a607861f24cac19cad4565365df2a29b58a33e0b`; the owned
 launcher evidence is retained in `requalification-1450a556-fixture-1/` and
@@ -58,9 +58,14 @@ records `qualification: INCOMPLETE`: the memory guard passed with
 60-second child deadline; a Created-state runner identity was retained without
 a completed create response. The launcher now uses a separately tested bounded
 300-second create window. A subsequent retry was refused at 12,318,252 kB,
-below the memory guard. GitHub reports the
-duplicated Linux and macOS-arm64 checks as queued, with no completed
-qualification conclusion; the draft PR remains open. The StartPe provisioning
+below the memory guard. The later successful run is recorded in
+[`requalification-d5a702aa-fixture-1/`](requalification-d5a702aa-fixture-1/README.md):
+runner exit 0, 364 passed tests, and no OOM/restart. That result applies to
+sealed source `a607861f`, not the newer PostgreSQL stop-outbox implementation
+and migration. A fresh image/source seal and execution are required to qualify
+those changes on Linux. At the 2026-09-11 GitHub snapshot for head `142387d8`,
+the check rollup was empty; this supplies no CI conclusion. The draft PR remains
+open. The StartPe provisioning
 fact mapping added at `db84526f`/`01b2baee`, followed by the closed-response
 retention at `b37c4c84`/`de139876` and typed input binding at
 `d0297079`/`daeb5a52`, followed by atomic response capture and task-status
