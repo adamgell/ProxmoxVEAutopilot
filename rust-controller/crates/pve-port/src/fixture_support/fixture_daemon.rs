@@ -213,7 +213,12 @@ pub fn run(directory: &Path, lifetime: Duration) -> io::Result<()> {
                 if let Ok(StageEnvelope::StageCheckpoint { request }) =
                     serde_json::from_slice(&bytes)
                 {
-                    let payload = serde_json::to_vec(&stage_barrier.handle(request, supervisor)?)?;
+                    let payload = serde_json::to_vec(&stage_barrier.handle(
+                        request,
+                        supervisor,
+                        &log,
+                        publications.generation(),
+                    )?)?;
                     let _ = stream
                         .write_all(&(payload.len() as u32).to_be_bytes())
                         .and_then(|()| stream.write_all(&payload));

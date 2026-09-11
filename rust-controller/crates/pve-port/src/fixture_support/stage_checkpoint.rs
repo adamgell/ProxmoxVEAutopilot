@@ -27,6 +27,12 @@ pub enum StageCheckpointRequest {
         committed_request: Vec<u8>,
         after: VmState,
     },
+    AuthorizeStartPe {
+        identity: FixtureStageIdentity,
+        request: Vec<u8>,
+        committed_request: Vec<u8>,
+        power: super::StartPePowerAuthorizationV1,
+    },
     Poll {
         identity: FixtureStageIdentity,
     },
@@ -44,6 +50,8 @@ pub struct StageCheckpointReply {
 struct Authorization {
     request: Vec<u8>,
     after: VmState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    start_power: Option<super::durable_fixture_log::PowerObservationV1>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -100,6 +108,8 @@ impl StageBarrier {
         &mut self,
         request: StageCheckpointRequest,
         supervisor: bool,
+        log: &super::durable_fixture_log::FixtureLog,
+        daemon_generation: Uuid,
     ) -> io::Result<StageCheckpointReply> {
         use super::CheckpointPhase::*;
         let ok = match request {
@@ -140,10 +150,46 @@ impl StageBarrier {
                     && request == committed_request
                     && after.disk_bytes > 0;
                 if valid {
-                    self.authorization = Some(Authorization { request, after });
+                    self.authorization = Some(Authorization {
+                        request,
+                        after,
+                        start_power: None,
+                    });
                     self.state.phase = Released;
                 }
                 valid
+            }
+            StageCheckpointRequest::AuthorizeStartPe {
+                identity,
+                request,
+                committed_request,
+                power,
+            } if supervisor
+                && self.bound(&identity)
+                && self.state.phase == Entered
+                && self.authorization.is_none() =>
+            {
+                let evidence = FixtureStageRequest::decode(&request)
+                    .ok()
+                    .and_then(|decoded| {
+                        if identity.validate_request(&decoded).is_err()
+                            || request != committed_request
+                        {
+                            return None;
+                        }
+                        power.validate(&decoded, log, daemon_generation).ok()
+                    });
+                if let Some((after, start_power)) = evidence {
+                    self.authorization = Some(Authorization {
+                        request,
+                        after,
+                        start_power: Some(start_power),
+                    });
+                    self.state.phase = Released;
+                    true
+                } else {
+                    false
+                }
             }
             StageCheckpointRequest::Poll { identity } if !supervisor && self.bound(&identity) => {
                 matches!(self.state.phase, Entered | Released)

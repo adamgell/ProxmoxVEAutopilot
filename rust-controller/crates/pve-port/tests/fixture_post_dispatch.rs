@@ -602,21 +602,87 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
                 .unwrap()
                 .ok
         );
-        assert!(
+        let exact_effect = wire(
+            &client,
+            json!({"command":"accepted_stage_effect","identity":accepted[2].0}),
+        )
+        .await
+        .unwrap();
+        let exact_receipt =
+            serde_json::from_value(exact_effect["accepted_effect"]["receipt"].clone()).unwrap();
+        let start_power = StageCheckpointRequest::AuthorizeStartPe {
+            identity: identity.clone(),
+            request: start.encode().unwrap(),
+            committed_request: start.encode().unwrap(),
+            power: StartPePowerAuthorizationV1 {
+                version: 1,
+                predecessor: accepted[2].0.clone(),
+                predecessor_request: accepted[2].1.encode().unwrap(),
+                predecessor_receipt: exact_receipt,
+                power: SeedPower {
+                    power: pve_port::PowerState::Stopped,
+                    locked: false,
+                },
+            },
+        };
+        let authorization_ledger = fs::read(directory.join("fixture.log")).unwrap();
+        assert!(!worker.stage_request(start_power.clone()).await.unwrap().ok);
+        for (pointer, value) in [
+            ("/power/power/power", json!("running")),
+            ("/power/power/locked", json!(true)),
+            ("/power/predecessor/owner", json!(Uuid::now_v7())),
+            ("/power/predecessor/generation", json!(Uuid::now_v7())),
+            ("/power/predecessor/attempt", json!(Uuid::now_v7())),
+            ("/power/predecessor_receipt", json!([1, 2, 3])),
+            (
+                "/power/predecessor_receipt",
+                json!(
+                    serde_json::to_vec_pretty(
+                        &serde_json::from_slice::<Value>(&accepted[2].2).unwrap()
+                    )
+                    .unwrap()
+                ),
+            ),
+        ] {
+            let mut wrong = serde_json::to_value(&start_power).unwrap();
+            *wrong.pointer_mut(pointer).unwrap() = value;
+            let request = serde_json::from_value(wrong).unwrap();
+            assert!(!supervisor.stage_request(request).await.unwrap().ok);
+        }
+        assert_eq!(
             supervisor
-                .stage_request(StageCheckpointRequest::AuthorizeRelease {
-                    identity: identity.clone(),
-                    request: start.encode().unwrap(),
-                    committed_request: start.encode().unwrap(),
-                    after: VmState {
-                        disk_bytes: 120 * provisioning_support::GIB,
-                        pe_configured: true
-                    },
-                })
+                .stage_request(start_power.clone())
                 .await
                 .unwrap()
-                .ok
+                .ok,
+            !restart
         );
+        assert_eq!(
+            authorization_ledger,
+            fs::read(directory.join("fixture.log")).unwrap()
+        );
+        if !restart {
+            assert!(
+                !supervisor.stage_request(start_power).await.unwrap().ok,
+                "duplicate release must fail"
+            );
+        } else {
+            assert!(
+                supervisor
+                    .stage_request(StageCheckpointRequest::AuthorizeRelease {
+                        identity: identity.clone(),
+                        request: start.encode().unwrap(),
+                        committed_request: start.encode().unwrap(),
+                        after: VmState {
+                            disk_bytes: 120 * provisioning_support::GIB,
+                            pe_configured: true
+                        },
+                    })
+                    .await
+                    .unwrap()
+                    .ok
+            );
+        }
         let before = fs::read(directory.join("fixture.log")).unwrap();
         let mutation = FixtureMutationClient::new(client.clone(), Duration::from_secs(1)).unwrap();
         for _ in 0..2 {

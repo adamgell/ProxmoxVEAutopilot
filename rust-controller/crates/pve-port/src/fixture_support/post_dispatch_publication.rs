@@ -79,6 +79,9 @@ pub(crate) struct Publications {
 }
 
 impl Publications {
+    pub(crate) fn generation(&self) -> Uuid {
+        self.generation
+    }
     pub(crate) fn accepted_stage(
         &mut self,
         identity: &super::FixtureStageIdentity,

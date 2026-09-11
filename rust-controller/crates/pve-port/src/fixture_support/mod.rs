@@ -8,9 +8,11 @@ mod checkpoint;
 mod stage_checkpoint;
 mod stage_effect;
 mod stage_identity;
+mod start_authorization;
 pub use durable_fixture_log::{FixtureLedgerStage, StageBinding};
 pub use stage_checkpoint::{StageCheckpointReply, StageCheckpointRequest};
 pub use stage_identity::FixtureStageIdentity;
+pub use start_authorization::StartPePowerAuthorizationV1;
 mod clone_mutation;
 mod late_authorization;
 pub use checkpoint::{

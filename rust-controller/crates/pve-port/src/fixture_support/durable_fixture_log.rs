@@ -255,6 +255,43 @@ mod power_tests {
         let mut log = FixtureLog::recover(&path).unwrap();
         assert_eq!(log.power_records().len(), 1);
         assert_eq!(log.power_records()[0].state, PowerStateV1::Stopped);
+        for at in [11, 5011] {
+            assert!(
+                log.current_stopped_power(
+                    operation,
+                    &digest,
+                    binding,
+                    b"exact-receipt",
+                    generation,
+                    at
+                )
+                .is_ok()
+            );
+        }
+        for at in [10, 5012] {
+            assert!(
+                log.current_stopped_power(
+                    operation,
+                    &digest,
+                    binding,
+                    b"exact-receipt",
+                    generation,
+                    at
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            log.current_stopped_power(
+                operation,
+                &digest,
+                binding,
+                b"exact-receipt",
+                Uuid::now_v7(),
+                12
+            )
+            .is_err()
+        );
         let before = std::fs::read(&path).unwrap();
         assert!(
             log.record_power_observation(
@@ -827,6 +864,43 @@ impl FixtureLog {
     #[allow(dead_code)]
     pub fn power_records(&self) -> &[PowerObservationV1] {
         &self.power
+    }
+
+    /// Resolve the exact predecessor for the atomic admission seam. Historical
+    /// replay alone cannot create current-generation release authority.
+    #[allow(dead_code, clippy::too_many_arguments)]
+    pub fn current_stopped_power(
+        &self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+        receipt: &[u8],
+        daemon_generation: Uuid,
+        now_unix_ms: u64,
+    ) -> io::Result<PowerObservationV1> {
+        let effect = self
+            .accepted_stage_effect(operation, digest, binding)?
+            .ok_or_else(invalid)?;
+        let power = self
+            .power
+            .iter()
+            .rev()
+            .find(|p| p.vmid == effect.vmid)
+            .ok_or_else(invalid)?;
+        if binding.stage != FixtureLedgerStage::ConfigurePe
+            || effect.receipt() != Some(receipt)
+            || power.effect_sequence != effect.sequence
+            || power.state != PowerStateV1::Stopped
+            || power.daemon_generation != daemon_generation
+            || daemon_generation.is_nil()
+            || now_unix_ms < power.observed_unix_ms
+            || now_unix_ms - power.observed_unix_ms > 5000
+            || self.effects.iter().rev().find(|e| e.vmid == effect.vmid) != Some(effect)
+            || self.world.get(&effect.vmid) != Some(&effect.after)
+        {
+            return Err(invalid());
+        }
+        Ok(power.clone())
     }
 
     /// Only the supervisor's validated post-effect observation may call this.
