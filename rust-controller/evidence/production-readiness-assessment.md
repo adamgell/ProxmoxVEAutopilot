@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `ae515c52`: this branch and PR #65 contain an accumulated
+Current scope at `dc044266`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -127,6 +127,11 @@ credential after original-deadline exhaustion and leaves state, revision,
 attempt, deadline, registration, and completion anchors unchanged. One exact
 integration test passes in 99.41 seconds; this proves terminal non-revival, not
 an isolated refusal cause.
+
+At `dc044266`, stop-release outcome rows persist and replay-check the supervisor
+generation UUID in addition to the scheduler generation and lease token. The
+schema requires this field, and the migration constraint test passes; this
+closes a dual-authority persistence gap without adding release authority.
 
 Commit `3e49604c` records a current-source Linux/amd64 Docker build from
 `7cde09fb`: release compilation, all-feature workspace test compilation, and
