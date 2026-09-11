@@ -1,6 +1,8 @@
 //! Pure declared artifact identity and supplied-byte comparison.
 
 mod bytes;
+mod export_gate;
+pub use export_gate::{ExportGateError, ExportGateRefusal, ExportIntegrityV1};
 mod descriptor;
 
 pub use bytes::{SuppliedByteMatch, compare_supplied_bytes};
