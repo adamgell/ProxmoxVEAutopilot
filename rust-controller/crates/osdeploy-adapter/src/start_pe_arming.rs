@@ -83,6 +83,15 @@ impl PeRegistrationAnchorV1 {
     pub fn deadline_unix_ms(&self) -> u64 {
         self.deadline_unix_ms
     }
+    pub fn dispatch_event(&self) -> Uuid {
+        self.dispatch_event
+    }
+    pub fn opened_unix_ms(&self) -> u64 {
+        self.opened_unix_ms
+    }
+    pub fn budget_seconds(&self) -> u32 {
+        self.budget_seconds
+    }
     fn validate(&self) -> Result<(), StartPeArmingError> {
         if Self::new(
             self.start_operation,
@@ -157,6 +166,9 @@ impl StartPeAtomicArmingProposalV1 {
     }
     pub fn anchor(&self) -> &PeRegistrationAnchorV1 {
         &self.anchor
+    }
+    pub fn context(&self) -> &StartPeArmingContextV1 {
+        &self.context
     }
     /// Assessment only. All paths refuse arming and perform no I/O. Repeated
     /// assessment never extends the original registration deadline.

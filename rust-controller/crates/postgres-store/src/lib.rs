@@ -16,6 +16,8 @@ mod scheduler;
 pub use health::StoreHealthSnapshot;
 pub mod native;
 mod osdeploy;
+#[cfg(feature = "fixture-ipc")]
+mod start_pe_session;
 mod store;
 pub use native::{
     NativeDispatchPermit, NativeOperationSnapshot, NativeStoreError, NativeWorkflowIds,
@@ -27,6 +29,8 @@ pub use osdeploy::execution::{
 pub use osdeploy::{
     OsDeployOperationPlanV1, OsDeployRegistrationV1, OsDeployStoreError, OsDeployWorkflowIds,
 };
+#[cfg(feature = "fixture-ipc")]
+pub use start_pe_session::START_PE_SESSION_SCHEMA_V1;
 
 pub use scheduler::{
     AuthoritySnapshot, ExecutorKind, LeaseGrant, OsDeployDispatchPermit, OsDeployLeaseStatus,
