@@ -4,6 +4,20 @@ Assessment date: 2026-09-11
 Assessment source: isolated worktree `codex/rust-controller-design`  
 Production and `192.168.2.4`: read-only throughout
 
+## Current-state matrix (authoritative for this assessment)
+
+| Area | Current evidence | Status |
+| --- | --- | --- |
+| macOS Rust controller prefix | Local PostgreSQL and fixture proofs through guarded EnsureStopped; strict checks recorded in the linked evidence | Proven for the bounded fixture/native-fake slice |
+| Fixture-IPC stop path | Typed envelope, supervisor admission frame, PostgreSQL authority snapshot, fresh-power publication boundary, and fail-closed worker/source refusals | Contract/admission/refusal only; successful external stop remains open |
+| Exact-source Linux | Source `7cde09fb` built as amd64 image `sha256:02b2be47...` in 885.14s; post-build memory guard refused owned runtime at 11.32 GiB versus 12 GiB | Build proven; Linux runtime qualification open |
+| Callback compatibility | Fixture-only PeRegister/PeComplete paths are covered; generic and legacy action/result surfaces are not | Partial fixture proof; full compatibility open |
+| Production readiness | Readiness artifacts and PR are draft; no deployment, cutover, or production mutation | Not ready / acceptance open |
+
+Later entries in this document are historical source audits and retain their
+original revision-specific claims. They do not override this matrix or the
+current-scope paragraphs below.
+
 Exact-source Linux evidence at `35400bd0`: the frozen amd64 archive build
 passed in 826.80 seconds (image
 `sha256:d615e6c8b3270ae13dc9ca95cf49aea549192b6775c1d0f1aa711457f5927f94`).
