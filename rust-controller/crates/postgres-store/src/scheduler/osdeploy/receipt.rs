@@ -364,11 +364,11 @@ async fn retain_fixture_response(
         .encode()
         .map_err(|_| Error::Validation)?;
     if inserting {
-        sqlx::query("INSERT INTO rust_controller.fixture_start_pe_responses(operation_id,identity_canonical_json,request_envelope,predecessor_identity_canonical_json,predecessor_request_envelope,response_envelope) VALUES($1,$2,$3,$4,$5,$6)")
-            .bind(operation.as_uuid()).bind(&identity).bind(&request).bind(&predecessor_identity).bind(&predecessor).bind(response.original_receipt()).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO rust_controller.fixture_start_pe_responses(operation_id,identity_canonical_json,request_envelope,predecessor_identity_canonical_json,predecessor_request_envelope,response_envelope,provenance_sha256) VALUES($1,$2,$3,$4,$5,$6,$7)")
+            .bind(operation.as_uuid()).bind(&identity).bind(&request).bind(&predecessor_identity).bind(&predecessor).bind(response.original_receipt()).bind(response.provenance_sha256()).execute(&mut **tx).await?;
     }
-    let exact: Option<bool> = sqlx::query_scalar("SELECT identity_canonical_json=$2 AND request_envelope=$3 AND predecessor_identity_canonical_json=$4 AND predecessor_request_envelope=$5 AND response_envelope=$6 FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1")
-        .bind(operation.as_uuid()).bind(identity).bind(request).bind(predecessor_identity).bind(predecessor).bind(response.original_receipt()).fetch_optional(&mut **tx).await?;
+    let exact: Option<bool> = sqlx::query_scalar("SELECT COALESCE(identity_canonical_json=$2 AND request_envelope=$3 AND predecessor_identity_canonical_json=$4 AND predecessor_request_envelope=$5 AND response_envelope=$6 AND provenance_sha256=$7,false) FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1")
+        .bind(operation.as_uuid()).bind(identity).bind(request).bind(predecessor_identity).bind(predecessor).bind(response.original_receipt()).bind(response.provenance_sha256()).fetch_optional(&mut **tx).await?;
     if exact != Some(true) {
         return Err(Error::Conflict);
     }

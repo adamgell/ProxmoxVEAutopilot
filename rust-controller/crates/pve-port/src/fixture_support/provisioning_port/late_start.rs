@@ -14,6 +14,7 @@ use uuid::Uuid;
 /// ```
 #[derive(Clone)]
 pub struct FixtureStartPeResponseV1 {
+    provenance_sha256: String,
     identity: FixtureStageIdentity,
     request: FixtureStageRequest,
     predecessor_identity: FixtureStageIdentity,
@@ -26,6 +27,9 @@ impl std::fmt::Debug for FixtureStartPeResponseV1 {
     }
 }
 impl FixtureStartPeResponseV1 {
+    pub fn provenance_sha256(&self) -> &str {
+        &self.provenance_sha256
+    }
     pub fn identity(&self) -> &FixtureStageIdentity {
         &self.identity
     }
@@ -362,6 +366,10 @@ impl LateStartContext {
         mutation: &FixtureMutationClient,
         request: &ProvisioningMutationRequestV1,
     ) -> Result<MutationReceipt, PveWriteError> {
+        let provenance_sha256 = self
+            .provenance()
+            .map_err(|_| PveWriteError::Rejected)?
+            .sha256();
         let bound = {
             let mut state = self.state.lock().unwrap();
             let bound = state.as_mut().ok_or(PveWriteError::Rejected)?;
@@ -385,6 +393,7 @@ impl LateStartContext {
             .encode_receipt(receipt.submission_sequence(), receipt.receipt().clone())
             .map_err(|_| PveWriteError::OutcomeUnknown)?;
         let response = FixtureStartPeResponseV1 {
+            provenance_sha256,
             identity: bound.identity,
             request: bound.request,
             predecessor_identity: self.predecessor_identity.clone(),

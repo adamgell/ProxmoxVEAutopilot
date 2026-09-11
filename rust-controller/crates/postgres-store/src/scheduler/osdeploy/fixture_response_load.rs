@@ -15,6 +15,7 @@ use pve_port::{
 /// }
 /// ```
 pub struct FixtureStoredStartPeResponseV1 {
+    provenance_sha256: Option<String>,
     identity: FixtureStageIdentity,
     request: FixtureStageRequest,
     predecessor_identity: FixtureStageIdentity,
@@ -39,6 +40,23 @@ impl FixtureStoredStartPeResponseV1 {
     }
 }
 impl PgStore {
+    /// Validate the original configured route, without granting execution authority.
+    /// Historical rows without captured provenance are rejected, never backfilled.
+    pub async fn load_fixture_start_pe_response_for_route(
+        &self,
+        operation: OperationId,
+        route: &pve_port::fixture_ipc::FixtureSharedHistoryProvenanceV1,
+    ) -> Result<Option<FixtureStoredStartPeResponseV1>, Error> {
+        wire::require(route.operation() == operation.as_uuid())?;
+        let stored = self.load_fixture_start_pe_response(operation).await?;
+        if let Some(value) = &stored {
+            wire::require(
+                value.provenance_sha256.as_deref() == Some(route.sha256().as_str())
+                    && value.identity.generation == route.generation(),
+            )?;
+        }
+        Ok(stored)
+    }
     /// Read-only repeatable snapshot validation. This does not authenticate a
     /// configured checkpoint channel or grant current continuation authority.
     pub async fn load_fixture_start_pe_response(
@@ -50,13 +68,14 @@ impl PgStore {
             sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
             let snapshot = load::load_execution(&mut tx, operation).await?;
             wire::require(snapshot.plan().stage() == OsDeployStage::StartPe)?;
-            let row = sqlx::query("SELECT identity_canonical_json,request_envelope,predecessor_identity_canonical_json,predecessor_request_envelope,response_envelope FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1").bind(operation.as_uuid()).fetch_optional(&mut *tx).await?;
+            let row = sqlx::query("SELECT provenance_sha256,identity_canonical_json,request_envelope,predecessor_identity_canonical_json,predecessor_request_envelope,response_envelope FROM rust_controller.fixture_start_pe_responses WHERE operation_id=$1").bind(operation.as_uuid()).fetch_optional(&mut *tx).await?;
             let Some(row) = row else { tx.commit().await?; return Ok(None); };
             let identity: FixtureStageIdentity = wire::decode_exact(&row.try_get::<String,_>("identity_canonical_json")?, 8192)?;
             let predecessor_identity: FixtureStageIdentity = wire::decode_exact(&row.try_get::<String,_>("predecessor_identity_canonical_json")?, 8192)?;
             let request_bytes: Vec<u8> = row.try_get("request_envelope")?;
             let predecessor_bytes: Vec<u8> = row.try_get("predecessor_request_envelope")?;
             let response: Vec<u8> = row.try_get("response_envelope")?;
+            let provenance_sha256: Option<String> = row.try_get("provenance_sha256")?;
             let request = FixtureStageRequest::decode(&request_bytes).map_err(|_| Error::Validation)?;
             let predecessor = FixtureStageRequest::decode(&predecessor_bytes).map_err(|_| Error::Validation)?;
             identity.validate_request(&request).map_err(|_| Error::Validation)?;
@@ -81,7 +100,7 @@ impl PgStore {
             wire::require(decoded.receipt() == receipt.receipt()
                 && request.encode_receipt(decoded.submission_sequence(), decoded.receipt().clone()).map_err(|_| Error::Validation)? == response)?;
             tx.commit().await?;
-            Ok(Some(FixtureStoredStartPeResponseV1 { identity, request, predecessor_identity, predecessor, response }))
+            Ok(Some(FixtureStoredStartPeResponseV1 { provenance_sha256, identity, request, predecessor_identity, predecessor, response }))
         }).await
     }
 }

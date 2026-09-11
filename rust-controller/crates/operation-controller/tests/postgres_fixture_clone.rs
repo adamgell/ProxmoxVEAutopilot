@@ -1576,6 +1576,53 @@ async fn capture_start_pe_after_genuine_prefix(
             .unwrap()
             .unwrap();
     assert_eq!(stored.identity(), original.identity());
+    let route = port.shared_history_provenance().unwrap();
+    assert_eq!(original.provenance_sha256(), route.sha256());
+    for difference in 0..4 {
+        let client = FixtureCheckpointClient::new(
+            directory.join(if difference == 3 {
+                "other.sock"
+            } else {
+                "client.sock"
+            }),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let wrong = client
+            .shared_history_provenance(&pve_port::fixture_support::CheckpointBinding {
+                operation: if difference == 0 {
+                    sqlx::types::Uuid::now_v7()
+                } else {
+                    op.as_uuid()
+                },
+                generation: if difference == 1 {
+                    sqlx::types::Uuid::now_v7()
+                } else {
+                    generation
+                },
+                owner: if difference == 2 {
+                    sqlx::types::Uuid::now_v7()
+                } else {
+                    owner
+                },
+                point: pve_port::fixture_support::CheckpointPoint::DispatchCommitted,
+            })
+            .unwrap();
+        assert!(
+            s.db.other
+                .load_fixture_start_pe_response_for_route(op, &wrong)
+                .await
+                .is_err(),
+            "route difference {difference}"
+        );
+    }
+    assert!(
+        s.db.other
+            .load_fixture_start_pe_response_for_route(op, &route)
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(
         stored.predecessor_identity(),
         original.predecessor_identity()
