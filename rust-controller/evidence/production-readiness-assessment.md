@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `02a4f69e`: this branch and PR #65 contain an accumulated
+Current scope at `a1430b30`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -172,6 +172,14 @@ The manual composition helper succeeds only because it uses a separate restored
 ConfigurePe observer. A validated predecessor-observation transition is needed
 before owned-controller SIGKILL proof can be meaningful; no fallback facts or
 Ready claim were added.
+
+At `a1430b30`, an opt-in ConfigurePe receipt can seed StartPe preflight reads;
+those reads are permanently disabled once StartPe checkpoint state binds,
+including after an await transition. Malformed, noncanonical, duplicate, and
+post-transition installs are refused. The genuine IPC/PostgreSQL proof passes;
+the underlying ConfigurePe reader remains semantic/publication validation, not
+independent byte-exact provenance. Owned-controller invocation, SIGKILL at the
+write barrier, corruption matrix, and read/checkpoint race proof remain open.
 
 At `6c3912a7`, the controller boundary now exposes one closed original capture
 after successful StartPe submission and selects the atomic fixture writer in
