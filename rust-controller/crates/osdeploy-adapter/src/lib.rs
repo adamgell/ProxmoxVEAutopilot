@@ -2,6 +2,8 @@
 
 mod disk_boot_boundary;
 mod guest_action;
+mod watchdog_boundary;
+pub use watchdog_boundary::{WatchdogBindingV1, WatchdogRefusal, WatchdogReportV1};
 mod verify_qga_boundary;
 pub use verify_qga_boundary::{VerifyQgaBindingV1, VerifyQgaRefusal, VerifyQgaReportV1};
 mod install_qga_boundary;
