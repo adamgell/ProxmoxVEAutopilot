@@ -36,9 +36,9 @@ impl FixtureStopReleaseProposalV1 {
         if [operation, attempt, lease_owner, generation]
             .iter()
             .any(Uuid::is_nil)
-            || request_sha256.is_empty()
-            || receipt_sha256.is_empty()
-            || sample_sha256.is_empty()
+            || !valid_sha256(&request_sha256)
+            || !valid_sha256(&receipt_sha256)
+            || !valid_sha256(&sample_sha256)
             || provenance.operation() != operation
         {
             return Err(InvalidFixtureClone);
@@ -81,6 +81,13 @@ impl FixtureStopReleaseProposalV1 {
     }
 }
 
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 #[cfg(test)]
 mod stop_release_proposal_tests {
     use super::*;
@@ -100,9 +107,9 @@ mod stop_release_proposal_tests {
             Uuid::now_v7(),
             Uuid::now_v7(),
             Uuid::now_v7(),
-            "request".to_owned(),
-            "receipt".to_owned(),
-            "sample".to_owned(),
+            "a".repeat(64),
+            "b".repeat(64),
+            "c".repeat(64),
             provenance.clone(),
         )
         .unwrap();
@@ -110,9 +117,9 @@ mod stop_release_proposal_tests {
         assert!(!proposal.attempt().is_nil());
         assert!(!proposal.lease_owner().is_nil());
         assert!(!proposal.generation().is_nil());
-        assert_eq!(proposal.request_sha256(), "request");
-        assert_eq!(proposal.receipt_sha256(), "receipt");
-        assert_eq!(proposal.sample_sha256(), "sample");
+        assert_eq!(proposal.request_sha256(), "a".repeat(64));
+        assert_eq!(proposal.receipt_sha256(), "b".repeat(64));
+        assert_eq!(proposal.sample_sha256(), "c".repeat(64));
         assert_eq!(proposal.provenance(), &provenance);
         assert!(
             FixtureStopReleaseProposalV1::new(
@@ -120,18 +127,21 @@ mod stop_release_proposal_tests {
                 Uuid::now_v7(),
                 Uuid::now_v7(),
                 Uuid::now_v7(),
-                "request".to_owned(),
-                "receipt".to_owned(),
-                "sample".to_owned(),
+                "a".repeat(64),
+                "b".repeat(64),
+                "c".repeat(64),
                 provenance,
             )
             .is_err()
         );
 
         for (request, receipt, sample) in [
-            (String::new(), "receipt".to_owned(), "sample".to_owned()),
-            ("request".to_owned(), String::new(), "sample".to_owned()),
-            ("request".to_owned(), "receipt".to_owned(), String::new()),
+            (String::new(), "b".repeat(64), "c".repeat(64)),
+            ("a".repeat(64), String::new(), "c".repeat(64)),
+            ("a".repeat(64), "b".repeat(64), String::new()),
+            ("a".repeat(63), "b".repeat(64), "c".repeat(64)),
+            ("A".repeat(64), "b".repeat(64), "c".repeat(64)),
+            ("g".repeat(64), "b".repeat(64), "c".repeat(64)),
         ] {
             let provenance = crate::fixture_ipc::FixtureSharedHistoryProvenanceV1::new(
                 operation,

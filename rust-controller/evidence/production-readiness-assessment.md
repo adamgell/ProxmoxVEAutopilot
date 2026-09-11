@@ -118,9 +118,10 @@ under concurrent subprocess load; the affected `fixture_post_dispatch` and
 
 The follow-on fixture IPC contract `FixtureStopReleaseProposalV1` binds the
 operation, attempt, lease owner, generation, request/receipt/sample digests,
-and sealed provenance for a future supervisor release/send step. It is
-non-authorizing and validated independently; no physical stop or stopped-power
-claim follows from constructing it.
+and sealed provenance for a future supervisor release/send step. It requires
+canonical lowercase 64-character SHA-256 digests and rejects malformed or
+operation-mismatched inputs. It is non-authorizing and validated independently;
+no physical stop or stopped-power claim follows from constructing it.
 
 At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires

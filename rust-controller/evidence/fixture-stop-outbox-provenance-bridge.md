@@ -15,8 +15,9 @@ guarded-grace, cancellation, deadline, replay, and orphan checks.
 The fixture IPC layer now also exposes `FixtureStopReleaseProposalV1`, an
 immutable, non-authorizing contract for the next supervisor step. It binds the
 operation, attempt, lease owner, generation, request/receipt/sample digests,
-and sealed provenance. Construction rejects nil identities, empty digests, and
-operation/provenance mismatches; the type has no release or send method.
+and sealed provenance. Construction rejects nil identities, non-canonical
+SHA-256 digests (wrong length, case, or alphabet), and operation/provenance
+mismatches; the type has no release or send method.
 
 ## Verification
 
@@ -24,7 +25,8 @@ operation/provenance mismatches; the type has no release or send method.
   passed.
 - Existing sealed-provenance focused test and strict Clippy checks remain
   passing.
-- Stop-release proposal validation test: 1 passed.
+- Stop-release proposal validation test: 1 passed, including empty, malformed,
+  uppercase, and non-hex digest rejection.
 - A positive PostgreSQL/controller end-to-end reservation proof is still an
   explicit follow-up gate; this evidence does not claim it.
 
