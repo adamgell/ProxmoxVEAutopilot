@@ -12,7 +12,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `6770f677`: this branch and PR #65 contain an accumulated
+Current scope at `ed68e042`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -74,7 +74,13 @@ immutable history. Commit `6770f677` adds the fixture-only elapsed-grace
 sweeper proof: after the immutable due time it selects `Unknown` with
 `ShutdownGraceDeadlineExpired`, preserves the completion anchor, and creates no
 lease. Pre-due cancellation and concurrent/reload/rollback paths are covered.
-This still does not prove the VM stopped or authorize EnsureStopped. The generic callback
+This still does not prove the VM stopped or authorize EnsureStopped. Commit
+`ed68e042` adds the fixture store/native-fake EnsureStopped proof after guarded
+grace expiry: physical history is reconstructed, a fresh stop mutation scope is
+opened, dispatch/receipt/outcome/reload and duplicate refusal are verified, and
+only the explicitly credential-enabled scheduler discovers the due stop stage.
+The durable external fixture ledger still lacks an independently recoverable
+EnsureStopped stage and process-death proof. The generic callback
 mapping table below remains intentionally pending for legacy action/result
 surfaces. This fixture-only slice is not full callback compatibility or the
 entire port.
