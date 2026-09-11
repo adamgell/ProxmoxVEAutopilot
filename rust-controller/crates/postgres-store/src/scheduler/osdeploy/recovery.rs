@@ -356,6 +356,14 @@ pub(super) async fn restore_waiting_projection(
     let event = load::id(row.try_get("event_id")?)?;
     let value =
         wire::DecisionEnvelope::decode(&row.try_get::<String, _>("payload_canonical_json")?)?;
+    if let wire::Detail::FixtureGraceWaiting(grace) = &value.detail {
+        let schedule = wire::Schedule {
+            mode: wire::ScheduleMode::Waiting,
+            next_check_at: Some(grace.deadline_at),
+            unavailable_count: 0,
+        };
+        return write_schedule(tx, snapshot, event, &value, &schedule).await;
+    }
     let schedule = match &value.detail {
         wire::Detail::PveEvaluated(value) => value.schedule.as_ref(),
         wire::Detail::EvaluationReparked(value) => Some(&value.schedule),

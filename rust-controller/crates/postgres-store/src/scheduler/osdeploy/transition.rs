@@ -27,6 +27,10 @@ pub(super) enum OsDeployTransitionProof {
     ResumedStart(LifecycleTransition),
     #[cfg(feature = "fixture-ipc")]
     FixtureRegistered(LifecycleTransition),
+    #[cfg(feature = "fixture-ipc")]
+    FixtureCompleted(LifecycleTransition),
+    #[cfg(feature = "fixture-ipc")]
+    FixtureGraceWaiting(LifecycleTransition),
     UnactivatedScopeExpired(ExceptionalTransition),
     ActivatedScopeExpired(ExceptionalTransition),
     ExpiredUnstartedSameAttempt(ExceptionalTransition),
@@ -189,6 +193,67 @@ impl ExceptionalFacts {
 }
 
 impl OsDeployTransitionProof {
+    #[cfg(feature = "fixture-ipc")]
+    pub(super) async fn fixture_completed(
+        tx: &mut Transaction<'_, Postgres>,
+        event: EventId,
+    ) -> Result<Self, Error> {
+        let (proof, value) = lifecycle_facts(tx, event, false).await?;
+        let wire::Detail::FixturePeCompleted(selected) = value.detail else {
+            return Err(Error::Validation);
+        };
+        let row: Option<(Uuid, String, bool)> = sqlx::query_as("SELECT attempt_id,report_sha256,succeeded FROM rust_controller.fixture_pe_completions WHERE operation_id=$1 AND selected_event_id=$2")
+            .bind(proof.operation.as_uuid()).bind(event.as_uuid()).fetch_optional(&mut **tx).await?;
+        wire::require(
+            proof.current == ExecutionState::Running
+                && row
+                    == Some((
+                        proof.attempt.as_uuid(),
+                        selected.report_sha256,
+                        selected.succeeded,
+                    )),
+        )?;
+        Ok(Self::FixtureCompleted(LifecycleTransition {
+            target: if selected.succeeded {
+                ExecutionState::Satisfied
+            } else {
+                ExecutionState::Failed
+            },
+            ..proof
+        }))
+    }
+    #[cfg(feature = "fixture-ipc")]
+    pub(super) async fn fixture_grace_waiting(
+        tx: &mut Transaction<'_, Postgres>,
+        event: EventId,
+    ) -> Result<Self, Error> {
+        let row = sqlx::query("SELECT d.payload_canonical_json,d.decision_revision,o.state,o.revision,b.attempt_id,b.deadline_at,s.anchor_event_id FROM rust_controller.osdeploy_decisions d JOIN rust_controller.operations o USING(operation_id) JOIN rust_controller.osdeploy_attempt_bindings b USING(operation_id) JOIN rust_controller.osdeploy_deadlines s ON s.run_id=o.run_id AND s.scope_key='shutdown_grace' JOIN rust_controller.fixture_pe_completions c ON c.selected_event_id=s.anchor_event_id WHERE d.event_id=$1 AND b.activation_mode='parked' AND b.scope_key='shutdown_grace' AND c.succeeded AND NOT EXISTS(SELECT 1 FROM rust_controller.worker_leases l WHERE l.operation_id=o.operation_id) AND NOT EXISTS(SELECT 1 FROM rust_controller.osdeploy_run_cancellations x WHERE x.run_id=o.run_id)")
+            .bind(event.as_uuid()).fetch_one(&mut **tx).await?;
+        let d =
+            wire::DecisionEnvelope::decode(&row.try_get::<String, _>("payload_canonical_json")?)?;
+        let wire::Detail::FixtureGraceWaiting(g) = &d.detail else {
+            return Err(Error::Validation);
+        };
+        let attempt = d.attempt_id.ok_or(Error::Validation)?;
+        let revision: i64 = row.try_get("revision")?;
+        wire::require(
+            row.try_get::<String, _>("state")? == "pending"
+                && row.try_get::<Uuid, _>("attempt_id")? == attempt.as_uuid()
+                && row.try_get::<Uuid, _>("anchor_event_id")? == g.completion_event_id.as_uuid()
+                && row.try_get::<DateTime<Utc>, _>("deadline_at")? == g.deadline_at
+                && d.before_revision.checked_add(1) == Some(revision)
+                && row.try_get::<i64, _>("decision_revision")? == revision,
+        )?;
+        Ok(Self::FixtureGraceWaiting(LifecycleTransition {
+            decision: event,
+            operation: d.operation_id,
+            attempt,
+            revision,
+            current: ExecutionState::Pending,
+            target: ExecutionState::Waiting,
+            at: d.evaluated_at,
+        }))
+    }
     #[cfg(feature = "fixture-ipc")]
     pub(super) async fn fixture_registered(
         tx: &mut Transaction<'_, Postgres>,
@@ -764,13 +829,23 @@ async fn lifecycle_facts(
         wire::Detail::LeaseAcquired(a) => a.acquisition_event_id == epoch,
         wire::Detail::EvaluationStarted(a) => a.lease_acquisition_event_id == epoch,
         wire::Detail::FixturePeRegistered(a) => a.lease_acquisition_event_id == epoch,
+        wire::Detail::FixturePeCompleted(a) => a.lease_acquisition_event_id == epoch,
         _ => false,
     };
     if !matches_epoch
-        || if matches!(d.detail, wire::Detail::FixturePeRegistered(_)) {
-            d.resolution != Some(pve_port::NativeDecision::Satisfied)
-        } else {
-            d.resolution.is_some()
+        || match &d.detail {
+            wire::Detail::FixturePeRegistered(_) => {
+                d.resolution != Some(pve_port::NativeDecision::Satisfied)
+            }
+            wire::Detail::FixturePeCompleted(a) => {
+                d.resolution
+                    != Some(if a.succeeded {
+                        pve_port::NativeDecision::Satisfied
+                    } else {
+                        pve_port::NativeDecision::Failed
+                    })
+            }
+            _ => d.resolution.is_some(),
         }
         || attempt.as_uuid() != row.try_get::<Uuid, _>("attempt_id")?
         || d.before_revision.checked_add(1) != Some(row.try_get("revision")?)
@@ -803,9 +878,18 @@ pub(super) async fn append_osdeploy_transition(
     } else {
         TransitionPolicy::Domain
     };
+    #[cfg(feature = "fixture-ipc")]
+    let policy = if matches!(&proof, OsDeployTransitionProof::FixtureGraceWaiting(_)) {
+        TransitionPolicy::FixtureGraceWaiting
+    } else {
+        policy
+    };
     let p = match proof {
         #[cfg(feature = "fixture-ipc")]
         OsDeployTransitionProof::FixtureRegistered(p) => p,
+        #[cfg(feature = "fixture-ipc")]
+        OsDeployTransitionProof::FixtureCompleted(p)
+        | OsDeployTransitionProof::FixtureGraceWaiting(p) => p,
         OsDeployTransitionProof::InitialLease(p)
         | OsDeployTransitionProof::ReclaimedLease(p)
         | OsDeployTransitionProof::ReclaimedCredentialLease(p)

@@ -314,6 +314,41 @@ pub(super) async fn validate(
         return Ok(());
     }
     #[cfg(feature = "fixture-ipc")]
+    if matches!(
+        records.snapshot.plan().stage(),
+        OsDeployStage::PeComplete | OsDeployStage::PeShutdownGrace
+    ) {
+        wire::require(
+            records.snapshot.dispatch().is_none()
+                && records.evidence.is_empty()
+                && !records
+                    .decisions
+                    .iter()
+                    .any(|d| matches!(d.value.detail, Detail::PveEvaluated(_))),
+        )?;
+        let prior_stage = if records.snapshot.plan().stage() == OsDeployStage::PeComplete {
+            OsDeployStage::PeRegister
+        } else {
+            OsDeployStage::PeComplete
+        };
+        let prior = Box::pin(load::load_records(
+            tx,
+            records.registration.ids().operation(prior_stage),
+        ))
+        .await?;
+        Box::pin(validate(tx, &prior)).await?;
+        let decision = selected(&prior).ok_or(Error::Validation)?;
+        wire::require(
+            prior.snapshot.state() == ExecutionState::Satisfied
+                && decision.value.resolution == Some(NativeDecision::Satisfied)
+                && records
+                    .snapshot
+                    .activated_at()
+                    .is_some_and(|at| decision.value.evaluated_at <= at),
+        )?;
+        return Ok(());
+    }
+    #[cfg(feature = "fixture-ipc")]
     if records.snapshot.plan().stage() == OsDeployStage::PeRegister {
         // Validate every selected physical predecessor, then restore only the
         // inherited callback authority. Physical context builders stay closed.

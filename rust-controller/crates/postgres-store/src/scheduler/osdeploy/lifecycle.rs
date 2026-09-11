@@ -147,6 +147,8 @@ impl Scheduler {
             OsDeployStage::StartPe if self.fixture_start_pe => Some(reg.ids().operation(OsDeployStage::ConfigurePe)),
             #[cfg(feature = "fixture-ipc")]
             OsDeployStage::PeRegister if self.fixture_credential_delivery => Some(reg.ids().operation(OsDeployStage::StartPe)),
+            #[cfg(feature = "fixture-ipc")]
+            OsDeployStage::PeComplete if self.fixture_credential_delivery => Some(reg.ids().operation(OsDeployStage::PeRegister)),
             _ => return Err(Error::CapabilityUnavailable),
         };
         let predecessor_event = if let Some(prior) = predecessor {
@@ -169,11 +171,16 @@ impl Scheduler {
             return Ok(None);
         }
         let at = now(&mut tx).await?;
-        let inherited = if snapshot.plan().stage() == OsDeployStage::PeRegister {
+        let inherited = if matches!(snapshot.plan().stage(), OsDeployStage::PeRegister | OsDeployStage::PeComplete) {
             #[cfg(feature = "fixture-ipc")]
-            load::require_fixture_registration_origin(&mut tx, &reg, at).await?;
-            Some(sqlx::query("SELECT anchor_operation_id,anchor_event_id,opened_at,budget_seconds,deadline_at FROM rust_controller.osdeploy_deadlines WHERE run_id=$1 AND scope_key='pe_registration'")
-                .bind(snapshot.run_id().as_uuid()).fetch_one(&mut *tx).await?)
+            if snapshot.plan().stage() == OsDeployStage::PeRegister {
+                load::require_fixture_registration_origin(&mut tx, &reg, at).await?;
+            } else {
+                fixture_completion::require_completion_origin(&mut tx, &reg).await?;
+            }
+            let inherited_scope = if snapshot.plan().stage() == OsDeployStage::PeRegister { "pe_registration" } else { "pe_completion" };
+            Some(sqlx::query("SELECT anchor_operation_id,anchor_event_id,opened_at,budget_seconds,deadline_at FROM rust_controller.osdeploy_deadlines WHERE run_id=$1 AND scope_key=$2")
+                .bind(snapshot.run_id().as_uuid()).bind(inherited_scope).fetch_one(&mut *tx).await?)
         } else { None };
         let budget = if let Some(scope) = &inherited { u32::try_from(scope.try_get::<i32,_>("budget_seconds")?).map_err(|_| Error::Validation)? } else { reg.plan().policy().mutation_seconds() };
         let deadline = if let Some(scope) = &inherited { scope.try_get("deadline_at")? } else { at

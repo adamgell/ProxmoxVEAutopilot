@@ -21,8 +21,9 @@ pub use authority::{AuthoritySnapshot, ExecutorKind};
 pub use lease::{LeaseGrant, ReapSummary};
 #[cfg(feature = "fixture-ipc")]
 pub use osdeploy::{
-    FixtureCredentialEnvelope, FixtureCredentialSink, FixtureDeliveryAck, FixtureDeliveryRecovery,
-    FixturePeRegistrationIdentity, FixturePeRegistrationResult,
+    FixtureBootFilesStagedResult, FixtureCredentialEnvelope, FixtureCredentialSink,
+    FixtureDeliveryAck, FixtureDeliveryRecovery, FixturePeCompletionReport,
+    FixturePeCompletionResult, FixturePeRegistrationIdentity, FixturePeRegistrationResult,
 };
 pub use osdeploy::{
     OsDeployDispatchPermit, OsDeployLeaseStatus, OsDeployMaintenanceSummary,
@@ -919,6 +920,8 @@ struct StateAppend {
 #[derive(Clone, Copy)]
 enum TransitionPolicy {
     Domain,
+    #[cfg(feature = "fixture-ipc")]
+    FixtureGraceWaiting,
     CredentialDeliveryReclaim,
     CredentialDeliveryResume,
     Cancellation,
@@ -1152,6 +1155,10 @@ fn validate_transition(
     policy: TransitionPolicy,
 ) -> Result<(), SchedulerError> {
     let valid = match policy {
+        #[cfg(feature = "fixture-ipc")]
+        TransitionPolicy::FixtureGraceWaiting => {
+            current == ExecutionState::Pending && target == ExecutionState::Waiting
+        }
         TransitionPolicy::CredentialDeliveryReclaim => {
             current == ExecutionState::Running && target == ExecutionState::Pending
         }

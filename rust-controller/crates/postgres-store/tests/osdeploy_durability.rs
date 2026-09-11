@@ -40,6 +40,16 @@ async fn fixture_peregister_authenticated_selection_replay_and_rollback() {
 async fn fixture_completion_package_delivery_survives_reclaim_and_reload() {
     fixture_credential_delivery_reclaim_case(false, 4).await;
 }
+#[cfg(all(feature = "fixture-ipc", unix))]
+#[tokio::test]
+async fn fixture_pecomplete_authenticated_report_and_atomic_grace() {
+    fixture_credential_delivery_reclaim_case(false, 5).await;
+}
+#[cfg(all(feature = "fixture-ipc", unix))]
+#[tokio::test]
+async fn fixture_pecomplete_failed_report_never_opens_grace() {
+    fixture_credential_delivery_reclaim_case(false, 6).await;
+}
 
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
@@ -89,7 +99,7 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
     use pve_port::ProvisioningEvaluationModeV1;
     use std::os::unix::fs::DirBuilderExt;
     let sink_id = uuid::Uuid::now_v7();
-    let s = if register == 4 {
+    let s = if register >= 4 {
         osdeploy_execution_support::Scenario::fixture_completion_delivery(sink_id).await
     } else if register == 2 {
         osdeploy_execution_support::Scenario::fixture_delivery_short_registration(sink_id).await
@@ -352,13 +362,13 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
     let package: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(
         package["schema"],
-        if register == 4 {
+        if register >= 4 {
             "materialized_fixture_pe_completion_package_v1"
         } else {
             "materialized_pe_package_semantics_v1"
         }
     );
-    if register == 4 {
+    if register >= 4 {
         assert_eq!(
             package["completion_definition_sha256"],
             event_journal::payload_digest(&package["completion_requirement"]).unwrap()
@@ -469,7 +479,7 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                 .await
                 .is_err()
         );
-        if register == 3 {
+        if register == 3 || register >= 5 {
             replacement
                 .start_osdeploy_bound(&next, s.ids.workflow_sha256())
                 .await
@@ -606,16 +616,237 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                     selected.selected_at()
                 )
             );
-            assert!(
+            if register == 3 {
+                assert!(
+                    replacement
+                        .claim_osdeploy_bound(
+                            s.ids.operation(OsDeployStage::PeComplete),
+                            s.ids.workflow_sha256(),
+                            1
+                        )
+                        .await
+                        .is_err()
+                );
+            } else {
+                let complete = s.ids.operation(OsDeployStage::PeComplete);
+                let grace = s.ids.operation(OsDeployStage::PeShutdownGrace);
+                let completion_deadline: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT deadline_at FROM rust_controller.osdeploy_deadlines WHERE scope_key='pe_completion'").fetch_one(&s.db.pool).await.unwrap();
+                let completion_grant = replacement
+                    .claim_osdeploy_bound(complete, s.ids.workflow_sha256(), 1)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(*completion_grant.deadline_at(), completion_deadline);
                 replacement
-                    .claim_osdeploy_bound(
-                        s.ids.operation(OsDeployStage::PeComplete),
-                        s.ids.workflow_sha256(),
-                        1
+                    .start_osdeploy_bound(&completion_grant, s.ids.workflow_sha256())
+                    .await
+                    .unwrap();
+                let report = postgres_store::FixturePeCompletionReport {
+                    definition_sha256: package["completion_definition_sha256"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                    milestone_id: "boot-files-staged.v1".to_owned(),
+                    result: postgres_store::FixtureBootFilesStagedResult {
+                        image_applied: true,
+                        boot_files_staged: true,
+                        boot_files_verified: register == 5,
+                    },
+                };
+                let mut wrong = report.clone();
+                wrong.definition_sha256 = "0".repeat(64);
+                assert!(
+                    replacement
+                        .accept_fixture_pe_completion(
+                            &completion_grant,
+                            &authorization,
+                            secret,
+                            &wrong
+                        )
+                        .await
+                        .is_err()
+                );
+                wrong = report.clone();
+                wrong.milestone_id.push_str("-other");
+                assert!(
+                    replacement
+                        .accept_fixture_pe_completion(
+                            &completion_grant,
+                            &authorization,
+                            secret,
+                            &wrong
+                        )
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    replacement
+                        .accept_fixture_pe_completion(
+                            &completion_grant,
+                            "Bearer bad",
+                            secret,
+                            &report
+                        )
+                        .await
+                        .is_err()
+                );
+                let before = s.db.store.load_osdeploy_operation(complete).await.unwrap();
+                if register == 5 {
+                    for (table, condition) in [
+                        ("fixture_pe_completions", "true"),
+                        ("osdeploy_deadlines", "NEW.scope_key='shutdown_grace'"),
+                        ("osdeploy_decisions", "NEW.action='fixture_grace_waiting'"),
+                        (
+                            "osdeploy_schedule_projection",
+                            "NEW.scope_key='shutdown_grace'",
+                        ),
+                    ] {
+                        sqlx::raw_sql("CREATE OR REPLACE FUNCTION rust_controller.reject_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected completion rollback'; END $$;").execute(&s.db.pool).await.unwrap();
+                        sqlx::raw_sql(&format!("CREATE TRIGGER reject_completion AFTER INSERT ON rust_controller.{table} FOR EACH ROW WHEN ({condition}) EXECUTE FUNCTION rust_controller.reject_completion();")).execute(&s.db.pool).await.unwrap();
+                        assert!(
+                            replacement
+                                .accept_fixture_pe_completion(
+                                    &completion_grant,
+                                    &authorization,
+                                    secret,
+                                    &report
+                                )
+                                .await
+                                .is_err()
+                        );
+                        sqlx::raw_sql(&format!(
+                            "DROP TRIGGER reject_completion ON rust_controller.{table}"
+                        ))
+                        .execute(&s.db.pool)
+                        .await
+                        .unwrap();
+                        let restored = s.db.other.load_osdeploy_operation(complete).await.unwrap();
+                        assert_eq!(restored.revision(), before.revision());
+                        assert_eq!(restored.state(), ExecutionState::Running);
+                        assert_eq!(
+                            s.db.other
+                                .load_osdeploy_operation(grace)
+                                .await
+                                .unwrap()
+                                .state(),
+                            ExecutionState::Pending
+                        );
+                        let partial: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM rust_controller.fixture_pe_completions)+(SELECT count(*) FROM rust_controller.osdeploy_deadlines WHERE scope_key='shutdown_grace')").fetch_one(&s.db.pool).await.unwrap();
+                        assert_eq!(partial, 0);
+                    }
+                }
+                let (left, right) = tokio::join!(
+                    replacement.accept_fixture_pe_completion(
+                        &completion_grant,
+                        &authorization,
+                        secret,
+                        &report
+                    ),
+                    replacement.accept_fixture_pe_completion(
+                        &completion_grant,
+                        &authorization,
+                        secret,
+                        &report
+                    )
+                );
+                let (left, right) = (left.unwrap(), right.unwrap());
+                assert_ne!(left.replayed(), right.replayed());
+                assert_eq!(left.selected_event_id(), right.selected_event_id());
+                let expected = if register == 5 {
+                    ExecutionState::Satisfied
+                } else {
+                    ExecutionState::Failed
+                };
+                assert_eq!(left.state(), expected);
+                let selected_at = left.selected_at();
+                let replay = replacement
+                    .accept_fixture_pe_completion(
+                        &completion_grant,
+                        &authorization,
+                        secret,
+                        &report,
                     )
                     .await
-                    .is_err()
-            );
+                    .unwrap();
+                assert!(replay.replayed());
+                assert_eq!(replay.selected_at(), selected_at);
+                wrong = report.clone();
+                wrong.result.boot_files_verified = !wrong.result.boot_files_verified;
+                assert!(
+                    replacement
+                        .accept_fixture_pe_completion(
+                            &completion_grant,
+                            &authorization,
+                            secret,
+                            &wrong
+                        )
+                        .await
+                        .is_err()
+                );
+                s.db.store.migrate().await.unwrap();
+                s.db.store.migrate().await.unwrap();
+                assert_eq!(
+                    s.db.other
+                        .load_osdeploy_operation(complete)
+                        .await
+                        .unwrap()
+                        .state(),
+                    expected
+                );
+                let parked = s.db.other.load_osdeploy_operation(grace).await.unwrap();
+                if register == 5 {
+                    assert_eq!(parked.state(), ExecutionState::Waiting);
+                    let due = selected_at
+                        + chrono::Duration::seconds(i64::from(
+                            osdeploy_support::plan().policy().shutdown_grace_seconds(),
+                        ));
+                    assert_eq!(parked.deadline_at(), Some(due));
+                    assert_eq!(parked.next_check_at(), Some(due));
+                    let leases: i64 = sqlx::query_scalar(
+                        "SELECT count(*) FROM rust_controller.worker_leases WHERE operation_id=$1",
+                    )
+                    .bind(grace.as_uuid())
+                    .fetch_one(&s.db.pool)
+                    .await
+                    .unwrap();
+                    assert_eq!(leases, 0);
+                    sqlx::query("DELETE FROM rust_controller.osdeploy_schedule_projection WHERE operation_id=$1").bind(grace.as_uuid()).execute(&s.db.pool).await.unwrap();
+                    let mut repair = postgres_store::OsDeployRepairCursor::default();
+                    let repaired = replacement
+                        .repair_osdeploy_schedules(&mut repair)
+                        .await
+                        .unwrap();
+                    assert_eq!(repaired.rejected(), 0);
+                    let projected: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT next_check_at FROM rust_controller.osdeploy_schedule_projection WHERE operation_id=$1").bind(grace.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+                    assert_eq!(projected, due);
+                    assert_eq!(
+                        s.db.other
+                            .load_osdeploy_operation(grace)
+                            .await
+                            .unwrap()
+                            .next_check_at(),
+                        Some(due)
+                    );
+                } else {
+                    assert_eq!(parked.state(), ExecutionState::Pending);
+                    assert!(parked.attempt_id().is_none());
+                }
+                replacement
+                    .cancel_osdeploy_run(s.ids.run_id())
+                    .await
+                    .unwrap();
+                assert!(
+                    replacement
+                        .accept_fixture_pe_completion(
+                            &completion_grant,
+                            &authorization,
+                            secret,
+                            &report
+                        )
+                        .await
+                        .is_err()
+                );
+            }
             s.db.store.migrate().await.unwrap();
             assert_eq!(
                 s.db.other

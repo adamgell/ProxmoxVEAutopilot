@@ -106,6 +106,18 @@ closed!(FixtureRegistration {
     package_sha256: String,
     registration_deadline: DateTime<Utc>,
 });
+closed!(FixtureCompletion {
+    lease_acquisition_event_id: EventId,
+    registration_event_id: EventId,
+    report_sha256: String,
+    definition_sha256: String,
+    completion_deadline: DateTime<Utc>,
+    succeeded: bool,
+});
+closed!(FixtureGrace {
+    completion_event_id: EventId,
+    deadline_at: DateTime<Utc>,
+});
 closed!(Acquisition {
     purpose: Purpose, acquisition_event_id: EventId, token_sha256: String, worker_id: String,
     acquired_at: DateTime<Utc>, expires_at: DateTime<Utc>, deadline_at: DateTime<Utc>,
@@ -167,6 +179,8 @@ pub(crate) enum Detail {
     PveDispatchCommitted(Dispatch),
     PveEvaluated(Evaluated),
     FixturePeRegistered(FixtureRegistration),
+    FixturePeCompleted(FixtureCompletion),
+    FixtureGraceWaiting(FixtureGrace),
     LeaseReclaimedSameAttempt(Reclaimed),
     CredentialDeliveryReclaimed(Reclaimed),
     EvaluationReparked(Reparked),
@@ -254,6 +268,8 @@ impl DecisionEnvelope {
             Detail::PveDispatchCommitted(_) => "pve_dispatch_committed",
             Detail::PveEvaluated(_) => "pve_evaluated",
             Detail::FixturePeRegistered(_) => "fixture_pe_registered",
+            Detail::FixturePeCompleted(_) => "fixture_pe_completed",
+            Detail::FixtureGraceWaiting(_) => "fixture_grace_waiting",
             Detail::LeaseReclaimedSameAttempt(_) => "lease_reclaimed_same_attempt",
             Detail::CredentialDeliveryReclaimed(_) => "credential_delivery_reclaimed",
             Detail::EvaluationReparked(_) => "evaluation_reparked",
@@ -293,6 +309,22 @@ impl DecisionEnvelope {
                             && self.evaluated_at < d.registration_deadline,
                     )?;
                     Some(NativeDecision::Satisfied)
+                }
+                FixturePeCompleted(d) => {
+                    require(
+                        hash_valid(&d.report_sha256)
+                            && hash_valid(&d.definition_sha256)
+                            && self.evaluated_at < d.completion_deadline,
+                    )?;
+                    Some(if d.succeeded {
+                        NativeDecision::Satisfied
+                    } else {
+                        NativeDecision::Failed
+                    })
+                }
+                FixtureGraceWaiting(d) => {
+                    require(self.evaluated_at < d.deadline_at)?;
+                    Some(NativeDecision::Waiting)
                 }
                 StageActivated(d) => {
                     require(

@@ -17,6 +17,8 @@ const EXPECTED_TABLES: &[&str] = &[
     #[cfg(feature = "fixture-ipc")]
     "fixture_pe_boot_sessions",
     #[cfg(feature = "fixture-ipc")]
+    "fixture_pe_completions",
+    #[cfg(feature = "fixture-ipc")]
     "fixture_pe_credential_aliases",
     #[cfg(feature = "fixture-ipc")]
     "fixture_pe_deliveries",

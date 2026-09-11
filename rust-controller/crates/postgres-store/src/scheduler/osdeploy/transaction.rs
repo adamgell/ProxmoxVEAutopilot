@@ -114,7 +114,11 @@ pub(super) fn admit(
         snapshot.plan().stage(),
         OsDeployStage::Clone | OsDeployStage::DiskCapacity | OsDeployStage::ConfigurePe
     ) || (scheduler.fixture_start_pe && snapshot.plan().stage() == OsDeployStage::StartPe)
-        || (fixture_registration && snapshot.plan().stage() == OsDeployStage::PeRegister))
+        || (fixture_registration
+            && matches!(
+                snapshot.plan().stage(),
+                OsDeployStage::PeRegister | OsDeployStage::PeComplete
+            )))
     {
         return Err(Error::CapabilityUnavailable);
     }
@@ -199,10 +203,15 @@ pub(super) fn envelope(
         generation,
         before_revision: revision,
         evaluated_at: at,
-        resolution: if matches!(detail, wire::Detail::FixturePeRegistered(_)) {
-            Some(pve_port::NativeDecision::Satisfied)
-        } else {
-            None
+        resolution: match &detail {
+            wire::Detail::FixturePeRegistered(_) => Some(pve_port::NativeDecision::Satisfied),
+            wire::Detail::FixturePeCompleted(d) => Some(if d.succeeded {
+                pve_port::NativeDecision::Satisfied
+            } else {
+                pve_port::NativeDecision::Failed
+            }),
+            wire::Detail::FixtureGraceWaiting(_) => Some(pve_port::NativeDecision::Waiting),
+            _ => None,
         },
         detail,
     })

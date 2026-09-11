@@ -9,7 +9,13 @@ use sqlx::Row;
 mod decision;
 mod discovery;
 #[cfg(feature = "fixture-ipc")]
+pub(crate) mod fixture_completion;
+#[cfg(feature = "fixture-ipc")]
 mod fixture_credential;
+#[cfg(feature = "fixture-ipc")]
+pub use fixture_completion::{
+    FixtureBootFilesStagedResult, FixturePeCompletionReport, FixturePeCompletionResult,
+};
 #[cfg(feature = "fixture-ipc")]
 mod fixture_delivery;
 #[cfg(feature = "fixture-ipc")]

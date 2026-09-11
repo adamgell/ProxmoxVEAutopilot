@@ -119,7 +119,12 @@ pub(super) async fn load_records(
                     == a.try_get::<Option<DateTime<Utc>>, _>("completed_at")?
                         .is_some()
                 && activated < deadline
-                && b.try_get::<String, _>("activation_mode")? == "leased",
+                && b.try_get::<String, _>("activation_mode")?
+                    == if cfg!(feature = "fixture-ipc") && stage == OsDeployStage::PeShutdownGrace {
+                        "parked"
+                    } else {
+                        "leased"
+                    },
         )?;
         let activation = decision(&decisions, b.try_get("activation_event_id")?, operation)?;
         let Detail::StageActivated(d) = &activation.value.detail else {
@@ -311,10 +316,14 @@ pub(super) async fn load_records(
         }
     }
     #[cfg(not(feature = "fixture-ipc"))]
-    require(
-        !own.iter()
-            .any(|d| matches!(d.value.detail, Detail::FixturePeRegistered(_))),
-    )?;
+    require(!own.iter().any(|d| {
+        matches!(
+            d.value.detail,
+            Detail::FixturePeRegistered(_)
+                | Detail::FixturePeCompleted(_)
+                | Detail::FixtureGraceWaiting(_)
+        )
+    }))?;
     #[cfg(feature = "fixture-ipc")]
     {
         let selected: Vec<_> = own
@@ -355,6 +364,72 @@ pub(super) async fn load_records(
                     && completion.opened == d.value.evaluated_at,
             )?;
             require_fixture_registration_origin(tx, &registration, d.value.evaluated_at).await?;
+        }
+    }
+    #[cfg(feature = "fixture-ipc")]
+    {
+        let selected: Vec<_> = own
+            .iter()
+            .filter(|d| matches!(d.value.detail, Detail::FixturePeCompleted(_)))
+            .collect();
+        let rows = sqlx::query("SELECT c.*,r.alias_sha256 AS registered_alias,r.selected_at AS registered_at,r.operation_id AS registration_operation FROM rust_controller.fixture_pe_completions c JOIN rust_controller.fixture_pe_registrations r ON r.selected_event_id=c.registration_event_id WHERE c.operation_id=$1")
+            .bind(operation.as_uuid()).fetch_all(&mut **tx).await?;
+        require(selected.len() <= 1 && rows.len() == selected.len())?;
+        if let (Some(d), Some(row)) = (selected.first(), rows.first()) {
+            let Detail::FixturePeCompleted(value) = &d.value.detail else {
+                return Err(Error::Validation);
+            };
+            let report: crate::FixturePeCompletionReport =
+                decode_exact(&row.try_get::<String, _>("report_canonical_json")?, 4096)?;
+            report.validate_package(&fixture_package(tx, &registration).await?)?;
+            let target = if report.succeeded() {
+                ExecutionState::Satisfied
+            } else {
+                ExecutionState::Failed
+            };
+            require(
+                stage == OsDeployStage::PeComplete
+                    && current == target
+                    && row.try_get::<Uuid, _>("run_id")? == run
+                    && Some(id::<AttemptId>(row.try_get("attempt_id")?)?) == attempt
+                    && row.try_get::<Uuid, _>("selected_event_id")? == d.event.as_uuid()
+                    && row.try_get::<Uuid, _>("registration_event_id")?
+                        == value.registration_event_id.as_uuid()
+                    && row.try_get::<Uuid, _>("registration_operation")?
+                        == registration
+                            .ids()
+                            .operation(OsDeployStage::PeRegister)
+                            .as_uuid()
+                    && row.try_get::<Vec<u8>, _>("alias_sha256")?
+                        == row.try_get::<Vec<u8>, _>("registered_alias")?
+                    && row.try_get::<String, _>("report_sha256")? == digest(&report)?
+                    && value.report_sha256 == digest(&report)?
+                    && value.definition_sha256 == report.definition_sha256
+                    && value.succeeded == report.succeeded()
+                    && row.try_get::<bool, _>("succeeded")? == report.succeeded()
+                    && row.try_get::<DateTime<Utc>, _>("selected_at")? == d.value.evaluated_at,
+            )?;
+            require_fixture_registration_origin(tx, &registration, row.try_get("registered_at")?)
+                .await?;
+            if report.succeeded() {
+                let grace = scopes.get("shutdown_grace").ok_or(Error::Validation)?;
+                require(
+                    grace.anchor == d.event
+                        && grace.anchor_op == operation
+                        && grace.opened == d.value.evaluated_at,
+                )?;
+                let waiting = decisions
+                    .values()
+                    .find(|v| {
+                        v.value.operation_id
+                            == registration.ids().operation(OsDeployStage::PeShutdownGrace)
+                            && matches!(v.value.detail, Detail::FixtureGraceWaiting(_))
+                    })
+                    .ok_or(Error::Validation)?;
+                require(waiting.value.evaluated_at == d.value.evaluated_at)?;
+            } else {
+                require(!scopes.contains_key("shutdown_grace"))?;
+            }
         }
     }
     let own = own.into_iter().cloned().collect();
@@ -491,7 +566,13 @@ async fn load_decisions(
             v.attempt_id.map(|a| a.as_uuid()) == r.try_get::<Option<Uuid>, _>("bound_attempt")?
                 && (!matches!(v.detail, Detail::StageActivated(_))
                     || super::history::enabled(stage).is_ok()
-                    || (cfg!(feature = "fixture-ipc") && stage == OsDeployStage::PeRegister)),
+                    || (cfg!(feature = "fixture-ipc")
+                        && matches!(
+                            stage,
+                            OsDeployStage::PeRegister
+                                | OsDeployStage::PeComplete
+                                | OsDeployStage::PeShutdownGrace
+                        ))),
         )?;
         require(
             canonical(&v)? == text
@@ -648,7 +729,13 @@ fn validate_activations(
 ) -> Result<(), Error> {
     for d in own {
         if let Detail::StageActivated(a) = &d.value.detail {
-            let inherited = cfg!(feature = "fixture-ipc") && stage == OsDeployStage::PeRegister;
+            let inherited = cfg!(feature = "fixture-ipc")
+                && matches!(
+                    stage,
+                    OsDeployStage::PeRegister
+                        | OsDeployStage::PeComplete
+                        | OsDeployStage::PeShutdownGrace
+                );
             require(inherited || super::history::enabled(stage).is_ok())?;
             let scope = scopes.get(&name(a.scope_key)?).ok_or(Error::Validation)?;
             require(
@@ -658,7 +745,12 @@ fn validate_activations(
                     && a.budget_seconds == scope.budget
                     && a.deadline_at == scope.deadline
                     && if inherited {
-                        a.anchor_operation_id == reg.ids().operation(OsDeployStage::StartPe)
+                        a.anchor_operation_id
+                            == reg.ids().operation(match stage {
+                                OsDeployStage::PeComplete => OsDeployStage::PeRegister,
+                                OsDeployStage::PeShutdownGrace => OsDeployStage::PeComplete,
+                                _ => OsDeployStage::StartPe,
+                            })
                             && a.opened_at <= d.value.evaluated_at
                             && d.value.evaluated_at < a.deadline_at
                     } else {
@@ -678,6 +770,10 @@ fn validate_activations(
                     OsDeployStage::Clone
                 } else if stage == OsDeployStage::PeRegister {
                     OsDeployStage::StartPe
+                } else if stage == OsDeployStage::PeComplete {
+                    OsDeployStage::PeRegister
+                } else if stage == OsDeployStage::PeShutdownGrace {
+                    OsDeployStage::PeComplete
                 } else if stage == OsDeployStage::StartPe {
                     OsDeployStage::ConfigurePe
                 } else {
@@ -781,7 +877,15 @@ async fn load_epochs(
             d.value.operation_id == op && matches!(d.value.detail, Detail::LeaseAcquired(_))
         })
         .count();
-    require(count == out.len() && (attempt.is_none() || !out.is_empty()))?;
+    let parked_grace = cfg!(feature = "fixture-ipc")
+        && ds.values().any(|d| {
+            d.value.operation_id == op && matches!(d.value.detail, Detail::FixtureGraceWaiting(_))
+        });
+    require(
+        count == out.len()
+            && (attempt.is_none() || !out.is_empty() || parked_grace)
+            && (!parked_grace || out.is_empty()),
+    )?;
     let mut ordered: Vec<_> = out.values().collect();
     ordered.sort_by_key(|e| ds[&e.event.as_uuid()].revision);
     if let Some(first) = ordered.first() {
@@ -1140,6 +1244,35 @@ fn validate_decision_links(
                         && d.value.evaluated_at < a.registration_deadline,
                 )?;
             }
+            Detail::FixturePeCompleted(a) => {
+                let e = epoch(a.lease_acquisition_event_id, d)?;
+                let r = ds
+                    .get(&a.registration_event_id.as_uuid())
+                    .ok_or(Error::Validation)?;
+                require(
+                    e.generation == d.value.generation
+                        && Some(a.completion_deadline) == deadline
+                        && d.value.evaluated_at < a.completion_deadline
+                        && matches!(r.value.detail, Detail::FixturePeRegistered(_))
+                        && r.value.run_id == d.value.run_id
+                        && r.value.evaluated_at <= d.value.evaluated_at,
+                )?;
+            }
+            Detail::FixtureGraceWaiting(a) => {
+                let r = ds
+                    .get(&a.completion_event_id.as_uuid())
+                    .ok_or(Error::Validation)?;
+                let s = scopes.get("shutdown_grace").ok_or(Error::Validation)?;
+                require(
+                    expected_scope == Scope::ShutdownGrace
+                        && Some(a.deadline_at) == deadline
+                        && s.anchor == a.completion_event_id
+                        && s.deadline == a.deadline_at
+                        && r.value.resolution == Some(NativeDecision::Satisfied)
+                        && matches!(r.value.detail, Detail::FixturePeCompleted(_))
+                        && d.value.evaluated_at == r.value.evaluated_at,
+                )?;
+            }
             Detail::LeaseAcquired(a) => {
                 if a.purpose == Purpose::ReclaimedCredentialDelivery {
                     let prior = own
@@ -1367,6 +1500,10 @@ fn legal_state_edge(from: ExecutionState, to: ExecutionState, d: &Decision) -> b
     use ExecutionState::*;
     match &d.value.detail {
         Detail::FixturePeRegistered(_) => from == Running && to == Satisfied,
+        Detail::FixturePeCompleted(a) => {
+            from == Running && to == if a.succeeded { Satisfied } else { Failed }
+        }
+        Detail::FixtureGraceWaiting(_) => from == Pending && to == Waiting,
         Detail::LeaseAcquired(a) => {
             from == Pending
                 && if a.purpose == Purpose::ReclaimedCredentialDelivery {
@@ -1406,6 +1543,8 @@ fn admits_decision_in(state: ExecutionState, detail: &Detail) -> bool {
     use ExecutionState::*;
     match detail {
         Detail::FixturePeRegistered(_) => state == Running,
+        Detail::FixturePeCompleted(_) => state == Running,
+        Detail::FixtureGraceWaiting(_) => state == Pending,
         Detail::StageActivated(_) => state == Pending,
         Detail::LeaseAcquired(a) => {
             if a.purpose == Purpose::ResumeEvaluation {
@@ -1566,6 +1705,7 @@ fn validate_state_history(
     sorted.sort_by_key(|d| d.revision);
     for d in sorted {
         match &d.value.detail {
+            Detail::FixtureGraceWaiting(v) => next = Some(v.deadline_at),
             Detail::PveEvaluated(v) => next = v.schedule.as_ref().and_then(|s| s.next_check_at),
             Detail::EvaluationReparked(v) => next = v.schedule.next_check_at,
             Detail::ReconciliationScheduled(v) => next = v.schedule.next_check_at,

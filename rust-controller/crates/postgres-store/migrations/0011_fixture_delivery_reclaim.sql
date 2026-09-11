@@ -16,6 +16,8 @@ ALTER TABLE rust_controller.osdeploy_decisions ADD CONSTRAINT osdeploy_decisions
     WHEN action='pve_dispatch_committed' THEN resolution IS NOT DISTINCT FROM 'ready'
     -- Later immutable registration rows survive idempotent migration replay.
     WHEN action='fixture_pe_registered' THEN resolution IS NOT DISTINCT FROM 'satisfied'
+    WHEN action='fixture_pe_completed' THEN resolution IS NOT NULL AND resolution IN ('satisfied','failed')
+    WHEN action='fixture_grace_waiting' THEN resolution IS NOT DISTINCT FROM 'waiting'
     WHEN action='pve_evaluated' THEN resolution IS NOT NULL AND resolution IN
         ('waiting','satisfied','failed','blocked','unknown','conflicted')
     WHEN action='evaluation_reparked' THEN resolution IS NOT DISTINCT FROM 'waiting'
