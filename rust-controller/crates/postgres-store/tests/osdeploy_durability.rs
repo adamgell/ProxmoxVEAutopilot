@@ -7,6 +7,77 @@ mod osdeploy_support;
 
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
+async fn fixture_delivery_policy_is_immutable_and_closes_second_scheduler() {
+    use postgres_store::{OsDeployExecutionError, OsDeployStoreError};
+    let f = osdeploy_support::Fixture::new().await;
+    let p = osdeploy_support::plan();
+    let key = uuid::Uuid::now_v7();
+    let sink = uuid::Uuid::now_v7();
+    assert_eq!(
+        f.store
+            .create_fixture_osdeploy_with_delivery(key, &p, uuid::Uuid::nil())
+            .await
+            .unwrap_err(),
+        OsDeployStoreError::Validation
+    );
+    let (a, b) = tokio::join!(
+        f.store.create_fixture_osdeploy_with_delivery(key, &p, sink),
+        f.other.create_fixture_osdeploy_with_delivery(key, &p, sink)
+    );
+    let created = a.unwrap();
+    assert_eq!(created, b.unwrap());
+    assert_eq!(
+        f.store.create_fixture_osdeploy(key, &p).await.unwrap_err(),
+        OsDeployStoreError::Conflict
+    );
+    assert_eq!(
+        f.store
+            .create_fixture_osdeploy_with_delivery(key, &p, uuid::Uuid::now_v7())
+            .await
+            .unwrap_err(),
+        OsDeployStoreError::Conflict
+    );
+    let op = created
+        .ids()
+        .operation(osdeploy_adapter::OsDeployStage::StartPe);
+    let first = f.scheduler().with_fixture_start_pe();
+    let second = f.other_scheduler().with_fixture_start_pe();
+    let before = f.snapshot().await;
+    let (a, b) = tokio::join!(
+        first.claim_osdeploy_bound(op, created.ids().workflow_sha256(), 1),
+        second.claim_osdeploy_bound(op, created.ids().workflow_sha256(), 1)
+    );
+    assert!(matches!(
+        a,
+        Err(OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    assert!(matches!(
+        b,
+        Err(OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    assert_eq!(before, f.snapshot().await);
+    let sessions: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rust_controller.fixture_pe_boot_sessions")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(sessions, 0);
+    assert!(sqlx::query("UPDATE rust_controller.fixture_osdeploy_origins SET credential_sink_id=NULL WHERE create_request_id=$1").bind(key).execute(&f.pool).await.is_err());
+    let reopened = postgres_store::PgStore::new(f.pool.clone());
+    reopened.migrate().await.unwrap();
+    assert_eq!(
+        created,
+        reopened
+            .create_fixture_osdeploy_with_delivery(key, &p, sink)
+            .await
+            .unwrap()
+    );
+    let stored: uuid::Uuid = sqlx::query_scalar("SELECT credential_sink_id FROM rust_controller.fixture_osdeploy_origins WHERE create_request_id=$1").bind(key).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(stored, sink);
+}
+
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
 async fn fixture_credential_aliases_replay_renew_rollback_and_reopen() {
     use osdeploy_adapter::OsDeployStage;
     use postgres_store::{ExecutorKind, OsDeployExecutionError, Scheduler};
@@ -257,6 +328,13 @@ async fn fixture_create_origin_is_atomic_typed_immutable_and_replayable() {
     let created = a.unwrap();
     assert_eq!(created, b.unwrap());
     assert_ne!(created.ids().run_id().as_uuid(), key);
+    assert_eq!(
+        f.store
+            .create_fixture_osdeploy_with_delivery(key, &p, uuid::Uuid::now_v7())
+            .await
+            .unwrap_err(),
+        OsDeployStoreError::Conflict
+    );
     assert_eq!(
         created.text_identity(),
         created.ids().run_id().as_uuid().to_string()

@@ -53,7 +53,19 @@ pub(super) async fn locked_execution_with_cap(
         sqlx::query("SELECT operation_id FROM rust_controller.worker_leases WHERE operation_id=$1 FOR UPDATE")
             .bind(op).fetch_all(&mut **tx).await?;
     }
-    load::load_execution(tx, operation).await
+    let snapshot = load::load_execution(tx, operation).await?;
+    #[cfg(feature = "fixture-ipc")]
+    if snapshot.plan().stage() == OsDeployStage::StartPe {
+        // All current locked admission paths are physical-only. Checking the
+        // immutable origin here closes alternate scheduler and recovery paths
+        // before they can append a decision or construct a send capability.
+        let requires_delivery: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rust_controller.fixture_osdeploy_origins WHERE run_id=$1 AND credential_sink_id IS NOT NULL)")
+            .bind(run).fetch_one(&mut **tx).await?;
+        if requires_delivery {
+            return Err(Error::CapabilityUnavailable);
+        }
+    }
+    Ok(snapshot)
 }
 
 pub(super) fn admit(
