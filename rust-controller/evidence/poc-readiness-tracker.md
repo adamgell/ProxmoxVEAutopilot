@@ -46,6 +46,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Commit `58a3c3e` adds a default-disabled, read-only PostgreSQL diagnostic ingress that validates stage/revision and exact request/outcome identity but always returns `CapabilityUnavailable` without creating any state. Static checks pass; the owned PostgreSQL runtime did not start (`local_process_timeout`), so DB-unchanged assertions remain unexecuted.
 - Commit `09fc0058` defines a fail-closed StartPe session-arming contract preserving the immutable PE-registration deadline and exact run/operation/attempt/generation/owner/session/request context. Only unavailable/expired refusal is constructible until authenticated witness and atomic PostgreSQL arming exist; session/dispatch crash proofs remain open.
 - Commit `b18b8993` adds an opt-in capability-closed PostgreSQL session seam: unavailable witness refusal precedes connection/transaction, and a rolled-back diagnostic compares dispatch/deadline context while separating UUID proposal generation from bigint authority generation. Live SQL validity, authenticated session creation, atomic persistence, precise fence mapping, and controller progression remain open.
+- Commit `f415b70a` adds microsecond PE-registration anchors with exact original-event/deadline binding, checked arithmetic, and lossless-only v1 conversion. The PostgreSQL probe still needs v2 integration; authenticated session persistence, dispatch, satisfaction, and production paths remain closed.
 
 ### Final owned Linux full-run result (2026-09-10)
 
