@@ -183,6 +183,19 @@ async fn require_live(
 }
 
 impl Scheduler {
+    /// Read the immutable origin policy for controller routing. Dispatch still
+    /// rechecks this policy under the transaction's authority and run locks.
+    pub async fn fixture_start_pe_requires_delivery(
+        &self,
+        operation: OperationId,
+    ) -> Result<bool, Error> {
+        let mut tx = self.store.pool().begin().await?;
+        let snapshot = load::load_execution(&mut tx, operation).await?;
+        let required = requires_delivery(&mut tx, &snapshot).await?;
+        tx.commit().await?;
+        Ok(required)
+    }
+
     pub async fn arm_fixture_start_pe(
         &self,
         grant: &LeaseGrant,

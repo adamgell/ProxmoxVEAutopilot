@@ -75,8 +75,30 @@ pub struct OsDeployController {
     admission: OsDeploySendAdmission,
     workers: Semaphore,
     cap: u32,
+    #[cfg(feature = "fixture-ipc")]
+    credential_delivery: Option<FixtureDeliveryConfig>,
+}
+#[cfg(feature = "fixture-ipc")]
+struct FixtureDeliveryConfig {
+    secret: Vec<u8>,
+    sink: postgres_store::FixtureCredentialSink,
 }
 impl OsDeployController {
+    /// Explicitly opt into local fixture credential delivery. No signing key or
+    /// private sink is inferred from environment variables or production config.
+    #[cfg(feature = "fixture-ipc")]
+    pub fn with_fixture_credential_delivery(
+        mut self,
+        secret: Vec<u8>,
+        sink: postgres_store::FixtureCredentialSink,
+    ) -> Result<Self, Error> {
+        if secret.is_empty() {
+            return Err(Error::Validation);
+        }
+        self.scheduler = self.scheduler.with_fixture_credential_delivery();
+        self.credential_delivery = Some(FixtureDeliveryConfig { secret, sink });
+        Ok(self)
+    }
     pub fn new(
         store: PgStore,
         scheduler: Scheduler,
@@ -177,6 +199,8 @@ impl OsDeployController {
             admission: OsDeploySendAdmission::new(),
             workers: Semaphore::new(cap as usize),
             cap,
+            #[cfg(feature = "fixture-ipc")]
+            credential_delivery: None,
         })
     }
     pub async fn open_send_admission(&self) -> Result<(), Error> {
@@ -224,6 +248,16 @@ impl OsDeployController {
                     return Err(Error::CapabilityUnavailable);
                 }
                 let hash = snapshot.plan().workflow_sha256();
+                #[cfg(feature = "fixture-ipc")]
+                if before_close(
+                    &mut closed,
+                    self.scheduler.fixture_start_pe_requires_delivery(operation),
+                )
+                .await?
+                    && self.credential_delivery.is_none()
+                {
+                    return Err(Error::CapabilityUnavailable);
+                }
                 let actual_due;
                 let due = if snapshot.state() == ExecutionState::Waiting || due.is_some() {
                     let candidates =
@@ -356,6 +390,9 @@ impl OsDeployController {
         closed: &mut watch::Receiver<bool>,
     ) -> Result<OsDeployProgress, Error> {
         loop {
+            #[cfg(feature = "fixture-ipc")]
+            self.resume_fixture_delivery(port, grant, hash, whole, closed)
+                .await?;
             // Each owned phase is dropped before constructing the next. Only
             // durable identifiers cross the observation/decision boundary.
             let observed = self.observe(port, grant, hash, whole, closed).await;
@@ -480,6 +517,40 @@ impl OsDeployController {
                 None
             };
             if let Some(request) = request {
+                #[cfg(feature = "fixture-ipc")]
+                if before_close(
+                    closed,
+                    self.scheduler
+                        .fixture_start_pe_requires_delivery(grant.operation_id()),
+                )
+                .await?
+                {
+                    let config = self
+                        .credential_delivery
+                        .as_ref()
+                        .ok_or(Error::CapabilityUnavailable)?;
+                    let envelope = before_close(
+                        closed,
+                        self.scheduler.arm_fixture_start_pe(
+                            grant,
+                            revision,
+                            event,
+                            &request,
+                            &config.secret,
+                        ),
+                    )
+                    .await?;
+                    let ack =
+                        before_close(closed, async { envelope.deliver(&config.sink) }).await?;
+                    before_close(
+                        closed,
+                        self.scheduler.record_fixture_delivery_ack(grant, &ack),
+                    )
+                    .await?;
+                    self.resume_fixture_delivery(port, grant, hash, whole, closed)
+                        .await?;
+                    return Ok(None);
+                }
                 let (permit, capture) = before_close(
                     closed,
                     self.scheduler
@@ -516,6 +587,76 @@ impl OsDeployController {
             .await
             .map(Some)
         })
+    }
+
+    /// Recover an armed delivery before collecting physical outcome evidence.
+    /// This requires the current live lease; it does not reclaim expired work.
+    #[cfg(feature = "fixture-ipc")]
+    async fn resume_fixture_delivery(
+        &self,
+        port: &ControllerPort,
+        grant: &LeaseGrant,
+        hash: &str,
+        whole: Instant,
+        closed: &mut watch::Receiver<bool>,
+    ) -> Result<(), Error> {
+        use postgres_store::FixtureDeliveryRecovery;
+        if !before_close(
+            closed,
+            self.scheduler
+                .fixture_start_pe_requires_delivery(grant.operation_id()),
+        )
+        .await?
+        {
+            return Ok(());
+        }
+        let config = self
+            .credential_delivery
+            .as_ref()
+            .ok_or(Error::CapabilityUnavailable)?;
+        let snapshot = before_close(
+            closed,
+            self.store.load_osdeploy_operation(grant.operation_id()),
+        )
+        .await?;
+        if snapshot.dispatch().is_none() {
+            return Ok(());
+        }
+        match before_close(
+            closed,
+            self.scheduler
+                .recover_fixture_start_pe(grant, &config.secret),
+        )
+        .await?
+        {
+            FixtureDeliveryRecovery::Physical => return Err(Error::Validation),
+            FixtureDeliveryRecovery::Exposed => return Ok(()),
+            FixtureDeliveryRecovery::NeedsDelivery(envelope) => {
+                let ack = before_close(closed, async { envelope.deliver(&config.sink) }).await?;
+                before_close(
+                    closed,
+                    self.scheduler.record_fixture_delivery_ack(grant, &ack),
+                )
+                .await?;
+            }
+            FixtureDeliveryRecovery::Acknowledged => {}
+        }
+        if let Some((permit, capture)) =
+            before_close(closed, self.scheduler.expose_fixture_start_pe_once(grant)).await?
+        {
+            send::submit_and_capture_once(
+                &self.admission,
+                &self.scheduler,
+                port,
+                grant,
+                hash,
+                permit,
+                capture,
+                whole,
+            )
+            .await?;
+        }
+        Ok(())
     }
 }
 

@@ -8,7 +8,7 @@ publish = false
 
 [features]
 default = []
-fixture-ipc = ["pve-port/fixture-ipc"]
+fixture-ipc = ["pve-port/fixture-ipc", "postgres-store/fixture-ipc"]
 
 [dependencies]
 chrono.workspace = true

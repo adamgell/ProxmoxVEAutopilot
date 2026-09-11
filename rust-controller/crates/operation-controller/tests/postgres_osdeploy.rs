@@ -28,6 +28,93 @@ fn controller(s: &Scenario) -> Arc<OsDeployController> {
     )
 }
 
+#[cfg(all(feature = "fixture-ipc", unix))]
+#[tokio::test]
+async fn credential_start_pe_requires_config_and_delivers_before_single_send() {
+    use postgres_store::FixtureCredentialSink;
+    use std::os::unix::fs::DirBuilderExt;
+    let sink_id = sqlx::types::Uuid::now_v7();
+    let s = Scenario::fixture_delivery(sink_id).await;
+    for stage in [Stage::Clone, Stage::DiskCapacity, Stage::ConfigurePe] {
+        assert_eq!(s.finish_stage(stage).await, ExecutionState::Satisfied);
+    }
+    let operation = s.ids.operation(Stage::StartPe);
+    let unconfigured = OsDeployController::new(
+        s.db.store.clone(),
+        s.db.scheduler().with_fixture_credential_delivery(),
+        s.fake.clone(),
+        1,
+    )
+    .unwrap();
+    unconfigured.open_send_admission().await.unwrap();
+    let before = s.db.snapshot().await;
+    assert_eq!(
+        unconfigured.run_osdeploy_once(operation).await,
+        Err(Error::CapabilityUnavailable)
+    );
+    assert_eq!(before, s.db.snapshot().await);
+    unconfigured
+        .close_and_drain(Duration::from_secs(1))
+        .await
+        .unwrap();
+    let root = std::env::temp_dir().join(format!(
+        "controller-private-delivery-{}",
+        sqlx::types::Uuid::now_v7()
+    ));
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&root)
+        .unwrap();
+    let sink = FixtureCredentialSink::open(sink_id, &root).unwrap();
+    assert!(matches!(
+        OsDeployController::new(s.db.store.clone(), s.db.scheduler(), s.fake.clone(), 1)
+            .unwrap()
+            .with_fixture_credential_delivery(Vec::new(), sink),
+        Err(Error::Validation)
+    ));
+    let sink = FixtureCredentialSink::open(sink_id, &root).unwrap();
+    let configured =
+        OsDeployController::new(s.db.store.clone(), s.db.scheduler(), s.fake.clone(), 1)
+            .unwrap()
+            .with_fixture_credential_delivery(
+                b"controller-test-private-signing-secret".to_vec(),
+                sink,
+            )
+            .unwrap();
+    configured.open_send_admission().await.unwrap();
+    assert_eq!(
+        configured.run_osdeploy_once(operation).await.unwrap(),
+        Progress::Decided(ExecutionState::Satisfied)
+    );
+    let credential = root.join(format!("{}.credential", operation.as_uuid()));
+    assert!(credential.is_file());
+    let submissions = s.fake.recorded_provisioning_submissions();
+    assert_eq!(
+        submissions
+            .iter()
+            .filter(|s| s.request().binding().operation_id() == operation)
+            .count(),
+        1
+    );
+    let ordered: bool = sqlx::query_scalar("SELECT a.acknowledged_at <= e.exposed_at FROM rust_controller.fixture_pe_delivery_acks a JOIN rust_controller.fixture_pe_delivery_exposures e USING(operation_id) WHERE operation_id=$1")
+        .bind(operation.as_uuid()).fetch_one(&s.db.pool).await.unwrap();
+    assert!(ordered);
+    assert_eq!(
+        configured.run_osdeploy_once(operation).await.unwrap(),
+        Progress::Decided(ExecutionState::Satisfied)
+    );
+    assert_eq!(
+        s.fake.recorded_provisioning_submissions().len(),
+        submissions.len()
+    );
+    configured
+        .close_and_drain(Duration::from_secs(1))
+        .await
+        .unwrap();
+    std::fs::remove_file(credential).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}
+
 #[cfg(feature = "fixture-ipc")]
 #[tokio::test]
 async fn operation_scoped_ports_isolate_two_interleaved_workers() {
