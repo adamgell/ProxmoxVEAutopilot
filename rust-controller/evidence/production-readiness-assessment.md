@@ -12,7 +12,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `c4e152f4`: this branch and PR #65 contain an accumulated
+Current scope at `ecb9138c`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -107,7 +107,12 @@ status. It rejects worker-origin, stale/future/duplicate, and restarted-
 generation samples while preserving immutable completion bytes. The fixture
 world still lacks a live power-read source, so the scheduler-authority to
 publication to AdmitStop consumer remains open; no stop release, dispatch,
-reconciliation, or Stopped claim follows from this boundary. The generic callback
+reconciliation, or Stopped claim follows from this boundary. Commit `ecb9138c`
+adds an explicit supervisor `consume_stop_current_power` refusal when no live
+power reader exists; valid StartPe identity is accepted for diagnosis, but no
+publication, PostgreSQL replacement, admission, release, attempts, or effects
+occur. This makes the missing runtime source executable evidence rather than a
+success claim. The generic callback
 mapping table below remains intentionally pending for legacy action/result
 surfaces. This fixture-only slice is not full callback compatibility or the
 entire port.
