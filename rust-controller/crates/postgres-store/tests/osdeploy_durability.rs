@@ -4235,6 +4235,59 @@ async fn task6_growth_history_survives_old_deadline_and_all_later_stages_stay_cl
         pve_port::MutationReceipt::SynchronousAccepted
     ));
     assert_eq!(s.fake.recorded_provisioning_submissions().len(), 3);
+    // Possessing a complete typed observation is not stage admission. The
+    // evidence ingress gate must reject StartPe before treating caller-supplied
+    // facts as either an activation witness or a selected outcome.
+    let context =
+        s.db.store
+            .load_osdeploy_pve_context(
+                config.operation_id(),
+                config.revision(),
+                pve_port::ProvisioningEvaluationModeV1::Outcome,
+            )
+            .await
+            .unwrap();
+    let observation = s.collect(&context).await;
+    let start =
+        s.db.other
+            .load_osdeploy_operation(s.ids.operation(OsDeployStage::StartPe))
+            .await
+            .unwrap();
+    let ingress_before = s.db.snapshot().await;
+    assert!(matches!(
+        s.db.store
+            .load_osdeploy_pve_context(
+                start.operation_id(),
+                start.revision(),
+                pve_port::ProvisioningEvaluationModeV1::Outcome
+            )
+            .await,
+        Err(postgres_store::OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    assert!(matches!(
+        s.db.store
+            .record_osdeploy_pve_evidence(
+                start.operation_id(),
+                config.attempt_id().unwrap(),
+                start.revision(),
+                &observation
+            )
+            .await,
+        Err(postgres_store::OsDeployExecutionError::CapabilityUnavailable)
+    ));
+    assert_eq!(s.db.snapshot().await, ingress_before);
+    let start_after =
+        s.db.other
+            .load_osdeploy_operation(start.operation_id())
+            .await
+            .unwrap();
+    assert_eq!(
+        start_after.state(),
+        controller_domain::ExecutionState::Pending
+    );
+    assert!(start_after.attempt_id().is_none());
+    assert!(start_after.dispatch().is_none());
+    assert!(start_after.receipt().is_none());
     let before = s.db.snapshot().await;
     for stage in OsDeployStage::ALL.into_iter().skip(3) {
         assert!(matches!(

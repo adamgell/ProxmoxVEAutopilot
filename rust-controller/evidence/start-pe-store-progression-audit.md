@@ -82,3 +82,19 @@ Paths below are relative to `rust-controller`.
 
 Validation for this audit: source inspection, hashes and whitespace/diff check.
 No runtime test, deployment or production readiness claim is made.
+
+## Executable PostgreSQL ingress gate
+
+The existing `task6_growth_history_survives_old_deadline_and_all_later_stages_stay_closed`
+test now also attempts StartPe context loading and evidence insertion after genuine
+Clone/resize/ConfigurePe satisfaction. Both return CapabilityUnavailable and the
+database snapshot stays unchanged. StartPe retains Pending with no attempt,
+dispatch or receipt; existing claim/resume rejection checks still pass.
+
+The supplied observation is freshly collected typed ConfigurePe evidence. This is
+an adversarial ingress-gate test, not a claimed full StartPe bundle conversion:
+the store rejects the closed stage before validating evidence contents. It proves
+that caller possession of typed evidence cannot bypass admission. Full StartPe
+normalization and positive transactional consumption remain separate pending
+gates. The focused PostgreSQL test passed (11.09 seconds); targeted strict Clippy,
+formatting and diff checks passed. Only isolated test PostgreSQL was mutated.
