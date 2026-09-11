@@ -18,6 +18,15 @@ Later entries in this document are historical source audits and retain their
 original revision-specific claims. They do not override this matrix or the
 current-scope paragraphs below.
 
+Focused local recheck at `01d869b6` (2026-09-11): with the `fixture-ipc`
+feature enabled, `cargo test --locked -p pve-port --features fixture-ipc
+--test fixture_stage stop_contract_requires_exact_start_history_and_stop_task_identity
+-- --exact --nocapture --test-threads=1` passed 1/1. This revalidates the
+fail-closed stop contract's exact StartPe predecessor and stop-task identity
+checks. It is a fixture contract test only; it does not establish physical
+stop execution, the authentic PostgreSQL stop-outcome matrix, Linux runtime
+qualification, or production readiness.
+
 Exact-source Linux evidence at `35400bd0`: the frozen amd64 archive build
 passed in 826.80 seconds (image
 `sha256:d615e6c8b3270ae13dc9ca95cf49aea549192b6775c1d0f1aa711457f5927f94`).
