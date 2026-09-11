@@ -58,6 +58,14 @@ private/redacted, and requires explicit delivery exposure. Deterministic
 reissue is tested; the issuer itself grants no session, callback, or StartPe
 authority and does not change the original registration deadline.
 
+Commit `b9c47ac5` pins the credential/session transaction integration rather
+than adding an unsafe process-local registry. The durable design requires
+unique credential ownership, immutable run/operation/attempt binding, same-
+session renewal, cross-session conflict, restart retention, and atomic
+alias/session/dispatch insertion under current scheduler locks. The source
+still rejects StartPe before that boundary, so this remains a design artifact,
+not a persistence or callback-completion claim.
+
 Current-head checkpoint: commit `08471af3` records that the exact-source Linux
 reaping diagnostic image built successfully, but its retained targeted run
 ended without output before producing PID/reap evidence. The attempt is

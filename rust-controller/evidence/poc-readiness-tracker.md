@@ -68,6 +68,18 @@ compile-fail doctests pass. Identical inputs reissue deterministically; the
 issuer does not create sessions, reset deadlines, authenticate callbacks, or
 grant StartPe authority.
 
+### Credential/session transaction integration (commit `b9c47ac5`)
+
+The credential-association audit rejects a process-local alias map: it would
+lose ownership across restart and could rebind a deterministic old token to a
+replacement attempt. The pinned integration artifact specifies persistent
+credential-digest ownership, immutable `(run, StartPe operation, attempt)`
+association, same-session renewal without deadline changes, cross-session
+conflicts, retained ownership after cancellation/restart, and atomic
+alias/session/dispatch insertion under the scheduler's existing locks. No
+source or migration change is claimed yet because StartPe admission remains
+closed before the current-grant boundary.
+
 ### Current-head diagnostic checkpoint (2026-09-10)
 
 ### Exact-source Linux qualification at `35400bd0`
