@@ -292,7 +292,7 @@ impl Scenario {
         let owned = if fixture_origin {
             Some(
                 db.store
-                    .create_fixture_osdeploy(uuid::Uuid::now_v7(), &plan)
+                    .create_fixture_osdeploy(sqlx::types::Uuid::now_v7(), &plan)
                     .await
                     .unwrap()
                     .ids()

@@ -338,7 +338,7 @@ pub async fn run() {
         .connect(&std::env::var("PVA_PREFIX_DSN").unwrap())
         .await
         .unwrap();
-    let store = postgres_store::PgStore::new(pool);
+    let store = postgres_store::PgStore::new(pool.clone());
     let scheduler = postgres_store::Scheduler::new(
         store.clone(),
         postgres_store::ExecutorKind::Rust,
@@ -350,9 +350,36 @@ pub async fn run() {
         operation_controller::OsDeployController::new_fixture(store, scheduler, Arc::new(port), 1)
             .unwrap();
     controller.open_send_admission().await.unwrap();
-    let postgres_store::OsDeployProgress::Decided(state) =
-        controller.run_osdeploy_once(operation).await.unwrap()
-    else {
+    let outcome = controller.run_osdeploy_once(operation).await;
+    if !matches!(
+        &outcome,
+        Ok(postgres_store::OsDeployProgress::Decided(
+            controller_domain::ExecutionState::Satisfied
+        ))
+    ) {
+        // Only fixed, constrained journal metadata crosses into CI output. Never
+        // print payloads, SQL error messages, connection options, or credentials.
+        let diagnostic = tokio::time::timeout(Duration::from_millis(250), async {
+            sqlx::query_as::<_, (i64, String, Option<String>)>(
+                "SELECT aggregate_revision, event_kind, execution_state FROM rust_controller.journal_events WHERE operation_id=$1 ORDER BY aggregate_revision DESC LIMIT 12",
+            )
+            .bind(operation.as_uuid())
+            .fetch_all(&pool)
+            .await
+        })
+        .await;
+        let context = match diagnostic {
+            Ok(Ok(rows)) => format!("journal={rows:?}"),
+            Ok(Err(sqlx::Error::PoolTimedOut)) => "diagnostic=pool_timeout".to_owned(),
+            Ok(Err(sqlx::Error::PoolClosed)) => "diagnostic=pool_closed".to_owned(),
+            Ok(Err(sqlx::Error::Database(_))) => "diagnostic=database_error".to_owned(),
+            Ok(Err(sqlx::Error::Io(_))) => "diagnostic=io_error".to_owned(),
+            Ok(Err(_)) => "diagnostic=other_storage_error".to_owned(),
+            Err(_) => "diagnostic=read_deadline".to_owned(),
+        };
+        eprintln!("prefix operation={operation:?} outcome={outcome:?} {context}");
+    }
+    let postgres_store::OsDeployProgress::Decided(state) = outcome.unwrap() else {
         panic!("prefix worker did not decide")
     };
     controller
