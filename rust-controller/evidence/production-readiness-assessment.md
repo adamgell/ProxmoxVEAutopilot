@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `b89e6e43`: this branch and PR #65 contain an accumulated
+Current scope at `1e951d76`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -54,7 +54,11 @@ one immutable Running/Stopped sample per StartPe identity, bound to receipt,
 VM, daemon generation, expiry, and observation clock. Eight focused tests cover
 install, consume, publication, reload, and stale/worker-origin/torn/conflicting
 sample refusal. This source is test-only and does not replace PostgreSQL lease
-authority or prove current EnsureStopped ownership.
+authority or prove current EnsureStopped ownership. Commit `1e951d76` adds the
+clock-join refusal proof: a sample older than the DB lease-check time cannot be
+made admissible by repeated reads; bytes, Running state, and attempt/effect
+counts remain unchanged. The required positive protocol is DB authority
+preparation, an independent new power sample, then bounded admission.
 
 At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires
