@@ -56,6 +56,18 @@ tests pass; `Debug` omits the canonical bytes and plan. Delivery credentials,
 URLs, secrets, issuance IDs, session authority, and StartPe admission remain
 outside this envelope.
 
+### Canonical legacy bearer issuer (commit `dc0a6871`)
+
+`api-compat::issue_run_bearer` now issues the canonical Python-compatible
+run bearer from explicit trusted identity, absolute expiry, and server secret
+inputs. It preserves sorted compact JSON, integer/string identity types,
+base64url encoding, and HMAC-SHA256. Issued credentials are private,
+redacted in `Debug`, non-serializable, and exposed only through an explicit
+delivery method. Twenty-five unit tests, four integration tests, and six
+compile-fail doctests pass. Identical inputs reissue deterministically; the
+issuer does not create sessions, reset deadlines, authenticate callbacks, or
+grant StartPe authority.
+
 ### Current-head diagnostic checkpoint (2026-09-10)
 
 ### Exact-source Linux qualification at `35400bd0`

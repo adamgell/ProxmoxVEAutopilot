@@ -51,6 +51,13 @@ contains no delivery credentials, URLs, secrets, issuance identity, session
 authority, or StartPe admission. This is the concrete input for future private
 preparation persistence, not proof of delivery or callback authentication.
 
+Commit `dc0a6871` adds a trusted-input canonical legacy bearer issuer. It
+preserves Python’s compact sorted JSON and HMAC-SHA256 wire behavior for string
+and integer run identities, rejects unsafe inputs, keeps issued credentials
+private/redacted, and requires explicit delivery exposure. Deterministic
+reissue is tested; the issuer itself grants no session, callback, or StartPe
+authority and does not change the original registration deadline.
+
 Current-head checkpoint: commit `08471af3` records that the exact-source Linux
 reaping diagnostic image built successfully, but its retained targeted run
 ended without output before producing PID/reap evidence. The attempt is
