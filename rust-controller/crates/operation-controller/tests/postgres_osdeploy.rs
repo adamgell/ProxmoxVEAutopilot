@@ -28,6 +28,118 @@ fn controller(s: &Scenario) -> Arc<OsDeployController> {
     )
 }
 
+#[cfg(feature = "fixture-ipc")]
+#[tokio::test]
+async fn operation_scoped_ports_isolate_two_interleaved_workers() {
+    use pve_port::ProvisioningFakePort;
+    let a = Scenario::new(300, true).await;
+    let b = Scenario::new(300, true).await;
+    let node = pve_port::NodeName::parse("node-a").unwrap();
+    let fingerprint = b
+        .fake
+        .provisioning_vm_config(&node, pve_port::Vmid::new(900).unwrap())
+        .await
+        .unwrap()
+        .template_fingerprint()
+        .unwrap();
+    let plan = osdeploy_support::altered(|v| {
+        v["template_config_sha256"] = serde_json::json!(fingerprint);
+        v["vm"]["target_vmid"] = serde_json::json!(902);
+        v["vm"]["uuid"] = serde_json::json!("11111111-1111-4111-8111-111111111112");
+        v["vm"]["mac"] = serde_json::json!("02:00:00:00:00:02");
+        v["vm"]["name"] = serde_json::json!("pve-target-02");
+        v["names"]["pve_name"] = serde_json::json!("pve-target-02");
+        v["names"]["requested_name"] = serde_json::json!("LabVM02");
+        v["names"]["windows_name"] = serde_json::json!("LabVM02");
+        v["names"]["expected_agent_id"] = serde_json::json!("agent-labvm02");
+    });
+    let b_ids =
+        a.db.store
+            .enqueue_osdeploy(controller_domain::RunId::new(), &plan)
+            .await
+            .unwrap();
+    let a_op = a.ids.operation(Stage::Clone);
+    let b_op = b_ids.operation(Stage::Clone);
+    assert!(matches!(
+        OsDeployController::new(a.db.store.clone(), a.db.scheduler(), a.fake.clone(), 2)
+            .unwrap()
+            .with_fixture_ports([
+                (
+                    a_op,
+                    a.fake.clone() as Arc<dyn pve_port::fixture_ipc::ControllerFixturePort>
+                ),
+                (
+                    a_op,
+                    b.fake.clone() as Arc<dyn pve_port::fixture_ipc::ControllerFixturePort>
+                ),
+            ]),
+        Err(Error::Validation)
+    ));
+    let pause = a
+        .fake
+        .pause_provisioning_submission(ProvisioningFaultSelectorV1::new(
+            ProvisioningActionV1::Clone,
+            Some(a_op),
+        ));
+    let ports = [(a_op, a.fake.clone()), (b_op, b.fake.clone())];
+    let c = Arc::new(
+        OsDeployController::new(a.db.store.clone(), a.db.scheduler(), a.fake.clone(), 2)
+            .unwrap()
+            .with_fixture_ports(ports.into_iter().map(|(id, port)| {
+                (
+                    id,
+                    port as Arc<dyn pve_port::fixture_ipc::ControllerFixturePort>,
+                )
+            }))
+            .unwrap(),
+    );
+    c.open_send_admission().await.unwrap();
+    let mut worker = tokio::spawn({
+        let c = c.clone();
+        async move { c.run_osdeploy_once(a_op).await }
+    });
+    pause_entered(&pause, &mut worker).await;
+    assert_eq!(
+        c.run_osdeploy_once(b_op).await.unwrap(),
+        Progress::Decided(ExecutionState::Satisfied)
+    );
+    assert!(!worker.is_finished());
+    pause.release();
+    assert_eq!(
+        worker.await.unwrap().unwrap(),
+        Progress::Decided(ExecutionState::Satisfied)
+    );
+    for (op, port, own_vmid, other_vmid) in [(a_op, &a.fake, 901, 902), (b_op, &b.fake, 902, 901)] {
+        let submissions = port.recorded_provisioning_submissions();
+        assert_eq!(submissions.len(), 1);
+        assert_eq!(submissions[0].request().binding().operation_id(), op);
+        let snapshot = a.db.store.load_osdeploy_operation(op).await.unwrap();
+        assert_eq!(snapshot.state(), ExecutionState::Satisfied);
+        assert_eq!(
+            snapshot.receipt().unwrap().receipt(),
+            submissions[0].returned().as_ref().unwrap()
+        );
+        assert!(
+            port.provisioning_vm_config(&node, pve_port::Vmid::new(own_vmid).unwrap())
+                .await
+                .is_ok()
+        );
+        assert!(
+            port.provisioning_vm_config(&node, pve_port::Vmid::new(other_vmid).unwrap())
+                .await
+                .is_err()
+        );
+    }
+    let before = a.db.snapshot().await;
+    assert_eq!(
+        c.run_osdeploy_once(a.ids.operation(Stage::DiskCapacity))
+            .await,
+        Err(Error::CapabilityUnavailable)
+    );
+    assert_eq!(a.db.snapshot().await, before);
+    c.close_and_drain(Duration::from_secs(1)).await.unwrap();
+}
+
 async fn dispatched_unknown(s: &Scenario) -> postgres_store::LeaseGrant {
     let ready = s.ready(Stage::Clone).await;
     let scheduler = s.db.scheduler();

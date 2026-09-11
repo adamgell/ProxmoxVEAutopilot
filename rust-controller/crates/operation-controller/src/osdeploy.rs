@@ -70,6 +70,8 @@ pub struct OsDeployController {
     store: PgStore,
     scheduler: Scheduler,
     fake: Arc<ControllerPort>,
+    #[cfg(feature = "fixture-ipc")]
+    operation_ports: Option<std::collections::HashMap<OperationId, Arc<ControllerPort>>>,
     admission: OsDeploySendAdmission,
     workers: Semaphore,
     cap: u32,
@@ -121,6 +123,42 @@ impl OsDeployController {
         Self::with_port(store, scheduler, fixture, cap)
     }
 
+    /// Bind a fixture port once per admitted operation invocation. The returned
+    /// capability is retained across every observation, checkpoint and dispatch;
+    /// concurrent invocations never share a mutable current-operation selector.
+    /// Missing bindings fail closed before any fixture access.
+    #[cfg(feature = "fixture-ipc")]
+    pub fn with_fixture_ports(
+        mut self,
+        ports: impl IntoIterator<
+            Item = (
+                OperationId,
+                Arc<dyn pve_port::fixture_ipc::ControllerFixturePort>,
+            ),
+        >,
+    ) -> Result<Self, Error> {
+        let mut bindings = std::collections::HashMap::new();
+        for (operation, port) in ports {
+            if bindings.insert(operation, port).is_some() {
+                return Err(Error::Validation);
+            }
+        }
+        self.operation_ports = Some(bindings);
+        Ok(self)
+    }
+
+    fn resolve_port(&self, operation: OperationId) -> Result<Arc<ControllerPort>, Error> {
+        #[cfg(feature = "fixture-ipc")]
+        if let Some(ports) = &self.operation_ports {
+            return ports
+                .get(&operation)
+                .cloned()
+                .ok_or(Error::CapabilityUnavailable);
+        }
+        let _ = operation;
+        Ok(self.fake.clone())
+    }
+
     fn with_port(
         store: PgStore,
         scheduler: Scheduler,
@@ -134,6 +172,8 @@ impl OsDeployController {
             store,
             scheduler,
             fake,
+            #[cfg(feature = "fixture-ipc")]
+            operation_ports: None,
             admission: OsDeploySendAdmission::new(),
             workers: Semaphore::new(cap as usize),
             cap,
@@ -165,6 +205,7 @@ impl OsDeployController {
             return Ok(OsDeployProgress::Idle);
         };
         let mut closed = self.admission.subscribe();
+        let port = self.resolve_port(operation)?;
         timeout_at(
             deadline,
             Box::pin(async {
@@ -206,7 +247,8 @@ impl OsDeployController {
                 if let Some(due) =
                     due.filter(|value| value.kind() == OsDeployDueKind::UnknownReconciliation)
                 {
-                    return Box::pin(self.reconcile(due, deadline, &mut closed)).await;
+                    return Box::pin(self.reconcile(port.as_ref(), due, deadline, &mut closed))
+                        .await;
                 }
                 if snapshot.state().is_terminal() {
                     return Ok(OsDeployProgress::Decided(snapshot.state()));
@@ -239,7 +281,7 @@ impl OsDeployController {
                     self.scheduler.start_osdeploy_bound(&grant, hash),
                 )
                 .await?;
-                Box::pin(self.run_grant(&grant, hash, deadline, &mut closed)).await
+                Box::pin(self.run_grant(port.as_ref(), &grant, hash, deadline, &mut closed)).await
             }),
         )
         .await
@@ -248,6 +290,7 @@ impl OsDeployController {
 
     async fn reconcile(
         &self,
+        port: &ControllerPort,
         due: &OsDeployDue,
         whole: Instant,
         closed: &mut watch::Receiver<bool>,
@@ -269,7 +312,7 @@ impl OsDeployController {
         let evidence = before_close(
             closed,
             Box::pin(collect::collect(
-                self.fake.as_ref(),
+                port,
                 observation.context(),
                 deadline.min(Instant::now() + COLLECTION_BOUND),
             )),
@@ -305,6 +348,7 @@ impl OsDeployController {
 
     async fn run_grant(
         &self,
+        port: &ControllerPort,
         grant: &LeaseGrant,
         hash: &str,
         whole: Instant,
@@ -313,9 +357,12 @@ impl OsDeployController {
         loop {
             // Each owned phase is dropped before constructing the next. Only
             // durable identifiers cross the observation/decision boundary.
-            let observed = self.observe(grant, hash, whole, closed).await;
+            let observed = self.observe(port, grant, hash, whole, closed).await;
             let result = match observed {
-                Ok(observation) => self.advance(grant, hash, whole, observation, closed).await,
+                Ok(observation) => {
+                    self.advance(port, grant, hash, whole, observation, closed)
+                        .await
+                }
                 Err(error) => Err(error),
             };
             match result {
@@ -338,6 +385,7 @@ impl OsDeployController {
 
     fn observe<'a>(
         &'a self,
+        port: &'a ControllerPort,
         grant: &'a LeaseGrant,
         hash: &'a str,
         whole: Instant,
@@ -376,7 +424,7 @@ impl OsDeployController {
             let evidence = before_close(
                 closed,
                 Box::pin(collect::collect(
-                    self.fake.as_ref(),
+                    port,
                     &context,
                     deadline.min(Instant::now() + COLLECTION_BOUND),
                 )),
@@ -403,6 +451,7 @@ impl OsDeployController {
 
     fn advance<'a>(
         &'a self,
+        port: &'a ControllerPort,
         grant: &'a LeaseGrant,
         hash: &'a str,
         whole: Instant,
@@ -438,10 +487,9 @@ impl OsDeployController {
                 .await?;
                 before_close(closed, async {
                     #[cfg(feature = "fixture-ipc")]
-                    self.fake.provisioning_checkpoint(&request).await?;
+                    port.provisioning_checkpoint(&request).await?;
                     #[cfg(not(feature = "fixture-ipc"))]
-                    self.fake
-                        .controller_checkpoint(FakeControllerCheckpoint::DispatchCommitted)
+                    port.controller_checkpoint(FakeControllerCheckpoint::DispatchCommitted)
                         .await;
                     Ok::<_, Error>(())
                 })
@@ -449,7 +497,7 @@ impl OsDeployController {
                 send::submit_and_capture_once(
                     &self.admission,
                     &self.scheduler,
-                    self.fake.as_ref(),
+                    port,
                     grant,
                     hash,
                     permit,
