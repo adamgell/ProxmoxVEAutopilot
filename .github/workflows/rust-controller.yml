@@ -57,6 +57,7 @@ jobs:
           colima start --vm-type qemu --arch aarch64 --cpu-type max --mount-type 9p --cpu 2 --memory 4
           docker pull postgres:16-alpine
           /opt/homebrew/bin/ansible-playbook --version
+          python3 rust-controller/scripts/diagnose-native-adapter.py
       - name: Verify installed native adapter contract
         run: cargo run --locked --manifest-path rust-controller/Cargo.toml -p controller-service --example verify_adapter
       - name: All macOS ARM64 tests
