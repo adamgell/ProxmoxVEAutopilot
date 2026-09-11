@@ -99,3 +99,43 @@ fn legacy_phase_complete_preserves_order_any_phase_and_failed_distinction() {
     assert_eq!(failed_only.failed.len(), 1);
     assert!(classify_phase("winpe", &[]).phase_complete);
 }
+
+#[test]
+fn legacy_completion_branch_order_retains_reboot_and_retry_distinctions() {
+    use LegacyCompletionDisposition as D;
+    use LegacyStepState as S;
+    use ResultStatus as R;
+    for (state, status, reboot, attempt, retries, expected) in [
+        (
+            S::AwaitingReboot,
+            R::Failed,
+            false,
+            1,
+            0,
+            D::IgnoreLateFailure,
+        ),
+        (
+            S::AwaitingReboot,
+            R::Failed,
+            true,
+            1,
+            4,
+            D::IgnoreLateFailure,
+        ),
+        (S::Running, R::Success, true, 1, 0, D::AwaitReboot),
+        (S::Running, R::Success, false, 1, 4, D::Done),
+        (S::Running, R::Skipped, true, 1, 4, D::Skipped),
+        (S::Running, R::RebootRequired, false, 1, 0, D::AwaitReboot),
+        (S::Running, R::Failed, false, 1, 1, D::RetryPending),
+        (S::Running, R::Failed, true, 2, 1, D::Failed),
+        // Legacy code does not guard all terminal states against another result.
+        // Classifying that behavior must not weaken Rust immutable selection.
+        (S::Done, R::Failed, false, 1, 1, D::RetryPending),
+        (S::Failed, R::Success, false, 2, 0, D::Done),
+    ] {
+        assert_eq!(
+            classify_legacy_completion(state, status, reboot, attempt, retries),
+            expected
+        );
+    }
+}

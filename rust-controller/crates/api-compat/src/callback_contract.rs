@@ -67,6 +67,40 @@ pub enum LegacyStepState {
     Skipped,
 }
 
+/// Source-derived legacy completion advice for compatibility fixtures only.
+/// This does not select a Rust result, schedule a retry, or prove registration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LegacyCompletionDisposition {
+    IgnoreLateFailure,
+    AwaitReboot,
+    Done,
+    Skipped,
+    RetryPending,
+    Failed,
+}
+
+/// Mirrors the ordered status branches in Python `ts_engine_pg.complete_step`.
+/// Inputs are already-normalized fixture values. Run continuation and HTTP
+/// validation are deliberately outside this step-state classification.
+pub fn classify_legacy_completion(
+    state: LegacyStepState,
+    status: ResultStatus,
+    reboot_required: bool,
+    attempt: u32,
+    retry_count: u32,
+) -> LegacyCompletionDisposition {
+    use LegacyCompletionDisposition as D;
+    match status {
+        ResultStatus::Failed if state == LegacyStepState::AwaitingReboot => D::IgnoreLateFailure,
+        ResultStatus::Success if reboot_required => D::AwaitReboot,
+        ResultStatus::Success => D::Done,
+        ResultStatus::Skipped => D::Skipped,
+        ResultStatus::RebootRequired => D::AwaitReboot,
+        ResultStatus::Failed if attempt <= retry_count => D::RetryPending,
+        ResultStatus::Failed => D::Failed,
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LegacyPhaseStep {
     pub step_id: String,
