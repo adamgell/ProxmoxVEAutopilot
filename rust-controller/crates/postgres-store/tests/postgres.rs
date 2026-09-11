@@ -9,9 +9,11 @@ use event_journal::{EventKind, JournalEvent, payload_digest};
 use postgres_store::{CommandAppend, EventAppend, ExecutorKind, PgStore, Scheduler, StoreError};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
-const EXPECTED_TABLES: [&str; 26] = [
+const EXPECTED_TABLES: &[&str] = &[
     "attempts",
     "commands",
+    #[cfg(feature = "fixture-ipc")]
+    "fixture_pe_boot_sessions",
     "journal_events",
     "native_decisions",
     "native_dispatches",
