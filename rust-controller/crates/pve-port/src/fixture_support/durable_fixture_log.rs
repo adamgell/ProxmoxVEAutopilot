@@ -17,6 +17,177 @@ mod power_tests {
     use super::*;
 
     #[test]
+    fn atomic_start_admission_survives_replay_without_consuming_duplicate_authority() {
+        let path = std::env::temp_dir().join(format!("atomic-start-{}", Uuid::now_v7()));
+        let mut log = FixtureLog::create(&path).unwrap();
+        let operation = Uuid::now_v7();
+        let digest = "a".repeat(64);
+        let binding = StageBinding {
+            stage: FixtureLedgerStage::ConfigurePe,
+            attempt: Uuid::now_v7(),
+            generation: Uuid::now_v7(),
+            owner: Uuid::now_v7(),
+        };
+        log.record_stage_attempt(operation, &digest, binding)
+            .unwrap();
+        log.record_effect_receipt(
+            1,
+            101,
+            None,
+            VmState {
+                disk_bytes: 120,
+                pe_configured: true,
+            },
+            Some(b"configure-receipt".to_vec()),
+        )
+        .unwrap();
+        log.record_power_observation(
+            operation,
+            &digest,
+            binding,
+            b"configure-receipt",
+            PowerStateV1::Stopped,
+            Uuid::now_v7(),
+            10,
+            11,
+        )
+        .unwrap();
+        let prior = log.power_records()[0].clone();
+        let start = StageBinding {
+            stage: FixtureLedgerStage::StartPe,
+            ..binding
+        };
+        let start_operation = Uuid::now_v7();
+        let before = std::fs::read(&path).unwrap();
+        let consumed = std::cell::Cell::new(0);
+        let consume = || {
+            consumed.set(consumed.get() + 1);
+            Ok(())
+        };
+        let mut wrong = prior.clone();
+        wrong.binding.owner = Uuid::now_v7();
+        assert!(
+            log.record_start_transition(
+                start_operation,
+                &digest,
+                start,
+                &wrong,
+                b"start-receipt".to_vec(),
+                consume
+            )
+            .is_err()
+        );
+        assert_eq!(consumed.get(), 0);
+        assert!(
+            log.record_start_transition(
+                start_operation,
+                &digest,
+                start,
+                &prior,
+                b"start-receipt".to_vec(),
+                || Err(invalid())
+            )
+            .is_err()
+        );
+        assert_eq!(before, std::fs::read(&path).unwrap());
+        log.record_start_transition(
+            start_operation,
+            &digest,
+            start,
+            &prior,
+            b"start-receipt".to_vec(),
+            consume,
+        )
+        .unwrap();
+        assert_eq!(consumed.get(), 1);
+        assert_eq!(log.records().len(), 2);
+        assert_eq!(log.effects().len(), 2);
+        assert_eq!(
+            log.power_records().len(),
+            1,
+            "acceptance cannot invent an observation"
+        );
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(
+            log.effects()[1].start_transition.as_ref().unwrap().after,
+            PowerStateV1::Running
+        );
+        assert_eq!(
+            bytes[before.len()..]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count(),
+            1
+        );
+        drop(log);
+        let mut log = FixtureLog::recover(&path).unwrap();
+        assert_eq!(
+            log.accepted_stage_effect(start_operation, &digest, start)
+                .unwrap()
+                .unwrap()
+                .receipt(),
+            Some(b"start-receipt".as_slice())
+        );
+        assert!(
+            log.record_start_transition(
+                start_operation,
+                &digest,
+                start,
+                &prior,
+                b"start-receipt".to_vec(),
+                consume
+            )
+            .is_err()
+        );
+        assert_eq!(consumed.get(), 1);
+        assert_eq!(bytes, std::fs::read(&path).unwrap());
+        log.record_power_observation(
+            start_operation,
+            &digest,
+            start,
+            b"start-receipt",
+            PowerStateV1::Running,
+            Uuid::now_v7(),
+            12,
+            13,
+        )
+        .unwrap();
+        drop(log);
+        assert_eq!(FixtureLog::recover(&path).unwrap().power_records().len(), 2);
+        // Simulated process death in the single atomic frame cannot expose a
+        // recoverable partial receipt/effect. The intact predecessor remains.
+        let torn = path.with_extension("torn");
+        std::fs::write(&torn, &bytes[..bytes.len() - 1]).unwrap();
+        assert!(FixtureLog::recover(&torn).is_err());
+        std::fs::write(&torn, &bytes[..before.len()]).unwrap();
+        let pre_admission = FixtureLog::recover(&torn).unwrap();
+        assert_eq!(pre_admission.records().len(), 1);
+        assert!(
+            pre_admission
+                .accepted_stage_effect(start_operation, &digest, start)
+                .unwrap()
+                .is_none()
+        );
+        drop(pre_admission);
+        // A checksum-valid substitution must fail semantic replay validation.
+        let mut forged: StartAdmissionV1 =
+            serde_json::from_slice(&bytes[before.len() + 9..bytes.len() - 66]).unwrap();
+        forged
+            .effect
+            .start_transition
+            .as_mut()
+            .unwrap()
+            .predecessor
+            .binding
+            .owner = Uuid::now_v7();
+        let forged_bytes = [before.as_slice(), frame(&forged).unwrap().as_slice()].concat();
+        std::fs::write(&torn, forged_bytes).unwrap();
+        assert!(FixtureLog::recover(&torn).is_err());
+        std::fs::remove_file(torn).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn power_replay_requires_exact_effect_and_fresh_observation() {
         let path = std::env::temp_dir().join(format!("power-ledger-{}", Uuid::now_v7()));
         let mut log = FixtureLog::create(&path).unwrap();
@@ -145,22 +316,26 @@ mod power_tests {
             )
             .is_err()
         );
-        log.record_power_observation(
-            start_operation,
-            &digest,
-            start_binding,
-            b"start-receipt",
-            PowerStateV1::Running,
-            generation,
-            12,
-            13,
-        )
-        .unwrap();
+        assert!(
+            log.record_power_observation(
+                start_operation,
+                &digest,
+                start_binding,
+                b"start-receipt",
+                PowerStateV1::Running,
+                generation,
+                12,
+                13,
+            )
+            .is_err()
+        );
         drop(log);
         let mut log = FixtureLog::recover(&path).unwrap();
-        assert_eq!(log.power_records().len(), 2);
-        assert_eq!(log.power_records()[1].state, PowerStateV1::Running);
-        assert_eq!(log.power_records()[1].predecessor, Some(1));
+        assert_eq!(
+            log.power_records().len(),
+            1,
+            "a non-atomic effect cannot establish a running transition"
+        );
         assert!(
             log.record_power_observation(
                 start_operation,
@@ -204,7 +379,7 @@ impl StageBinding {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Attempt {
     version: u8,
@@ -239,6 +414,26 @@ pub struct Effect {
     receipt: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stage_binding: Option<StageBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    start_transition: Option<StartTransitionV1>,
+}
+
+/// Accepted synthetic state transition, deliberately not a collected observation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StartTransitionV1 {
+    version: u8,
+    predecessor: PowerObservationV1,
+    before: PowerStateV1,
+    after: PowerStateV1,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StartAdmissionV1 {
+    admission_version: u8,
+    attempt: Attempt,
+    effect: Effect,
 }
 
 impl Effect {
@@ -266,6 +461,7 @@ enum Record {
     Attempt(Attempt),
     Effect(Effect),
     Power(PowerObservationV1),
+    Start(StartAdmissionV1),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -394,6 +590,9 @@ impl FixtureLog {
                     records.push(record);
                 }
                 Record::Effect(effect) => {
+                    if effect.start_transition.is_some() {
+                        return Err(invalid());
+                    }
                     validate_effect(&effect, &records, &effects, &world)?;
                     world.insert(effect.vmid, effect.after.clone());
                     effects.push(effect);
@@ -401,6 +600,16 @@ impl FixtureLog {
                 Record::Power(observation) => {
                     validate_power(&observation, &effects, &power)?;
                     power.push(observation);
+                }
+                Record::Start(admission) => {
+                    validate_start(&admission, &records, &effects, &world, &power)?;
+                    attempted.insert((
+                        admission.attempt.operation,
+                        Some(FixtureLedgerStage::StartPe),
+                    ));
+                    records.push(admission.attempt);
+                    world.insert(admission.effect.vmid, admission.effect.after.clone());
+                    effects.push(admission.effect);
                 }
             }
         }
@@ -515,6 +724,7 @@ impl FixtureLog {
             after,
             receipt,
             stage_binding: attempt.stage_binding,
+            start_transition: None,
         };
         validate_effect(&effect, &self.records, &self.effects, &self.world)?;
         let bytes = frame(&effect)?;
@@ -535,6 +745,83 @@ impl FixtureLog {
     }
     pub fn effects(&self) -> &[Effect] {
         &self.effects
+    }
+
+    /// Private fixture seam. Admission, exact receipt and synthetic transition
+    /// share one durable frame. Callers must validate the typed StartPe request
+    /// and fresh current-generation authority before invoking this method.
+    #[allow(dead_code, clippy::too_many_arguments)]
+    pub fn record_start_transition(
+        &mut self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+        predecessor: &PowerObservationV1,
+        receipt: Vec<u8>,
+        consume: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<()> {
+        if self.poisoned {
+            return Err(invalid());
+        }
+        let before = self
+            .world
+            .get(&predecessor.vmid)
+            .cloned()
+            .ok_or_else(invalid)?;
+        let attempt = Attempt {
+            version: 2,
+            sequence: self.records.len() as u64 + 1,
+            operation,
+            request_sha256: digest.to_owned(),
+            duplicate: false,
+            stage_binding: Some(binding),
+        };
+        let effect = Effect {
+            effect_version: 2,
+            sequence: self.effects.len() as u64 + 1,
+            attempt_sequence: attempt.sequence,
+            operation,
+            request_sha256: digest.to_owned(),
+            vmid: predecessor.vmid,
+            before: Some(before.clone()),
+            after: before,
+            receipt: Some(receipt),
+            stage_binding: Some(binding),
+            start_transition: Some(StartTransitionV1 {
+                version: 1,
+                predecessor: predecessor.clone(),
+                before: PowerStateV1::Stopped,
+                after: PowerStateV1::Running,
+            }),
+        };
+        let admission = StartAdmissionV1 {
+            admission_version: 1,
+            attempt,
+            effect,
+        };
+        validate_start(
+            &admission,
+            &self.records,
+            &self.effects,
+            &self.world,
+            &self.power,
+        )?;
+        let bytes = frame(&admission)?;
+        if bytes.len() > MAX_LINE {
+            return Err(invalid());
+        }
+        // Refused validations never consume authority. A failed persistence after
+        // consumption is ambiguous and cannot safely be automatically retried.
+        consume()?;
+        self.poisoned = true;
+        self.file.write_all(&bytes)?;
+        self.file.sync_data()?;
+        self.attempted
+            .insert((operation, Some(FixtureLedgerStage::StartPe)));
+        self.records.push(admission.attempt);
+        self.effects.push(admission.effect);
+        self.poisoned = false;
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -682,6 +969,10 @@ fn validate_power(
         }
         (FixtureLedgerStage::StartPe, PowerStateV1::Running, Some(prior))
             if prior.state == PowerStateV1::Stopped
+                && effect
+                    .start_transition
+                    .as_ref()
+                    .is_some_and(|transition| &transition.predecessor == prior)
                 && prior.binding.stage == FixtureLedgerStage::ConfigurePe
                 && prior.effect_sequence + 1 == effect.sequence
                 && prior.observed_unix_ms < p.accepted_unix_ms =>
@@ -690,6 +981,55 @@ fn validate_power(
         }
         _ => Err(invalid()),
     }
+}
+
+fn validate_start(
+    admission: &StartAdmissionV1,
+    records: &[Attempt],
+    effects: &[Effect],
+    world: &BTreeMap<u32, VmState>,
+    power: &[PowerObservationV1],
+) -> io::Result<()> {
+    let attempt = &admission.attempt;
+    let effect = &admission.effect;
+    let transition = effect.start_transition.as_ref().ok_or_else(invalid)?;
+    let prior = &transition.predecessor;
+    if admission.admission_version != 1
+        || attempt.version != 2
+        || attempt.duplicate
+        || attempt.sequence != records.len() as u64 + 1
+        || attempt.operation.is_nil()
+        || !valid_digest(&attempt.request_sha256)
+        || !attempt
+            .stage_binding
+            .is_some_and(|binding| binding.valid() && binding.stage == FixtureLedgerStage::StartPe)
+        || records.iter().any(|record| {
+            record.operation == attempt.operation
+                && record.stage_binding.map(|binding| binding.stage)
+                    == Some(FixtureLedgerStage::StartPe)
+        })
+        || ambiguous_legacy(records, attempt.operation, attempt.stage_binding)
+        || transition.version != 1
+        || transition.before != PowerStateV1::Stopped
+        || transition.after != PowerStateV1::Running
+        || prior.state != PowerStateV1::Stopped
+        || prior.binding.stage != FixtureLedgerStage::ConfigurePe
+        || power.iter().rev().find(|p| p.vmid == prior.vmid) != Some(prior)
+        || effects
+            .iter()
+            .rev()
+            .find(|e| e.vmid == prior.vmid)
+            .is_none_or(|e| e.sequence != prior.effect_sequence)
+        || effect.vmid != prior.vmid
+        || effect.before.as_ref() != Some(&effect.after)
+        || !effect.after.pe_configured
+        || effect.receipt.as_ref().is_none_or(Vec::is_empty)
+    {
+        return Err(invalid());
+    }
+    let mut attempts = records.to_vec();
+    attempts.push(attempt.clone());
+    validate_effect(effect, &attempts, effects, world)
 }
 
 fn validate_effect(
