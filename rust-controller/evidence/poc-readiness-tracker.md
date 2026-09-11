@@ -58,6 +58,7 @@ User requested goal tracking on 2026-09-05. This tracker distinguishes a locally
 - Commit `e6d3894` adds fail-closed PeComplete scope/report validation with a distinct microsecond deadline anchored to PeRegister satisfaction and exact required-step matching. Complete-looking reports still refuse without authenticated registration; PeRegister result acceptance, trusted scope reconstruction, scheduler integration, and later stages remain open.
 - Commit `044e66e` adds refusal-only PeShutdownGrace/PeEnsureStopped scope validation with exact predecessor identity and microsecond deadline. Invalid/substituted scopes, clocks, budgets, and expired escalation refuse; authenticated completion, fresh VM power evidence, durable replay, and later stages remain open.
 - Commit `08c9af0` adds refusal-only ConfigureDisk/StartDisk scope validation bound to exact stage/run/operation/predecessor/node/VM. Wrong-VM, aliased, running, stale/future, and malformed storage/configuration evidence refuses; disk ownership, attachment, capacity, execution fences, and later stages remain open.
+- Commit `a37ba82` adds refusal-only InstallQga host-evidence validation bound to the StartDisk predecessor/event and exact operation/attempt/node/VM. Missing, nonresponsive, wrong-target, future, and substituted evidence refuses; authenticated transport/agent, package identity, receipts, and VerifyQga remain open.
 
 ### Final owned Linux full-run result (2026-09-10)
 

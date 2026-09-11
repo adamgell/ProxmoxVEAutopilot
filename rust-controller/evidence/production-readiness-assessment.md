@@ -52,6 +52,7 @@ Production and `192.168.2.4`: read-only throughout
 - Commit `e6d3894` adds fail-closed PeComplete scope and report validation with exact steps and deadline anchoring. It does not authenticate PeRegister/PeComplete results, integrate the scheduler, prove later stages, or establish production readiness.
 - Commit `044e66e` adds fail-closed PeShutdownGrace/PeEnsureStopped scope and deadline validation. It does not authorize force-stop, authenticate completion, prove fresh VM power evidence, persist results, or establish later-stage/production readiness.
 - Commit `08c9af0` adds fail-closed ConfigureDisk/StartDisk evidence binding and refusal tests. Descriptive volume/configuration strings do not prove ownership, attachment, capacity, trusted receipts, execution fences, or production readiness.
+- Commit `a37ba82` adds fail-closed InstallQga host-QGA evidence checks. It cannot authenticate an agent or authorize installation and does not establish VerifyQga, watchdog, package identity, durable receipts, or production readiness.
 
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
 - Commit `7f556bfd` records a newer exact-source Linux/amd64 image for `6f582095` with all Dockerfile runtime gates and 254 verified source blobs. The owned fixture run did not start because image inspection timed out and Docker later stalled; no fixture runtime qualification is claimed.
