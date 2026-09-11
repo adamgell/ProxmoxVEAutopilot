@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `91371a11`: this branch and PR #65 contain an accumulated
+Current scope at `e6394fe6`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -132,6 +132,12 @@ At `eb15cca5`, the legacy callback task-observation gap is explicit: existing
 success/power and guest-step evidence cannot safely infer Proxmox Running or
 Failed task states. A separately versioned UPID-bound task observation with
 durable replay, restart, and cross-authority rules is still required.
+
+At `e6394fe6`, genuine fixture IPC capture retains the configured route hash;
+additive migration 0018 stores it without historical backfill, replay compares
+it exactly, and route-qualified loading validates sealed provenance while
+remaining observation-only. Old-schema upgrade, independent route-restoration,
+and kill-during-write proofs remain open.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
