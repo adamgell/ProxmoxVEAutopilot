@@ -1,5 +1,10 @@
 # Callback implementation after credential delivery
 
+Historical assessment at `1d61da6d`: subsequent commits implement authenticated
+fixture registration and additional fixture completion paths. The gaps below
+describe that historical source, not current implementation status. See
+`fixture-peregister-authentication-audit.md` for the later source/test audit.
+
 Inspected source: `1d61da6d`. This is a source assessment, not a runtime
 compatibility proof. `./skill.sh status` succeeded (104 tools, 84 docs);
 the live docs search for Rust callback/PeRegister returned older Python documents,

@@ -497,6 +497,63 @@ async fn fixture_credential_delivery_reclaim_case(cancel_pending: bool, register
                 agent_id: expected.names().expected_agent_id().to_owned(),
             };
             let authorization = format!("Bearer {}", accepted.lines().last().unwrap());
+            // Each reported identity component is independently bound to the
+            // server-owned plan, even with the exact delivered credential.
+            for field in ["vm_uuid", "mac", "agent_id"] {
+                let mut substituted = identity.clone();
+                match field {
+                    "vm_uuid" => substituted.vm_uuid = uuid::Uuid::now_v7().to_string(),
+                    "mac" => substituted.mac = "02:00:00:00:00:ff".to_owned(),
+                    _ => substituted.agent_id.push_str("-other"),
+                }
+                assert_ne!(substituted, identity);
+                assert!(
+                    replacement
+                        .accept_fixture_pe_registration(&next, &authorization, secret, &substituted)
+                        .await
+                        .is_err(),
+                    "accepted substituted {field}"
+                );
+            }
+            assert!(
+                replacement
+                    .accept_fixture_pe_registration(
+                        &next,
+                        &authorization,
+                        b"wrong-fixture-secret",
+                        &identity
+                    )
+                    .await
+                    .is_err()
+            );
+            let expired = api_compat::run_bearer::issue_run_bearer(
+                api_compat::run_bearer::RunBearerIdentity::Text(
+                    &s.ids.run_id().as_uuid().to_string(),
+                ),
+                1,
+                secret,
+            )
+            .unwrap();
+            assert!(
+                replacement
+                    .accept_fixture_pe_registration(
+                        &next,
+                        &format!("Bearer {}", expired.expose_for_delivery()),
+                        secret,
+                        &identity
+                    )
+                    .await
+                    .is_err()
+            );
+            let rejected_count: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM rust_controller.fixture_pe_registrations")
+                    .fetch_one(&s.db.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                rejected_count, 0,
+                "rejected authentication selected registration"
+            );
             let mut wrong = identity.clone();
             wrong.agent_id.push_str("-other");
             assert!(
