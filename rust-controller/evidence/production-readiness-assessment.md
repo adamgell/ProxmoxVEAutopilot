@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `ed8f3d4d`: this branch and PR #65 contain an accumulated
+Current scope at `5d346bab`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -147,6 +147,12 @@ idempotent, leaves legacy provenance NULL, and route/replay refuse that row;
 the route-aware subprocess rejects a changed channel. This is not archived
 production-upgrade evidence. Kill-during-write, replacement-generation
 delegation, and current-source Linux qualification remain open.
+
+At `5d346bab`, a disposable PostgreSQL backend-death proof holds the response
+transaction after insert, terminates only the exact waiting backend, confirms
+semantic and response/provenance rollback, then verifies genuine exact replay.
+This is database-backend death, not controller-process SIGKILL recovery; the
+owned-child StartPe harness and replacement-generation delegation remain open.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
