@@ -55,6 +55,7 @@ Production and `192.168.2.4`: read-only throughout
 - Commit `a37ba82` adds fail-closed InstallQga host-QGA evidence checks. It cannot authenticate an agent or authorize installation and does not establish VerifyQga, watchdog, package identity, durable receipts, or production readiness.
 - Commit `7f9a2ab` adds fail-closed VerifyQga receipt identity binding. It does not verify the receipt, authenticate host transport, establish freshness/execution fences, persist results, or establish production readiness.
 - Commit `a187aed` adds fail-closed InstallQgaWatchdog receipt/agent binding. It does not authenticate the agent, verify trusted history, prove package/service postconditions, install, dispatch, or establish production readiness.
+- Commit `ed76e78` adds fail-closed InstallAgent artifact identity binding. It does not verify artifact bytes/signatures, enroll the agent, prove service state, install, dispatch, or establish production readiness.
 
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
 - Commit `7f556bfd` records a newer exact-source Linux/amd64 image for `6f582095` with all Dockerfile runtime gates and 254 verified source blobs. The owned fixture run did not start because image inspection timed out and Docker later stalled; no fixture runtime qualification is claimed.
