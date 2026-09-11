@@ -32,6 +32,7 @@ Production and `192.168.2.4`: read-only throughout
 - Commit `cc9c6e1` adds submission-time revalidation and atomic synthetic StartPe admission through fixture IPC. This remains distinct from real `qmstart`, controller satisfaction, independent task/running observation, adapter restoration, and PostgreSQL/process-death proof.
 - Commit `6b95810` adds durable typed task/running publication bound to the atomic StartPe record, with replay and contradiction/torn-record protections. These are trusted fixture-supervisor observations only and do not establish live Proxmox evidence, adapter restoration, PostgreSQL satisfaction, or production readiness.
 - Commit `5e2798a` adds read-only typed restoration with exact identity, receipt, task, power, and timestamp checks. It does not wire the general provisioning adapter, establish full postconditions, prove PostgreSQL satisfaction, or authorize production mutation.
+- Commit `618d3eac` records an executable identity-compatibility gate: opaque PVE configuration digests cannot be relabeled as legacy SHA-256 inventory identities. A versioned additive inventory contract is required; no adapter satisfaction or production readiness is claimed.
 
 - The changed-source Linux qualification evidence covers Rust source `ac03e96caa70fadd9a572f5c206d03e1ec1e0121`, with launcher binding `e30454e72b132055dcf8aba926a182957ac19f99`; later commits contain only evidence/documentation updates.
 - The final macOS four-package regression at `557bd12` passed 665 tests, with 3 intentionally ignored, under a bounded supervisor.
