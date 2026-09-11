@@ -20,6 +20,6 @@ milestone. No conversion to Satisfied, HTTP handler, session storage or grace
 activation was added. Required atomic result/grace/successor behavior, conflict
 auditing and five-second continuation remain open.
 
-Verification: four focused classifier tests, all eighteen existing api-compat
+Verification: five focused classifier tests, all eighteen existing api-compat
 tests and both compile-fail doctests passed. Strict all-target api-compat Clippy,
 formatting and diff checks passed. No Python behavior or live system changed.
