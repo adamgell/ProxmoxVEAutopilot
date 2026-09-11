@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `5d346bab`: this branch and PR #65 contain an accumulated
+Current scope at `6da64fd3`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -40,7 +40,7 @@ are implemented. The transaction-local alias helper at `724b6101` retains exact
 ownership and the original timestamp on replay without independent commit or
 dispatch authority.
 
-The current PR head is `ed8f3d4d` (verified 2026-09-11). GitHub reports the
+The current PR head is `6da64fd3` (verified 2026-09-11). GitHub reports the
 duplicated Linux and macOS-arm64 checks as queued, with no completed
 qualification conclusion; the draft PR remains open. The StartPe provisioning
 fact mapping added at `db84526f`/`01b2baee`, followed by the closed-response
@@ -50,7 +50,8 @@ mapping at `ad16c5a2`/`b44fa4ac`/`f61d2714`/`7c8123f9`, and typed observation
 loading at `60b54da6`/`60c410fe`, followed by route-provenance and legacy
 callback observation-gap audits at `c0d38f46`/`91371a11`, followed by configured
 route-provenance retention at `e6394fe6`/`aae58311`, followed by route reload
-and legacy-provenance proof at `c7b1bde5`/`ed8f3d4d`, are evidence for the validated fact
+and legacy-provenance proof at `c7b1bde5`/`ed8f3d4d`, and database-backend death
+recovery at `5d346bab`/`6da64fd3`, are evidence for the validated fact
 representation only and does not close the authentic PostgreSQL stop-outcome
 matrix or make the controller production-ready.
 
