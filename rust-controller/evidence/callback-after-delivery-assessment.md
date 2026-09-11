@@ -100,3 +100,43 @@ the registration slice.
 Validation: read the named current source and existing compatibility corpus;
 no runtime code was changed and no callback runtime tests were claimed. No
 production or real Proxmox mutation was performed.
+
+## Implementation dependency audit at `e7cff138`
+
+The remaining obstacle is a concrete conflict in the durable history model,
+not a missing success enum. The following edges must change together before
+the first accepting fixture transaction can be committed:
+
+| Current source | Required connected change |
+| --- | --- |
+| `scheduler/osdeploy/lifecycle.rs::claim_osdeploy_bound` | Add a separate PeRegister claim path that resolves StartPe's selected success and opens its own attempt/lease. Read the existing `pe_registration` deadline; do not run the current unconditional deadline INSERT or allocate `mutation_seconds()` from claim time. |
+| `osdeploy/execution/load.rs::load_scopes` and `validate_activations` | Registration's scope correctly belongs to StartPe's dispatch, but the current activation validator requires `anchor_operation_id == op`, `anchor_event_id == activation event`, and `opened_at == activation time`. A PeRegister activation reusing the correct deadline cannot satisfy those equalities. Introduce an explicit inherited-scope activation representation and validate its original anchor against committed StartPe dispatch/session rows. |
+| `osdeploy/execution/history.rs::enabled` and physical history reconstruction | PeRegister is refused and its plan has no PVE mutation. Add callback history reconstruction separately; enabling the stage in this physical allowlist cannot provide a valid PVE evaluation context. |
+| `osdeploy/execution/wire.rs::Detail` and `DecisionEnvelope::validate` | Add a closed registration selection event carrying references to immutable callback provenance and result, with a Satisfied resolution. Existing `PveEvaluated` requires PVE evidence/reason/mode and must not be fabricated for a callback. |
+| `migrations/0011_fixture_delivery_reclaim.sql` action/resolution constraint | A new migration must admit the callback discriminator with its exact resolution, while retaining the existing discriminator checks. The callback result needs a unique operation owner plus references to its PeRegister attempt, original StartPe delivery/session/alias and selected journal event. |
+| `scheduler/osdeploy/transition.rs` and `osdeploy/execution/load.rs` transition replay | Persist and reconstruct the selected callback proof, terminal operation/attempt transition and original PeCompletion scope anchor atomically. Current transition/replay logic has no registration proof. An operations.state UPDATE alone would be rejected by subsequent history restoration and is insufficient evidence of success. |
+
+The important deadline distinction is between **activation time** and **scope
+opening time**. StartPe has already opened `pe_registration`; the later callback
+attempt may start strictly afterward, but expiry remains the original deadline.
+That distinction must survive both initial claim and replacement lease recovery.
+The inherited-scope representation must also preserve selected predecessor
+validation: the existing activation validator's fallback predecessor is
+DiskCapacity, which is not correct for PeRegister.
+
+The callback request should supply only reported client identity and the bearer.
+The server resolves run, registered PeRegister operation, current lease and
+immutable expected session; the exact verified token digest joins
+`fixture_pe_credential_aliases` to `fixture_pe_deliveries`, then acknowledgement
+and exposure. A valid signature without those committed edges cannot create the
+closed transaction proof. Equivalent replay reads the selected result without
+allocating a second attempt; current authority/cancellation checks remain
+separate from that historical answer.
+
+Implementation order: first add the inherited-scope claim and restoration tests;
+then add callback provenance/result migration, wire event and transition together;
+then route the controller fixture callback through that transaction and exercise
+identity, deadline, replay, rollback and process-loss cases. None of these source
+changes was made by this dependency audit, and no accepting API was added. The
+audit narrows the next implementation boundary without claiming registration or
+successor readiness.
