@@ -27,6 +27,16 @@ session decision artifacts are not present in this checkout. Compatibility
 mapping against the local Python endpoint, role, and database behavior is the
 next evidence task; no positive StartPe admission is claimed.
 
+### Legacy run-bearer compatibility (commit `aadf5c83`)
+
+`api-compat::run_bearer` now verifies canonical Python `winpe_token.sign`
+HMAC-SHA256 tokens using closed Rust claims. The 22 unit tests, four integration
+tests, and four compile-fail doctests cover independently generated Python
+vectors, the exact `now == exp` boundary, wrong-run and tampered-token refusal,
+malformed claims, and prevention of caller-constructed verified claims. This
+proves credential compatibility only; bearer possession still grants no
+session, attempt, scheduler authority, or StartPe dispatch permission.
+
 ### Current-head diagnostic checkpoint (2026-09-10)
 
 - Commit `08471af3` records the terminal exact-current-source Linux reaping

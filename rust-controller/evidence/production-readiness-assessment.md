@@ -21,6 +21,13 @@ checkout. Astra is mapping the existing local Python endpoint/role/database
 behavior to the Rust durability types before any positive session path is
 added; no synthetic authenticated flag or family bypass is being introduced.
 
+Commit `aadf5c83` adds the first compatibility implementation for the legacy
+run bearer: canonical Python HMAC-SHA256 verification, closed claims, exact
+expiry behavior, wrong-run/tamper refusal, and compile-fail construction
+proofs. It deliberately does not turn the bearer into session or StartPe
+authority; durable session preparation and atomic arming remain subsequent
+gates.
+
 Current-head checkpoint: commit `08471af3` records that the exact-source Linux
 reaping diagnostic image built successfully, but its retained targeted run
 ended without output before producing PID/reap evidence. The attempt is
