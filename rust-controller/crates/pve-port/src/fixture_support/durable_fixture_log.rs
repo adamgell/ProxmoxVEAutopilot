@@ -413,6 +413,8 @@ pub enum FixtureLedgerStage {
     DiskCapacity,
     ConfigurePe,
     StartPe,
+    /// Message identity only. Stop admission and power observations are gated.
+    PeEnsureStopped,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -144,10 +144,10 @@ impl StageBarrier {
                 && self.state.phase == Entered
                 && self.authorization.is_none() =>
             {
-                let valid = FixtureStageRequest::decode(&request)
-                    .ok()
-                    .is_some_and(|r| identity.validate_request(&r).is_ok())
-                    && request == committed_request
+                let valid = FixtureStageRequest::decode(&request).ok().is_some_and(|r| {
+                    identity.validate_request(&r).is_ok()
+                        && r.request().plan().action() != crate::ProvisioningActionV1::EnsureStopped
+                }) && request == committed_request
                     && after.disk_bytes > 0;
                 if valid {
                     self.authorization = Some(Authorization {

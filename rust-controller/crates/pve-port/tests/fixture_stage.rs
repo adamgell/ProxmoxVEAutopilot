@@ -125,13 +125,13 @@ async fn stage_transport_rejects_without_attempts_or_effects_across_restart() {
 }
 
 #[test]
-fn first_four_stage_contracts_bind_exact_request_and_receipt_kind() {
+fn first_five_stage_contracts_bind_exact_request_and_receipt_kind() {
     let episodes = chain();
     let fixture = controller_domain::RunId::new().as_uuid();
     let mut receipts: Vec<Vec<u8>> = Vec::new();
     for (i, episode) in episodes.iter().enumerate() {
         let envelope = FixtureStageRequest::new(fixture, episode.request.clone());
-        if i > 3 {
+        if i > 4 {
             assert!(envelope.is_err());
             continue;
         }
@@ -150,8 +150,12 @@ fn first_four_stage_contracts_bind_exact_request_and_receipt_kind() {
                     .unwrap(),
             ),
             2 => MutationReceipt::SynchronousAccepted,
-            _ => MutationReceipt::Task(
+            3 => MutationReceipt::Task(
                 Upid::parse("UPID:pve-test:00000001:00000001:00000001:qmstart:101:fake@pve:")
+                    .unwrap(),
+            ),
+            _ => MutationReceipt::Task(
+                Upid::parse("UPID:pve-test:00000001:00000001:00000001:qmstop:101:fake@pve:")
                     .unwrap(),
             ),
         };
@@ -185,7 +189,7 @@ fn first_four_stage_contracts_bind_exact_request_and_receipt_kind() {
             "UPID:pve-test:00000001:00000001:00000001:resize:900:fake@pve:",
             "UPID:other:00000001:00000001:00000001:resize:101:fake@pve:",
             "UPID:pve-test:00000001:00000001:00000001:resize:101:other@pve:",
-            "UPID:pve-test:00000001:00000001:00000001:qmstop:101:fake@pve:",
+            "UPID:pve-test:00000001:00000001:00000001:qmdestroy:101:fake@pve:",
         ] {
             assert!(
                 envelope
@@ -201,6 +205,111 @@ fn first_four_stage_contracts_bind_exact_request_and_receipt_kind() {
             );
         }
         assert!(FixtureStageRequest::new(uuid::Uuid::nil(), episode.request.clone()).is_err());
+    }
+}
+
+#[test]
+fn stop_contract_requires_exact_start_history_and_stop_task_identity() {
+    use pve_port::fixture_support::*;
+    let episodes = chain();
+    let fixture = uuid::Uuid::now_v7();
+    let start = FixtureStageRequest::new(fixture, episodes[3].request.clone()).unwrap();
+    let stop = FixtureStageRequest::new(fixture, episodes[4].request.clone()).unwrap();
+    let receipt = start
+        .encode_receipt(
+            4,
+            MutationReceipt::Task(
+                Upid::parse("UPID:pve-test:00000001:00000001:00000001:qmstart:101:fake@pve:")
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    stop.validate_ensure_stopped_physical_predecessor(&start, &receipt)
+        .unwrap();
+    for field in ["operation_id", "attempt_id"] {
+        let mut altered = serde_json::to_value(&episodes[3].request).unwrap();
+        altered["request"]["binding"][field] = serde_json::json!(uuid::Uuid::now_v7());
+        let altered =
+            FixtureStageRequest::new(fixture, serde_json::from_value(altered).unwrap()).unwrap();
+        let altered_receipt = altered
+            .encode_receipt(
+                4,
+                MutationReceipt::Task(
+                    Upid::parse("UPID:pve-test:00000001:00000001:00000001:qmstart:101:fake@pve:")
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+        assert!(
+            stop.validate_ensure_stopped_physical_predecessor(&altered, &altered_receipt)
+                .is_err(),
+            "{field}"
+        );
+    }
+    for predecessor in [
+        FixtureStageRequest::new(uuid::Uuid::now_v7(), episodes[3].request.clone()).unwrap(),
+        FixtureStageRequest::new(fixture, episodes[2].request.clone()).unwrap(),
+        stop.clone(),
+    ] {
+        assert!(
+            stop.validate_ensure_stopped_physical_predecessor(&predecessor, &receipt)
+                .is_err()
+        );
+    }
+    assert!(
+        start
+            .validate_ensure_stopped_physical_predecessor(&start, &receipt)
+            .is_err()
+    );
+    for (field, value) in [
+        ("fixture_id", serde_json::json!(uuid::Uuid::now_v7())),
+        ("request_sha256", serde_json::json!("f".repeat(64))),
+        ("submission_sequence", serde_json::json!(0)),
+        ("receipt", serde_json::json!("synchronous_accepted")),
+    ] {
+        let mut altered: serde_json::Value = serde_json::from_slice(&receipt).unwrap();
+        altered[field] = value;
+        assert!(
+            stop.validate_ensure_stopped_physical_predecessor(
+                &start,
+                &serde_json::to_vec(&altered).unwrap()
+            )
+            .is_err(),
+            "{field}"
+        );
+    }
+    for wrong in [
+        "UPID:pve-test:00000001:00000001:00000001:qmstart:101:fake@pve:",
+        "UPID:pve-test:00000001:00000001:00000001:qmstop:900:fake@pve:",
+        "UPID:other:00000001:00000001:00000001:qmstop:101:fake@pve:",
+        "UPID:pve-test:00000001:00000001:00000001:qmstop:101:root@pam:",
+    ] {
+        assert!(
+            stop.encode_receipt(5, MutationReceipt::Task(Upid::parse(wrong).unwrap()))
+                .is_err()
+        );
+    }
+    let identity = FixtureStageIdentity {
+        operation: stop.request().binding().operation_id().as_uuid(),
+        attempt: stop.request().binding().attempt_id().as_uuid(),
+        generation: uuid::Uuid::now_v7(),
+        owner: uuid::Uuid::now_v7(),
+        stage: FixtureLedgerStage::PeEnsureStopped,
+        request_sha256: stop.request_sha256(),
+    };
+    identity.validate_request(&stop).unwrap();
+    for (field, value) in [
+        ("stage", serde_json::json!("start_pe")),
+        ("operation", serde_json::json!(uuid::Uuid::now_v7())),
+        ("attempt", serde_json::json!(uuid::Uuid::now_v7())),
+        ("generation", serde_json::json!(uuid::Uuid::nil())),
+        ("owner", serde_json::json!(uuid::Uuid::nil())),
+        ("request_sha256", serde_json::json!("a".repeat(64))),
+    ] {
+        let mut altered = serde_json::to_value(&identity).unwrap();
+        altered[field] = value;
+        let altered: FixtureStageIdentity = serde_json::from_value(altered).unwrap();
+        assert!(altered.validate_request(&stop).is_err(), "{field}");
     }
 }
 

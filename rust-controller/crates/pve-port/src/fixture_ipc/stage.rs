@@ -1,5 +1,6 @@
-//! Message validation through StartPe. StartPe remains dispatch-gated until the
-//! fixture can durably represent and recover its physical power transition.
+//! Message validation through PeEnsureStopped. A stop message binds physical
+//! history only; shutdown-grace adjudication remains scheduler-owned. The daemon
+//! refuses stop dispatch until durable stop admission and observation exist.
 use super::{InvalidFixtureClone, ReceiptWire, decode, encode};
 use crate::{MutationReceipt, ProvisioningActionV1, ProvisioningMutationRequestV1};
 use serde::{Deserialize, Serialize};
@@ -34,7 +35,7 @@ impl FixtureStageRequest {
         if fixture_id.is_nil()
             || !matches!(
                 request.plan().action(),
-                Clone | EnsureCapacity | ConfigurePe | StartPe
+                Clone | EnsureCapacity | ConfigurePe | StartPe | EnsureStopped
             )
         {
             return Err(InvalidFixtureClone);
@@ -83,6 +84,42 @@ impl FixtureStageRequest {
         }
         Ok(())
     }
+    /// Check a StartPe request and receipt against the stop's physical-history
+    /// binding. This does not prove durable acceptance, StartPe completion,
+    /// elapsed shutdown grace, current lease ownership, or a stopped VM.
+    /// Those are separate runtime gates.
+    pub fn validate_ensure_stopped_physical_predecessor(
+        &self,
+        predecessor: &Self,
+        receipt: &[u8],
+    ) -> Result<(), InvalidFixtureClone> {
+        let ProvisioningMutationRequestV1::Stop(stop) = &self.request else {
+            return Err(InvalidFixtureClone);
+        };
+        let ProvisioningMutationRequestV1::Start(start) = predecessor.request() else {
+            return Err(InvalidFixtureClone);
+        };
+        if self.request.plan().action() != crate::ProvisioningActionV1::EnsureStopped
+            || predecessor.request.plan().action() != crate::ProvisioningActionV1::StartPe
+            || self.fixture_id != predecessor.fixture_id
+            || !predecessor
+                .request
+                .binding()
+                .same_operation_attempt(stop.predecessor_binding())
+            || predecessor.request.plan() != stop.predecessor_plan()
+            || !start
+                .clone_binding()
+                .same_operation_attempt(stop.clone_binding())
+            || predecessor.request.plan().expected() != self.request.plan().expected()
+            || !matches!(
+                predecessor.decode_receipt(receipt)?.receipt(),
+                MutationReceipt::Task(_)
+            )
+        {
+            return Err(InvalidFixtureClone);
+        }
+        Ok(())
+    }
     fn wire(&self) -> StageWire {
         StageWire {
             version: 2,
@@ -116,11 +153,13 @@ impl FixtureStageRequest {
         let vm = self.request.plan().expected().vm();
         match (action, receipt) {
             (ConfigurePe, MutationReceipt::SynchronousAccepted) => Ok(()),
-            (Clone | EnsureCapacity | StartPe, MutationReceipt::Task(upid)) => {
+            (Clone | EnsureCapacity | StartPe | EnsureStopped, MutationReceipt::Task(upid)) => {
                 let (kind, vmid) = if action == Clone {
                     ("qmclone", vm.source_vmid())
                 } else if action == EnsureCapacity {
                     ("resize", vm.target_vmid())
+                } else if action == EnsureStopped {
+                    ("qmstop", vm.target_vmid())
                 } else {
                     ("qmstart", vm.target_vmid())
                 };

@@ -27,6 +27,99 @@ async fn checkpoint(socket: &Path, request: StageCheckpointRequest) -> StageChec
 }
 
 #[tokio::test]
+async fn stop_identity_cannot_acquire_disk_only_release_or_effect_across_daemon_restart() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = std::path::PathBuf::from("/tmp").join(format!("stop-gate-{}", Uuid::now_v7()));
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let episodes = provisioning_support::chain();
+    let fixture = Uuid::now_v7();
+    let stop = FixtureStageRequest::new(fixture, episodes[4].request.clone()).unwrap();
+    let start = FixtureStageRequest::new(fixture, episodes[3].request.clone()).unwrap();
+    for restart in [false, true] {
+        if restart {
+            std::fs::remove_file(directory.join("client.sock")).unwrap();
+            std::fs::remove_file(directory.join("supervisor.sock")).unwrap();
+        }
+        let path = directory.clone();
+        let daemon = std::thread::spawn(move || run(&path, Duration::from_secs(1)).unwrap());
+        let client = directory.join("client.sock");
+        let supervisor = directory.join("supervisor.sock");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !supervisor.exists() {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let generation = checkpoint(&supervisor, StageCheckpointRequest::Status)
+            .await
+            .generation;
+        let identity = FixtureStageIdentity {
+            operation: stop.request().binding().operation_id().as_uuid(),
+            attempt: stop.request().binding().attempt_id().as_uuid(),
+            generation,
+            owner: Uuid::now_v7(),
+            stage: FixtureLedgerStage::PeEnsureStopped,
+            request_sha256: stop.request_sha256(),
+        };
+        assert!(
+            checkpoint(
+                &supervisor,
+                StageCheckpointRequest::Arm {
+                    identity: identity.clone(),
+                    timeout_ms: 5000
+                }
+            )
+            .await
+            .ok
+        );
+        assert!(
+            checkpoint(
+                &client,
+                StageCheckpointRequest::Enter {
+                    identity: identity.clone()
+                }
+            )
+            .await
+            .ok
+        );
+        assert!(
+            !checkpoint(
+                &supervisor,
+                StageCheckpointRequest::AuthorizeRelease {
+                    identity: identity.clone(),
+                    request: stop.encode().unwrap(),
+                    committed_request: stop.encode().unwrap(),
+                    after: VmState {
+                        disk_bytes: stop.request().plan().expected().effective_capacity_bytes(),
+                        pe_configured: true
+                    },
+                }
+            )
+            .await
+            .ok
+        );
+        let predecessor = FixtureStageIdentity {
+            operation: start.request().binding().operation_id().as_uuid(),
+            attempt: start.request().binding().attempt_id().as_uuid(),
+            generation,
+            owner: Uuid::now_v7(),
+            stage: FixtureLedgerStage::StartPe,
+            request_sha256: start.request_sha256(),
+        };
+        let reply = send(&client, serde_json::json!({
+            "command":"stage_late", "binding":identity,
+            "request":serde_json::from_slice::<serde_json::Value>(&stop.encode().unwrap()).unwrap(),
+            "predecessor":[predecessor, serde_json::from_slice::<serde_json::Value>(&start.encode().unwrap()).unwrap()]
+        })).await;
+        assert_eq!(reply["ok"], false);
+        let status = send(&client, serde_json::json!({"command":"status"})).await;
+        assert_eq!(status["attempts"], 0);
+        assert_eq!(status["effects"], 0);
+        daemon.join().unwrap();
+    }
+}
+
+#[tokio::test]
 async fn durable_clone_resize_configure_requires_exact_accepted_predecessor() {
     use std::os::unix::fs::PermissionsExt;
     let directory = std::path::PathBuf::from("/tmp").join(format!("se-{}", Uuid::now_v7()));
