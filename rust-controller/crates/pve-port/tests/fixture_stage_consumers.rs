@@ -230,9 +230,17 @@ async fn stop_identity_cannot_acquire_disk_only_release_or_effect_across_daemon_
             !checkpoint(&client, admission.clone()).await.ok,
             "workers cannot supply supervisor admission"
         );
+        let refused_admission = checkpoint(&supervisor, admission).await;
         assert!(
-            !checkpoint(&supervisor, admission).await.ok,
+            !refused_admission.ok,
             "structural receipt cannot substitute for durable accepted StartPe history"
+        );
+        assert!(refused_admission.stop_admission.is_none());
+        assert!(
+            checkpoint(&supervisor, StageCheckpointRequest::Status)
+                .await
+                .stop_admission
+                .is_none()
         );
         let status = send(&client, serde_json::json!({"command":"status"})).await;
         assert_eq!(status["attempts"], 0);

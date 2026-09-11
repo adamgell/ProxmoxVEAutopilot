@@ -95,7 +95,7 @@ impl OsDeployController {
         grant: &LeaseGrant,
         supervisor: &pve_port::fixture_support::FixtureCheckpointClient,
         sample_after_preparation: F,
-    ) -> Result<(), Error>
+    ) -> Result<pve_port::fixture_support::FixtureStopAdmissionReceiptV1, Error>
     where
         F: FnOnce(pve_port::fixture_support::FixtureStopAuthorityV1) -> Fut,
         Fut: Future<
@@ -157,7 +157,11 @@ impl OsDeployController {
             {
                 return Err(Error::Validation);
             }
-            Ok(())
+            let receipt = reply.stop_admission.ok_or(Error::Validation)?;
+            sample
+                .validate_admission_receipt(&receipt)
+                .map_err(|_| Error::Validation)?;
+            Ok(receipt)
         })
         .await
         .map_err(|_| Error::TimedOut)?

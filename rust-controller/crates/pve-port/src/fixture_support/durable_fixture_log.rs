@@ -273,7 +273,23 @@ mod power_tests {
             );
             assert_eq!(before_refresh, std::fs::read(&path).unwrap());
         }
-        log.refresh_start_power(
+        let sample = StopReceiptSample {
+            scope: StopPowerScope {
+                sample_sequence: 1,
+                sample_sha256: "b".repeat(64),
+                operation: next_stop,
+                request_sha256: digest.clone(),
+                binding: stop,
+                authority: late_authority.clone(),
+            },
+            operation: start_operation,
+            request_sha256: digest.clone(),
+            binding: start,
+            vmid: original_start.power.vmid,
+            daemon_generation: generation,
+            observed_unix_ms: 43,
+        };
+        log.refresh_scoped_start_power(
             start_operation,
             &digest,
             start,
@@ -283,21 +299,48 @@ mod power_tests {
             original_start.power.vmid,
             43,
             44,
+            Some(sample.scope.clone()),
         )
         .unwrap();
-        log.admit_stop(
-            next_stop,
-            digest.clone(),
-            stop,
-            late_authority.clone(),
-            start_operation,
-            &digest,
-            start,
-            receipt,
-            generation,
-            44,
-        )
-        .unwrap();
+        let admission_receipt = log
+            .admit_stop(
+                next_stop,
+                digest.clone(),
+                stop,
+                late_authority.clone(),
+                start_operation,
+                &digest,
+                start,
+                receipt,
+                generation,
+                44,
+            )
+            .unwrap();
+        admission_receipt.validate_sample(&sample).unwrap();
+        assert_eq!(admission_receipt.admitted_unix_ms(), 44);
+        let receipt_digest = admission_receipt.sha256().unwrap();
+        let roundtrip: FixtureStopAdmissionReceiptV1 =
+            serde_json::from_slice(&serde_json::to_vec(&admission_receipt).unwrap()).unwrap();
+        assert_eq!(roundtrip, admission_receipt);
+        for field in [
+            "sequence",
+            "stop",
+            "authority",
+            "sample",
+            "digest",
+            "generation",
+        ] {
+            let mut wrong = sample.clone();
+            match field {
+                "sequence" => wrong.scope.sample_sequence = 2,
+                "stop" => wrong.scope.binding.owner = Uuid::now_v7(),
+                "authority" => wrong.scope.authority.evidence_fence = 99,
+                "digest" => wrong.scope.sample_sha256 = "c".repeat(64),
+                "generation" => wrong.daemon_generation = Uuid::now_v7(),
+                _ => wrong.observed_unix_ms = 44,
+            }
+            assert!(admission_receipt.validate_sample(&wrong).is_err());
+        }
         assert_eq!(log.start_observations[0], original_start);
         assert_eq!(log.effects().len(), 2);
         assert_eq!(log.records().len(), 2);
@@ -332,19 +375,23 @@ mod power_tests {
             );
             assert_eq!(durable, std::fs::read(&path).unwrap());
         }
-        log.admit_stop(
-            next_stop,
-            digest.clone(),
-            stop,
-            late_authority,
-            start_operation,
-            &digest,
-            start,
-            receipt,
-            generation,
-            45,
-        )
-        .unwrap();
+        let recovered_receipt = log
+            .admit_stop(
+                next_stop,
+                digest.clone(),
+                stop,
+                late_authority,
+                start_operation,
+                &digest,
+                start,
+                receipt,
+                generation,
+                45,
+            )
+            .unwrap();
+        assert_eq!(recovered_receipt, admission_receipt);
+        assert_eq!(recovered_receipt.sha256().unwrap(), receipt_digest);
+        recovered_receipt.validate_sample(&sample).unwrap();
         assert_eq!(durable, std::fs::read(&path).unwrap());
         std::fs::remove_file(torn).unwrap();
         std::fs::remove_file(path).unwrap();
@@ -885,6 +932,68 @@ struct StopAdmissionV1 {
     admitted_unix_ms: u64,
 }
 
+/// Exact immutable supervisor admission evidence. This is not a send permit;
+/// callers must obtain it from the supervisor transport, not trust decoded input.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FixtureStopAdmissionReceiptV1 {
+    admission: StopAdmissionV1,
+}
+
+#[derive(Clone)]
+pub(crate) struct StopReceiptSample {
+    pub scope: StopPowerScope,
+    pub operation: Uuid,
+    pub request_sha256: String,
+    pub binding: StageBinding,
+    pub vmid: u32,
+    pub daemon_generation: Uuid,
+    pub observed_unix_ms: u64,
+}
+
+impl FixtureStopAdmissionReceiptV1 {
+    /// Digest of the complete persisted admission, including its original clock
+    /// and exact power observation. Replays preserve this identity.
+    pub fn sha256(&self) -> io::Result<String> {
+        Ok(format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&self.admission)?)
+        ))
+    }
+
+    /// Bind a supervisor reply to the independently collected versioned sample.
+    /// This check does not establish database ownership or authorize exposure.
+    pub(crate) fn admitted_unix_ms(&self) -> u64 {
+        self.admission.admitted_unix_ms
+    }
+
+    pub(crate) fn validate_sample(&self, sample: &StopReceiptSample) -> io::Result<()> {
+        let a = &self.admission;
+        let p = a.current_power.as_ref().unwrap_or(&a.predecessor.power);
+        let scope = p.stop_scope.as_ref().ok_or_else(invalid)?;
+        if a.stop_admission_version != 1
+            || scope.as_ref() != &sample.scope
+            || scope.operation != a.operation
+            || scope.request_sha256 != a.request_sha256
+            || scope.binding != a.binding
+            || scope.authority != a.authority
+            || p.operation != sample.operation
+            || p.request_sha256 != sample.request_sha256
+            || p.binding != sample.binding
+            || p.vmid != sample.vmid
+            || p.daemon_generation != sample.daemon_generation
+            || p.observed_unix_ms != sample.observed_unix_ms
+            || p.state != PowerStateV1::Running
+            || p.observed_unix_ms > a.admitted_unix_ms
+            || a.admitted_unix_ms >= a.authority.lease_expires_unix_ms
+            || a.admitted_unix_ms >= a.authority.original_deadline_unix_ms
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+}
+
 fn validate_stop_admission(
     admission: &StopAdmissionV1,
     effects: &[Effect],
@@ -1156,7 +1265,7 @@ impl FixtureLog {
         start_receipt: &[u8],
         daemon_generation: Uuid,
         at: u64,
-    ) -> io::Result<()> {
+    ) -> io::Result<FixtureStopAdmissionReceiptV1> {
         if self.poisoned || daemon_generation.is_nil() {
             return Err(invalid());
         }
@@ -1204,7 +1313,9 @@ impl FixtureLog {
             let mut replay = admission;
             replay.admitted_unix_ms = prior.admitted_unix_ms;
             return if prior == &replay {
-                Ok(())
+                Ok(FixtureStopAdmissionReceiptV1 {
+                    admission: prior.clone(),
+                })
             } else {
                 Err(invalid())
             };
@@ -1216,9 +1327,9 @@ impl FixtureLog {
         self.poisoned = true;
         self.file.write_all(&bytes)?;
         self.file.sync_data()?;
-        self.stop_admissions.push(admission);
+        self.stop_admissions.push(admission.clone());
         self.poisoned = false;
-        Ok(())
+        Ok(FixtureStopAdmissionReceiptV1 { admission })
     }
 
     /// Creates a fresh file, never overwriting an existing fixture.

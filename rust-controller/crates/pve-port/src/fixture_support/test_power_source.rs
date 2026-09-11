@@ -39,6 +39,31 @@ pub struct VersionedTestPowerSample {
 }
 
 impl VersionedTestPowerSample {
+    /// Check that the supervisor's persisted admission selected this exact sample.
+    /// Neither the sample nor this receipt authorizes a physical stop.
+    pub fn validate_admission_receipt(
+        &self,
+        receipt: &super::FixtureStopAdmissionReceiptV1,
+    ) -> io::Result<()> {
+        use super::durable_fixture_log::{StopPowerScope, StopReceiptSample};
+        self.validate(self.sample.daemon_generation, receipt.admitted_unix_ms())?;
+        receipt.validate_sample(&StopReceiptSample {
+            scope: StopPowerScope {
+                sample_sequence: self.sequence,
+                sample_sha256: format!("{:x}", Sha256::digest(serde_json::to_vec(self)?)),
+                operation: self.stop.operation,
+                request_sha256: self.stop.request_sha256.clone(),
+                binding: self.stop.ledger_binding(),
+                authority: self.authority.clone(),
+            },
+            operation: self.sample.identity.operation,
+            request_sha256: self.sample.identity.request_sha256.clone(),
+            binding: self.sample.identity.ledger_binding(),
+            vmid: self.sample.vmid,
+            daemon_generation: self.sample.daemon_generation,
+            observed_unix_ms: self.sample.observed_unix_ms,
+        })
+    }
     pub(crate) fn key(&self) -> io::Result<String> {
         Ok(format!(
             "{:x}",
@@ -49,7 +74,7 @@ impl VersionedTestPowerSample {
             ))?)
         ))
     }
-    fn validate(&self, generation: Uuid, now: u64) -> io::Result<()> {
+    pub(crate) fn validate(&self, generation: Uuid, now: u64) -> io::Result<()> {
         self.stop.validate()?;
         self.sample
             .validate(&self.sample.identity, generation, now)?;

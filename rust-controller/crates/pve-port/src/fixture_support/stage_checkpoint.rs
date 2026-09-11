@@ -51,6 +51,8 @@ pub enum StageCheckpointRequest {
 pub struct StageCheckpointReply {
     pub ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_admission: Option<super::FixtureStopAdmissionReceiptV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<StageCheckpointRefusal>,
     pub generation: Uuid,
     pub identity: Option<FixtureStageIdentity>,
@@ -93,6 +95,7 @@ impl StageBarrier {
         let result = Self {
             state: StageCheckpointReply {
                 ok: false,
+                stop_admission: None,
                 refusal: None,
                 generation: Uuid::now_v7(),
                 identity: None,
@@ -131,6 +134,7 @@ impl StageBarrier {
     ) -> io::Result<StageCheckpointReply> {
         use super::CheckpointPhase::*;
         let mut refusal = None;
+        let mut stop_admission = None;
         let ok = match request {
             StageCheckpointRequest::AdmitStop {
                 identity,
@@ -145,7 +149,7 @@ impl StageBarrier {
                 && self.state.phase == Entered
                 && self.authorization.is_none() =>
             {
-                let checked = (|| -> io::Result<()> {
+                let checked = (|| -> io::Result<super::FixtureStopAdmissionReceiptV1> {
                     let decoded = FixtureStageRequest::decode(&request).map_err(|_| invalid())?;
                     let prior =
                         FixtureStageRequest::decode(&predecessor_request).map_err(|_| invalid())?;
@@ -174,7 +178,8 @@ impl StageBarrier {
                 })();
                 // Admission deliberately does not release the barrier. Stop task
                 // publication and reconciliation are separate unfinished seams.
-                checked.is_ok()
+                stop_admission = checked.ok();
+                stop_admission.is_some()
             }
             StageCheckpointRequest::Status => supervisor,
             StageCheckpointRequest::Arm {
@@ -274,6 +279,7 @@ impl StageBarrier {
         let mut reply = self.state.clone();
         reply.ok = ok;
         reply.refusal = refusal;
+        reply.stop_admission = stop_admission;
         Ok(reply)
     }
     pub(crate) fn validate_submission(
