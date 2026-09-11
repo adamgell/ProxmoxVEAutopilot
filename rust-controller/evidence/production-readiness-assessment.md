@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `b44fa4ac`: this branch and PR #65 contain an accumulated
+Current scope at `50640e57`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -112,6 +112,13 @@ and inserts an immutable fixture response row inside the existing semantic
 receipt/journal transaction. Exact replay is required and late attachment to a
 semantic-only receipt is refused. Combined IPC/PostgreSQL rollback, replay,
 and restart qualification remains open.
+
+At `50640e57`, the genuine combined IPC/PostgreSQL proof passes with three
+prefix subprocesses and an independent PID SQL-reload reader. Post-insert
+failure rolls back semantic and fixture rows; exact replay succeeds; timestamp,
+revision, envelope bytes, and no-resend behavior survive fresh-process reload.
+This does not yet prove kill-during-write recovery, typed loader/route joining,
+conflict matrix, or the final stop-outcome gates.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
