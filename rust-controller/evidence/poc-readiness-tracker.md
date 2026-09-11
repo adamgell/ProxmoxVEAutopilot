@@ -37,6 +37,16 @@ malformed claims, and prevention of caller-constructed verified claims. This
 proves credential compatibility only; bearer possession still grants no
 session, attempt, scheduler authority, or StartPe dispatch permission.
 
+### Registered PE package semantics (commit `aa9755f0`)
+
+`OsDeployRegistrationV1::pe_package_semantics()` now derives a closed semantic
+identity only from the store-validated registration. The versioned digest binds
+the registered run, StartPe operation, and complete admitted plan fingerprint,
+including the fixed native role. Focused substitution/staleness tests and two
+compile-fail doctests pass. This proves registered semantic provenance only; it
+does not attest delivered bytes, issue credentials, authenticate callbacks, or
+grant StartPe authority.
+
 ### Current-head diagnostic checkpoint (2026-09-10)
 
 ### Exact-source Linux qualification at `35400bd0`

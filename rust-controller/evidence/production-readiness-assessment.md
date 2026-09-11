@@ -36,6 +36,14 @@ proofs. It deliberately does not turn the bearer into session or StartPe
 authority; durable session preparation and atomic arming remain subsequent
 gates.
 
+Commit `aa9755f0` adds the first trusted preparation input: a closed
+`RegisteredPePackageSemanticsV1` derived exclusively from the store-validated
+registration. Its versioned digest binds the run, StartPe operation, and full
+admitted plan fingerprint; caller-supplied replacement IDs, roles, artifacts,
+URLs, credentials, and digests are not accepted. This is semantic provenance,
+not delivered-package attestation, session issuance, callback authentication,
+or dispatch authority.
+
 Current-head checkpoint: commit `08471af3` records that the exact-source Linux
 reaping diagnostic image built successfully, but its retained targeted run
 ended without output before producing PID/reap evidence. The attempt is
