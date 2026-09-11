@@ -140,3 +140,29 @@ identity, deadline, replay, rollback and process-loss cases. None of these sourc
 changes was made by this dependency audit, and no accepting API was added. The
 audit narrows the next implementation boundary without claiming registration or
 successor readiness.
+
+## Post-registration action boundary at `617f5b0b`
+
+The fixture registration transaction and controller entry point now exist. The
+next manifest stage is **PeComplete**, not a guest action: `osdeploy-adapter/src/stages.rs:98`
+classifies it as `CallbackWait`, and `:115-120` places PeComplete, grace, stopped
+proof, disk configuration and StartDisk before the first guest action, InstallQga.
+`osdeploy-adapter/src/guest_action.rs:25-26` deliberately rejects callback waits.
+Using PeComplete's operation ID as a legacy partition/apply action would therefore
+invent an action identity outside the admitted manifest.
+
+There is also no immutable WinPE step sequence to expose from the current package.
+`postgres-store/src/osdeploy/package_semantics.rs:69-77` materializes only the
+registered identity and plan; it does not map a task-sequence version to stable
+partition/apply/boot-files step IDs or executable `params`/`content`. The legacy
+action/result transaction consequently lacks its source action authority. A
+valid registration bearer cannot supply that missing action definition.
+
+The connected next native edge is authenticated **boot-files-staged PeComplete
+adjudication**, coupled to truthful grace activation and its original scope in
+the same transaction. The atomic grace requirement is already selected in
+`docs/superpowers/specs/2026-09-05-rust-osdeploy-durability/next-durable-main-decisions.md:15`.
+Generic legacy `/next` and `/result` acceptance additionally needs an admitted
+immutable step manifest and session-bound exposure; it cannot be obtained by
+relabeling this milestone. This inspection adds no runtime API and makes no
+claim of full legacy compatibility.
