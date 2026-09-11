@@ -12,7 +12,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `ecb9138c`: this branch and PR #65 contain an accumulated
+Current scope at `3e49604c`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -25,6 +25,15 @@ server-created fixture origins and durable fixture credential alias ownership
 are implemented. The transaction-local alias helper at `724b6101` retains exact
 ownership and the original timestamp on replay without independent commit or
 dispatch authority.
+
+Commit `3e49604c` records a current-source Linux/amd64 Docker build from
+`7cde09fb`: release compilation, all-feature workspace test compilation, and
+focused Dockerfile layers passed in 885.14 seconds as image
+`sha256:02b2be47b0f6dc726ff6e32e1beb2c25d59c2438a5572ba72ab56e699363a0ff`.
+The post-build memory guard measured about 11.32 GiB available versus 12 GiB,
+so the owned PostgreSQL runtime lane was refused and the launcher was not
+retargeted. This is a current-source build pass and explicit runtime gate, not
+Linux runtime qualification.
 
 At `d236dedb`, trusted origins persist immutable `credential_sink_id` policy:
 NULL retains physical-only fixture behavior; a stable non-nil sink requires
