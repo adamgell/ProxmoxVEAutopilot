@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `aae58311`: this branch and PR #65 contain an accumulated
+Current scope at `c7b1bde5`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -139,6 +139,13 @@ additive migration 0018 stores it without historical backfill, replay compares
 it exactly, and route-qualified loading validates sealed provenance while
 remaining observation-only. Old-schema upgrade, independent route-restoration,
 and kill-during-write proofs remain open.
+
+At `c7b1bde5`, focused evidence covers independent route-aware reload and a
+reconstructed pre-0018 schema using genuine current-run data. Migration is
+idempotent, leaves legacy provenance NULL, and route/replay refuse that row;
+the route-aware subprocess rejects a changed channel. This is not archived
+production-upgrade evidence. Kill-during-write, replacement-generation
+delegation, and current-source Linux qualification remain open.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
