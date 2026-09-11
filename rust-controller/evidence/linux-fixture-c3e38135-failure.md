@@ -82,3 +82,18 @@ success. This would distinguish supervisor scheduling from actual reap failure,
 but it is not established as a fix. No source synchronization change was made;
 the new per-PID/deadline diagnostics should be used for the next Linux failure
 before selecting a behavior change.
+
+## Current-head diagnostic attempt
+
+After the reaping diagnostics were added, an exact-current-source targeted image
+was built from `e9c0aa1f7ccf79ed67d58aec5ccc23ee2188995e` with the reaper source
+blob `3b1ae9f6906cc602c17dd45b0a8bebe40c6b19ea`. The image digest was
+`sha256:4c288588108ca19ff6873545c38b704c6208a6ac823b7c2f8855f990c55cafce`.
+Only the `operation-controller/postgres_native` target was compiled, offline
+with network disabled. The retained test container requested ten exact
+iterations of the failing test, but Docker stopped returning output before any
+iteration produced a PID or reap result; the retained `probe.log` is empty.
+The associated Docker process/session is no longer present, so this attempt is
+terminal but observationally inconclusive. It provides no new pass/fail claim,
+does not replace the c3e38135 failure, and does not justify restarting Docker
+or weakening the strict absence assertion.
