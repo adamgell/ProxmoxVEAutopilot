@@ -395,9 +395,10 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
     let episodes = provisioning_support::chain();
     let mut accepted: Vec<(FixtureStageIdentity, FixtureStageRequest, Vec<u8>)> = Vec::new();
     let mut final_publication = None;
-    let mut start_effect = None;
+    let mut start_effect: Option<(FixtureStageIdentity, Value)> = None;
     let mut start_publication = None;
     let mut start_publish_command = None;
+    let mut start_readback = None;
     for restart in [false, true] {
         if restart {
             fs::remove_file(directory.join("client.sock")).unwrap();
@@ -436,6 +437,24 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             .await
             .unwrap();
             assert_eq!(&recovered["accepted_effect"], expected);
+            let request = pve_port::fixture_ipc::FixtureStageRequest::new(
+                Uuid::from_u128(1),
+                episodes[3].request.clone(),
+            )
+            .unwrap();
+            let bytes = serde_json::from_value(expected["receipt"].clone()).unwrap();
+            let restored = FixtureStartPeRestoration::restore(
+                client.clone(),
+                Duration::from_secs(1),
+                identity.clone(),
+                request,
+                bytes,
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(restored.observe().await.unwrap().unwrap()).unwrap(),
+                start_readback.clone().unwrap()
+            );
             let replay = wire(&client, json!({"command":"start_pe_observation","identity":identity,"request":serde_json::from_slice::<Value>(&pve_port::fixture_ipc::FixtureStageRequest::new(Uuid::from_u128(1), episodes[3].request.clone()).unwrap().encode().unwrap()).unwrap()})).await.unwrap();
             assert_eq!(Some(replay), start_publication);
             assert!(
@@ -777,6 +796,15 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             let at = chrono::Utc::now().timestamp_millis() as u64;
             let evidence = json!({"version":1,"task":{"version":1,"identity":{"fixture_id":start.fixture_id(),"node":"pve-test","operation":identity.operation,"request_sha256":identity.request_sha256,"upid":upid.as_str()},"observed_unix_ms":at,"result":{"state":"succeeded"}},"power":{"state":"observed","observed_unix_ms":at,"value":{"power":"running","locked":false}}});
             let publish = json!({"command":"publish_start_pe_observation","identity":identity,"request":serde_json::from_slice::<Value>(&start.encode().unwrap()).unwrap(),"observation":evidence});
+            let restored = FixtureStartPeRestoration::restore(
+                client.clone(),
+                Duration::from_secs(1),
+                identity.clone(),
+                start.clone(),
+                original.clone(),
+            )
+            .unwrap();
+            assert!(restored.observe().await.unwrap().is_none());
             assert!(wire(&client, publish.clone()).await.is_err());
             let before_observation = fs::read(directory.join("fixture.log")).unwrap();
             for (pointer, value) in [
@@ -805,6 +833,107 @@ async fn synchronous_configure_publication_requires_resize_and_invalidates_on_re
             }
             let observed = wire(&control, publish.clone()).await.unwrap();
             assert_eq!(observed["power"]["state"], "running");
+            let readback = restored.observe().await.unwrap().unwrap();
+            assert!(matches!(
+                readback.task.result,
+                FixtureTaskState::Succeeded {}
+            ));
+            assert!(matches!(
+                readback.power,
+                SeedRead::Observed {
+                    value: SeedPower {
+                        power: PowerState::Running,
+                        locked: false
+                    },
+                    ..
+                }
+            ));
+            start_readback = Some(serde_json::to_value(readback).unwrap());
+            for field in ["operation", "attempt"] {
+                let mut wrong = serde_json::to_value(&identity).unwrap();
+                wrong[field] = json!(Uuid::now_v7());
+                assert!(
+                    FixtureStartPeRestoration::restore(
+                        client.clone(),
+                        Duration::from_secs(1),
+                        serde_json::from_value(wrong).unwrap(),
+                        start.clone(),
+                        original.clone()
+                    )
+                    .is_err()
+                );
+            }
+            let reencoded =
+                serde_json::to_vec_pretty(&serde_json::from_slice::<Value>(&original).unwrap())
+                    .unwrap();
+            let wrong_receipt = FixtureStartPeRestoration::restore(
+                client.clone(),
+                Duration::from_secs(1),
+                identity.clone(),
+                start.clone(),
+                reencoded,
+            )
+            .unwrap();
+            assert!(wrong_receipt.observe().await.is_err());
+            for (pointer, replacement) in [
+                ("/power/state", json!("stopped")),
+                ("/power/vmid", json!(102)),
+                ("/power/binding/generation", json!(Uuid::now_v7())),
+                ("/power/binding/attempt", json!(Uuid::now_v7())),
+                ("/power/receipt_sha256", json!("f".repeat(64))),
+                (
+                    "/task_upid",
+                    json!("UPID:pve-test:000000FF:00000001:00000001:qmstart:101:fake@pve:"),
+                ),
+                ("/task_observed_unix_ms", json!(1)),
+                ("/power/observed_unix_ms", json!(1)),
+            ] {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut forged = observed.clone();
+                *forged.pointer_mut(pointer).unwrap() = replacement;
+                let socket = directory.join("forged.sock");
+                let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+                let server = tokio::spawn(async move {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let size = stream.read_u32().await.unwrap() as usize;
+                    let mut request = vec![0; size];
+                    stream.read_exact(&mut request).await.unwrap();
+                    assert_eq!(
+                        serde_json::from_slice::<Value>(&request).unwrap()["command"],
+                        "start_pe_observation"
+                    );
+                    let bytes = serde_json::to_vec(&forged).unwrap();
+                    stream.write_u32(bytes.len() as u32).await.unwrap();
+                    stream.write_all(&bytes).await.unwrap();
+                });
+                let restored = FixtureStartPeRestoration::restore(
+                    socket.clone(),
+                    Duration::from_secs(1),
+                    identity.clone(),
+                    start.clone(),
+                    original.clone(),
+                )
+                .unwrap();
+                assert_eq!(
+                    restored.observe().await.unwrap_err().kind(),
+                    std::io::ErrorKind::InvalidData
+                );
+                server.await.unwrap();
+                fs::remove_file(socket).unwrap();
+            }
+            for field in ["owner", "generation"] {
+                let mut wrong = serde_json::to_value(&identity).unwrap();
+                wrong[field] = json!(Uuid::now_v7());
+                let restored = FixtureStartPeRestoration::restore(
+                    client.clone(),
+                    Duration::from_secs(1),
+                    serde_json::from_value(wrong).unwrap(),
+                    start.clone(),
+                    original.clone(),
+                )
+                .unwrap();
+                assert!(restored.observe().await.is_err());
+            }
             assert!(wire(&control, publish.clone()).await.is_err());
             start_publish_command = Some(publish);
             start_publication = Some(observed);

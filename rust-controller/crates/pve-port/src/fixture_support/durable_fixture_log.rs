@@ -527,6 +527,58 @@ pub struct StartObservationV1 {
     pub published_unix_ms: u64,
 }
 
+impl StartObservationV1 {
+    #[allow(dead_code)]
+    pub fn validate_restoration(
+        &self,
+        operation: Uuid,
+        digest: &str,
+        binding: StageBinding,
+        receipt: &[u8],
+        vmid: u32,
+    ) -> io::Result<()> {
+        let receipt_value: serde_json::Value =
+            serde_json::from_slice(receipt).map_err(|_| invalid())?;
+        let p = &self.power;
+        if self.observation_version != 1
+            || p.power_version != 1
+            || p.operation != operation
+            || p.vmid != vmid
+            || p.request_sha256 != digest
+            || p.binding != binding
+            || !binding.valid()
+            || binding.stage != FixtureLedgerStage::StartPe
+            || p.state != PowerStateV1::Running
+            || p.daemon_generation.is_nil()
+            || p.effect_sequence == 0
+            || p.predecessor
+                .is_none_or(|prior| prior == 0 || prior >= p.sequence)
+            || p.receipt_sha256 != format!("{:x}", Sha256::digest(receipt))
+            || receipt_value
+                .pointer("/receipt/task")
+                .and_then(serde_json::Value::as_str)
+                != Some(self.task_upid.as_str())
+            || p.accepted_unix_ms == 0
+            || p.observed_unix_ms <= p.accepted_unix_ms
+            || self.task_observed_unix_ms <= p.accepted_unix_ms
+            || p.observed_unix_ms > self.published_unix_ms
+            || self.task_observed_unix_ms > self.published_unix_ms
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn observation_clocks(&self) -> (Uuid, u64, u64) {
+        (
+            self.power.daemon_generation,
+            self.power.accepted_unix_ms,
+            self.power.observed_unix_ms,
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PowerStateV1 {

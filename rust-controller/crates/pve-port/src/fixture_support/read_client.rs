@@ -67,6 +67,38 @@ fn invalid() -> io::Error {
 }
 
 impl FixtureReadClient {
+    /// Exact durable StartPe evidence; restart does not refresh its timestamps.
+    pub async fn start_pe_observation(
+        &self,
+        identity: &super::FixtureStageIdentity,
+        request: &crate::fixture_ipc::FixtureStageRequest,
+        accepted_receipt: &[u8],
+    ) -> io::Result<Option<super::StartObservationV1>> {
+        identity.validate_request(request)?;
+        request
+            .decode_receipt(accepted_receipt)
+            .map_err(|_| invalid())?;
+        if identity.stage != super::FixtureLedgerStage::StartPe {
+            return Err(invalid());
+        }
+        tokio::time::timeout(self.timeout, async {
+            let request_value: serde_json::Value = serde_json::from_slice(&request.encode().map_err(|_| invalid())?)?;
+            let payload = serde_json::to_vec(&serde_json::json!({"command":"start_pe_observation","identity":identity,"request":request_value}))?;
+            let mut stream = UnixStream::connect(&self.socket).await?;
+            stream.write_u32(payload.len() as u32).await?;
+            stream.write_all(&payload).await?;
+            let length = stream.read_u32().await? as usize;
+            if length == 0 || length > 4096 { return Err(invalid()); }
+            let mut bytes = vec![0; length];
+            stream.read_exact(&mut bytes).await?;
+            let observation: Option<super::StartObservationV1> = serde_json::from_slice(&bytes)?;
+            if let Some(observed) = &observation {
+                observed.validate_restoration(identity.operation, &identity.request_sha256, identity.ledger_binding(), accepted_receipt, request.request().plan().expected().vm().target_vmid().get())?;
+                if observed.published_unix_ms > super::post_dispatch_publication::now()? { return Err(invalid()); }
+            }
+            Ok(observation)
+        }).await.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "fixture StartPe readback deadline"))?
+    }
     /// Read ConfigurePe physical facts without introducing any task identity.
     pub async fn synchronous_stage_post_dispatch(
         &self,
