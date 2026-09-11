@@ -755,6 +755,15 @@ async fn full_start_pe_case(process_death: bool) {
             assert!(port.validate_bound_start_pe().await.unwrap().is_none());
             assert!(port.captured_start_pe_response().is_none());
             assert!(port.original_start_pe_response().is_err());
+            // Characterize the missing controller-preflight seam: this same
+            // bound send port cannot read predecessor configuration before its
+            // own StartPe response exists. Do not treat absent reads as Ready.
+            let vm = start.request().plan().expected().vm();
+            assert_eq!(
+                port.provisioning_vm_config(vm.node(), vm.target_vmid())
+                    .await,
+                Err(PveReadError::TransportUnavailable)
+            );
             let provenance = port.shared_history_provenance().unwrap();
             assert_eq!(provenance.operation(), identity.operation);
             assert_eq!(provenance.generation(), generation);
