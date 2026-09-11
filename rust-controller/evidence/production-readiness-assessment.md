@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `7c8123f9`: this branch and PR #65 contain an accumulated
+Current scope at `60b54da6`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -119,6 +119,12 @@ failure rolls back semantic and fixture rows; exact replay succeeds; timestamp,
 revision, envelope bytes, and no-resend behavior survive fresh-process reload.
 This does not yet prove kill-during-write recovery, typed loader/route joining,
 conflict matrix, or the final stop-outcome gates.
+
+At `60b54da6`, a read-only typed observation loader validates strict StartPe and
+ConfigurePe SQL snapshots, exact envelopes, and semantic receipt, including a
+separate-process reload proof. Stored stage owner/generation values still lack
+the sealed checkpoint-channel provenance hash, so configured-route ownership
+remains open.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
