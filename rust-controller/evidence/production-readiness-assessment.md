@@ -26,7 +26,7 @@ during bounded runner creation before controller tests began. It is retained
 as an infrastructure admission failure, not a Linux qualification pass; the
 launcher pin and receipts are in `requalification-35400bd0-full-1/`.
 
-Current scope at `daeb5a52`: this branch and PR #65 contain an accumulated
+Current scope at `ad16c5a2`: this branch and PR #65 contain an accumulated
 Rust controller PoC slice. The full Ansible-to-Rust port and production-candidate
 acceptance remain incomplete. The fixture-only StartPe boot-arming
 transaction persists package semantics, run/operation/attempt, lease identity,
@@ -105,6 +105,12 @@ validates run/operation/attempt, request/workflow/plan digests, and predecessor
 binding before deriving a semantic receipt from captured bytes. It performs no
 SQL write or authority conversion; atomic persistence and trusted fixture-route
 integration remain open.
+
+At `ad16c5a2`, `record_fixture_start_pe_receipt` accepts only the closed input
+and inserts an immutable fixture response row inside the existing semantic
+receipt/journal transaction. Exact replay is required and late attachment to a
+semantic-only receipt is refused. Combined IPC/PostgreSQL rollback, replay,
+and restart qualification remains open.
 
 The stop-release protocol verification recorded at `3c59f835` passes two focused
 tests, formatting, strict Clippy, and whitespace checks. It validates proposal
